@@ -33,6 +33,7 @@ function InputCommand(data) {
     this['useractionid'] = data['useractionid'];
     this['lastsave'] = data['lastsave'];
     this['userdata'] = data['userdata'];
+    this['inline'] = data['inline'];
   } else {
     this['c'] = undefined;//string command
     this['id'] = undefined;//string document id
@@ -65,6 +66,7 @@ function InputCommand(data) {
     this['useractionid'] = undefined;
     this['lastsave'] = undefined;//string key
     this['userdata'] = undefined;
+    this['inline'] = undefined;//content disposition
   }
 }
 InputCommand.prototype = {
@@ -229,6 +231,12 @@ InputCommand.prototype = {
   },
   setUserData: function(data) {
     this['userdata'] = data;
+  },
+  getInline: function() {
+    return this['inline'];
+  },
+  setInline: function(data) {
+    this['inline'] = data;
   }
 };
 
