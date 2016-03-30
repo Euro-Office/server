@@ -416,11 +416,12 @@ function* getAllPresence(docId, optZRange, optHVals) {
   var now = (new Date()).getTime();
   var expiredKeys;
   var hvals;
+  var multi;
   if (optHVals && optZRange) {
     expiredKeys = optZRange;
     hvals = optHVals;
   } else {
-    var multi = redisClient.multi([
+    multi = redisClient.multi([
       ['zrangebyscore', redisKeyPresenceSet + docId, 0, now],
       ['hvals', redisKeyPresenceHash + docId]
     ]);
@@ -429,7 +430,7 @@ function* getAllPresence(docId, optZRange, optHVals) {
     hvals = multiRes[1];
   }
   if (expiredKeys.length > 0) {
-    var multi = [
+    var commands = [
       ['zremrangebyscore', redisKeyPresenceSet + docId, 0, now]
     ];
     var expiredKeysMap = {};
