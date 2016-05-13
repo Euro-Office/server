@@ -1,10 +1,10 @@
 OUTPUT_DIR = build
 OUTPUT = $(OUTPUT_DIR)
 
-NODE_MODULES_DIR = node_modules
-NODE_PROJECTS_SRC = Common DocService FileConverter Metrics SpellChecker
-NODE_PROJECTS = $(addprefix $(OUTPUT)/, $(NODE_PROJECTS_SRC))
-NODE_PROJECTS_MODULES = $(addsuffix /$(NODE_MODULES_DIR), $(NODE_PROJECTS))
+GRUNT = grunt
+GRUNT_FLAGS = --no-color -v 
+
+GRUNT_FILES = Gruntfile.js.out
 
 FILE_CONVERTER = $(OUTPUT)/FileConverter/bin
 FILE_CONVERTER_FILES += ../core/build/lib/linux_64/*.so
@@ -31,23 +31,15 @@ TOOLS = $(OUTPUT)/$(TOOLS_DIR)/
 LICENSE_FILES = LICENSE.txt 3rd-Party.txt
 LICENSE = $(addsuffix $(OUTPUT)/, LICENSE_FILES)
 
-all: $(NODE_PROJECTS_MODULES) $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE)
-
-$(NODE_PROJECTS_MODULES): $(NODE_PROJECTS)
-	cd $(@D) && \
-		npm install
+all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE)
 		
-$(NODE_PROJECTS):
-	mkdir -p $(OUTPUT) && \
-		cp -r -t $(OUTPUT) $(NODE_PROJECTS_SRC)
-		
-$(FILE_CONVERTER): $(NODE_PROJECTS)
+$(FILE_CONVERTER): $(GRUNT_FILES)
 	mkdir -p $(FILE_CONVERTER) $(HTML_FILE_INTERNAL) && \
 		cp -r -t $(FILE_CONVERTER) $(FILE_CONVERTER_FILES) && \
 		cp -r -t $(HTML_FILE_INTERNAL) $(HTML_FILE_INTERNAL_FILES) && \
 		sed 's,../../..,/var/www/onlyoffice/documentserver,' -i $(FILE_CONVERTER)/DoctRenderer.config
 
-$(SPELLCHECKER_DICTIONARIES): $(NODE_PROJECTS)
+$(SPELLCHECKER_DICTIONARIES): $(GRUNT_FILES)
 	mkdir -p $(SPELLCHECKER_DICTIONARIES) && \
 		cp -r -t $(SPELLCHECKER_DICTIONARIES) $(SPELLCHECKER_DICTIONARY_FILES)
 
@@ -63,7 +55,13 @@ $(TOOLS):
 $(LICENSE):
 	mkdir -p $(OUTPUT) && \
 		cp -r -t $(OUTPUT) $(LICENSE_FILES)
+		
+$(GRUNT_FILES):
+	cd $(@D) && \
+		npm install && \
+		$(GRUNT) $(GRUNT_FLAGS)
+	echo "Done" > $@
 	
 clean:
-	rm -rf $(OUTPUT)
+	rm -rf $(OUTPUT) $(GRUNT_FILES)
 	

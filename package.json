@@ -1,0 +1,40 @@
+{
+  "name": "builder",
+  "version": "0.0.0",
+  "homepage": "http://www.teamlab.com",
+  "private": true,
+  "build": {
+    "src": [
+      "./**/sources/*.js",
+      "./Common/package.json",
+      "./DocService/package.json",
+      "./FileConverter/package.json",
+      "./Metrics/package.json",
+      "./SpellChecker/package.json",
+      "./Common/config/*.json"
+    ],
+    "dest": "./build"
+  },
+  "postprocess": {
+    "src": [
+      "./build/**/sources/*.js"
+    ],
+    "dest": "./"
+  },
+  "npm": [
+    "./build/Common",
+    "./build/DocService",
+    "./build/FileConverter",
+    "./build/Metrics",
+    "./build/SpellChecker"
+   ],
+  "dependencies": {
+    "grunt": "^0.4.5",
+    "grunt-banner": "^0.6.0",
+    "grunt-check-dependencies": "^0.12.0",
+    "grunt-contrib-clean": "^1.0.0",
+    "grunt-contrib-copy": "^1.0.0",
+    "grunt-decomment": "^0.2.4",
+    "grunt-mkdir": "^1.0.0"
+  }
+}
