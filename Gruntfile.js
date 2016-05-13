@@ -37,8 +37,14 @@ module.exports = function (grunt) {
           dest: packageFile.build.dest
       }
     },    
-    decomment: {
-      js: packageFile.postprocess
+    comments: {
+      js: {
+        options: {
+          singleline: true,
+          multiline: true
+        },
+        src: packageFile.postprocess.src
+      }
     },
     usebanner: {
       copyright: {
@@ -51,7 +57,7 @@ module.exports = function (grunt) {
                     ' *\n' +
                     ' * Version: ' + process.env['PRODUCT_VERSION'] + ' (build:' + process.env['BUILD_NUMBER'] + ')\n' +
                     ' */\n',
-          linebreak: true
+          linebreak: false
         },
         files: {
           src: packageFile.postprocess.src
@@ -64,10 +70,10 @@ module.exports = function (grunt) {
   grunt.loadNpmTasks('grunt-contrib-clean');
   grunt.loadNpmTasks('grunt-contrib-copy');
   grunt.loadNpmTasks('grunt-mkdir');
-  grunt.loadNpmTasks('grunt-decomment');
+  grunt.loadNpmTasks('grunt-stripcomments');
   grunt.loadNpmTasks('grunt-banner');
   grunt.loadNpmTasks('grunt-check-dependencies');
   
-  grunt.registerTask('default', ['clean', 'mkdir', 'copy', 'usebanner', 'checkDependencies']);
+  grunt.registerTask('default', ['clean', 'mkdir', 'copy', 'comments', 'usebanner', 'checkDependencies']);
 
 };
