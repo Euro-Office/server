@@ -37,5 +37,5 @@
     "grunt-contrib-copy": "^1.0.0",
     "grunt-stripcomments": "^0.5.0"
     "grunt-mkdir": "^1.0.0"
-  },
+  }
 }
