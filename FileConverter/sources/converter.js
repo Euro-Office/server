@@ -211,9 +211,7 @@ function pipeFile(fsFrom, fsTo) {
   });
 }
 function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
-  if (task.getFromOrigin()) {
-    dataConvert.fileFrom = path.join(tempDirs.source, 'origin');
-  } else if (task.getFromSettings()) {
+  if (task.getFromOrigin() || task.getFromSettings()) {
     dataConvert.fileFrom = path.join(tempDirs.source, 'origin.' + cmd.getFormat());
   } else {
     //перезаписываем некоторые файлы из m_sKey(например Editor.bin или changes)

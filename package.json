@@ -12,7 +12,8 @@
       "./Metrics/package.json",
       "./SpellChecker/package.json",
       "./Common/config/*.json",
-      "./Common/config/log4js/*.json"
+      "./Common/config/log4js/*.json",
+      "./Metrics/config/config.js"
     ],
     "dest": "./build"
   },

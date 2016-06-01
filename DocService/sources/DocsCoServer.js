@@ -828,7 +828,7 @@ exports.install = function(server, callbackFunction) {
             yield canvasService.openDocument(conn, cmd);
             break;
           case 'changesError':
-            logger.error("changesError %s", data.stack);
+            logger.error("changesError: docId = %s %s", docId, data.stack);
             break;
           default:
             logger.debug("unknown command %s", message);

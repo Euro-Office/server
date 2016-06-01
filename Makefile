@@ -28,7 +28,7 @@ TOOLS_DIR = tools
 TOOLS_FILES = ../core/build/bin/AllFontsGen/linux_64
 TOOLS = $(OUTPUT)/$(TOOLS_DIR)/
 
-LICENSE_FILES = LICENSE.txt 3rd-Party.txt
+LICENSE_FILES = LICENSE.txt 3rd-Party.txt license/
 LICENSE = $(addsuffix $(OUTPUT)/, LICENSE_FILES)
 
 all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE)
