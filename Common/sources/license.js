@@ -5,7 +5,7 @@ const constants = require('./constants');
 
 exports.readLicense = function() {
   const resMax = {count: 999999, type: constants.LICENSE_RESULT.Success};
-  var res = {count: 2, type: constants.LICENSE_RESULT.Error};
+  var res = {count: 1, type: constants.LICENSE_RESULT.Error};
   try {
     var oLicense = JSON.parse(fs.readFileSync(config.get('license_file')).toString());
     const sign = oLicense['signature'];
@@ -24,7 +24,7 @@ exports.readLicense = function() {
       }
     }
   } catch(e) {
-    res.count = 2;
+    res.count = 1;
     res.type = constants.LICENSE_RESULT.Error;
   }
   return res;
