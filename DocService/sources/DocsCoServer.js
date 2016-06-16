@@ -1230,7 +1230,7 @@ exports.install = function(server, callbackFunction) {
       if (bIsRestore) {
         curIndexUser = user.indexUser;
       } else {
-        upsertRes = yield canvasService.commandOpenStartPromise(cmd, true);
+        upsertRes = yield canvasService.commandOpenStartPromise(docId, cmd, true);
         var bCreate = upsertRes.affectedRows == 1;
         if (bCreate) {
           curIndexUser = 1;
