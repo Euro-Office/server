@@ -1825,7 +1825,45 @@ exports.install = function(server, callbackFunction) {
   }
 
   function _checkLicense(conn) {
-    sendData(conn, {type: 'license', license: licenseInfo});
+    return co(function* () {
+      try {
+        var license = licenseInfo;
+        if (constants.LICENSE_RESULT.Success !== licenseInfo) {
+          license = constants.LICENSE_RESULT.Success;
+
+          var count = constants.LICENSE_CONNECTIONS;
+          var cursor = '0', sum = 0, scanRes, tmp, length, i, users;
+          while (true) {
+            scanRes = yield utils.promiseRedis(redisClient, redisClient.scan, cursor, 'MATCH', redisKeyPresenceHash + '*');
+            tmp = scanRes[1];
+            sum += (length = tmp.length);
+
+            for (i = 0; i < length; ++i) {
+              if (sum >= count) {
+                license = constants.LICENSE_RESULT.Connections;
+                break;
+              }
+
+              users = yield utils.promiseRedis(redisClient, redisClient.hlen, tmp[i]);
+              sum += users - (0 !== users ? 1 : 0);
+            }
+
+            if (sum >= count) {
+              license = constants.LICENSE_RESULT.Connections;
+              break;
+            }
+
+            cursor = scanRes[0];
+            if ('0' === cursor) {
+              break;
+            }
+          }
+        }
+        sendData(conn, {type: 'license', license: license});
+      } catch (err) {
+        logger.error('_checkLicense error:\r\n%s', err.stack);
+      }
+    });
   }
 
   sockjs_echo.installHandlers(server, {prefix: '/doc/['+constants.DOC_ID_PATTERN+']*/c', log: function(severity, message) {

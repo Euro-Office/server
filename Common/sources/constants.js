@@ -9,8 +9,11 @@ exports.LICENSE_RESULT = {
   Error       : 1,
   Expired     : 2,
   Success     : 3,
-  UnknownUser : 4
+  UnknownUser : 4,
+  Connections : 5
 };
+
+exports.LICENSE_CONNECTIONS = 21;
 
 exports.AVS_OFFICESTUDIO_FILE_UNKNOWN =  0x0000;
 exports.AVS_OFFICESTUDIO_FILE_DOCUMENT = 0x0040;
