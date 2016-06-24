@@ -25,10 +25,10 @@ RunCommand() {
 }
 
 CreateDir "$BASEDIR/App_Data"
-CreateDir "$BASEDIR/FileConverter/Bin"
-CreateDir "$BASEDIR/FileConverter/Bin/HtmlFileInternal"
+CreateDir "$BASEDIR/FileConverter/bin"
+CreateDir "$BASEDIR/FileConverter/bin/HtmlFileInternal"
 
-cd "$BASEDIR/FileConverter/Bin"
+cd "$BASEDIR/FileConverter/bin"
 
 cp -v "../../../core/build/bin/mac/icudtl_dat.S" "."
 cp -v "../../../core/build/bin/mac/x2t" "."
@@ -54,7 +54,7 @@ sed "s/$SEARCH/$REPLACE/g" "../../../core/build/lib/DoctRenderer.config" > "Doct
 
 echo $BASEDIR
 chmod -v +x $BASEDIR/../core/build/bin/AllFontsGen/mac_64
-bash -cv "$BASEDIR/../core/build/bin/AllFontsGen/mac_64 '' '$BASEDIR/../sdkjs/Common/AllFonts.js' '$BASEDIR/../sdkjs/Common/Images' '$BASEDIR/FileConverter/Bin/font_selection.bin'"
+bash -cv "$BASEDIR/../core/build/bin/AllFontsGen/mac_64 '' '$BASEDIR/../sdkjs/Common/AllFonts.js' '$BASEDIR/../sdkjs/Common/Images' '$BASEDIR/FileConverter/bin/font_selection.bin'"
 
 
 echo "----------------------------------------"
@@ -78,6 +78,6 @@ RunCommand "redis-server /usr/local/etc/redis.conf"
 
 RunCommand "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && cd $BASEDIR/DocService/sources && node server.js"
 RunCommand "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && cd $BASEDIR/DocService/sources && node gc.js"
-RunCommand "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && export DYLD_LIBRARY_PATH=../../FileConverter/Bin/ && cd $BASEDIR/FileConverter/sources && node convertermaster.js"
+RunCommand "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && export DYLD_LIBRARY_PATH=../../FileConverter/bin/ && cd $BASEDIR/FileConverter/sources && node convertermaster.js"
 
 

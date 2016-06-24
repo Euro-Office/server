@@ -6,14 +6,13 @@ ECHO copy file to converter
 ECHO ----------------------------------------
 
 mkdir "%~dp0\App_Data"
-mkdir "%~dp0\FileConverter\Bin"
-mkdir "%~dp0\FileConverter\Bin\HtmlFileInternal"
+mkdir "%~dp0\FileConverter\bin"
+mkdir "%~dp0\FileConverter\bin\HtmlFileInternal"
 
-cd /D "%~dp0\FileConverter\Bin" || goto ERROR
+cd /D "%~dp0\FileConverter\bin" || goto ERROR
 copy "..\..\..\core\build\bin\windows\icudt.dll" "."
 copy "..\..\..\core\build\bin\icu\win_32\icudt55.dll" "."
 copy "..\..\..\core\build\bin\icu\win_32\icuuc55.dll" "."
-copy "..\..\..\core\build\lib\DoctRenderer.config" "."
 copy "..\..\..\core\build\lib\win_32\doctrenderer.dll" "."
 copy "..\..\..\core\build\lib\win_32\HtmlRenderer.dll" "."
 copy "..\..\..\core\build\lib\win_32\DjVuFile.dll" "."
@@ -26,7 +25,7 @@ copy "..\..\..\core\build\lib\win_32\HtmlFileInternal.exe" ".\HtmlFileInternal"
 xcopy /s/h/e/k/c/y/q "..\..\..\core\build\cef\win_32" ".\HtmlFileInternal"
 copy "..\..\..\core\build\bin\windows\x2t32.exe" "."
 
-"..\..\..\core\build\bin\AllFontsGen\windows_32.exe" "%windir%\Fonts" "%~dp0\..\sdkjs\common\AllFonts.js" "%~dp0\..\sdkjs\common\Images" "%~dp0\FileConverter\Bin\font_selection.bin"
+"..\..\..\core\build\bin\AllFontsGen\windows_32.exe" "%windir%\Fonts" "%~dp0\..\sdkjs\common\AllFonts.js" "%~dp0\..\sdkjs\common\Images" "%~dp0\FileConverter\bin\font_selection.bin"
 
 ECHO.
 ECHO ----------------------------------------
