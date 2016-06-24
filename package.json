@@ -10,6 +10,7 @@
       "./DocService/package.json",
       "./DocService/public/healthcheck.docx",
       "./FileConverter/package.json",
+      "./FileConverter/bin/DoctRenderer.config",
       "./Metrics/package.json",
       "./SpellChecker/package.json",
       "./Common/config/*.json",
