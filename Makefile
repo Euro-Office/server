@@ -31,6 +31,8 @@ TOOLS = $(OUTPUT)/$(TOOLS_DIR)/
 LICENSE_FILES = LICENSE.txt 3rd-Party.txt license/
 LICENSE = $(addsuffix $(OUTPUT)/, LICENSE_FILES)
 
+.PHONY: all clean install uninstall
+
 all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE)
 		
 $(FILE_CONVERTER): $(GRUNT_FILES)
@@ -64,4 +66,49 @@ $(GRUNT_FILES):
 	
 clean:
 	rm -rf $(OUTPUT) $(GRUNT_FILES)
+
+install:
+	sudo adduser --quiet --home /var/www/onlyoffice --system --group onlyoffice
+
+	sudo mkdir -p /var/log/onlyoffice
+	sudo mkdir -p /var/lib/onlyoffice/documentserver/App_Data
+
+	sudo chown onlyoffice:onlyoffice -R /var/www/onlyoffice
+	sudo chown onlyoffice:onlyoffice -R /var/log/onlyoffice
+	sudo chown onlyoffice:onlyoffice -R /var/lib/onlyoffice
+
+	sudo cp -r build/. /var/www/onlyoffice/documentserver/
 	
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libDjVuFile.so /lib/libDjVuFile.so
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libdoctrenderer.so /lib/libdoctrenderer.so
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libHtmlFile.so /lib/libHtmlFile.so
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libHtmlRenderer.so /lib/libHtmlRenderer.so
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libPdfReader.so /lib/libPdfReader.so
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libPdfWriter.so /lib/libPdfWriter.so
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libXpsFile.so /lib/libXpsFile.so
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libUnicodeConverter.so /lib/libUnicodeConverter.so
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libicudata.so.55 /lib/libicudata.so.55
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/Bin/libicuuc.so.55 /lib/libicuuc.so.55
+
+	sudo -u onlyoffice "/var/www/onlyoffice/documentserver/server/tools/AllFontsGen"\
+		"/usr/share/fonts"\
+		"/var/www/onlyoffice/documentserver/sdkjs/common/AllFonts.js"\
+		"/var/www/onlyoffice/documentserver/sdkjs/common/Images"\
+		"/var/www/onlyoffice/documentserver/server/FileConverter/bin/font_selection.bin"
+uninstall:
+	sudo userdel onlyoffice
+	
+	sudo unlink /lib/libDjVuFile.so
+	sudo unlink /lib/libdoctrenderer.so
+	sudo unlink /lib/libHtmlFile.so
+	sudo unlink /lib/libHtmlRenderer.so
+	sudo unlink /lib/libPdfReader.so
+	sudo unlink /lib/libPdfWriter.so
+	sudo unlink /lib/libXpsFile.so
+	sudo unlink /lib/libUnicodeConverter.so
+	sudo unlink /lib/libicudata.so.55
+	sudo unlink /lib/libicuuc.so.55
+
+	sudo rm -rf /var/www/onlyoffice/documentserver
+	sudo rm -rf /var/log/onlyoffice/documentserver
+	sudo rm -rf /var/lib/onlyoffice/documentserver	
