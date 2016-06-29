@@ -42,7 +42,7 @@ const oBuildDate = new Date(buildDate);
 
 exports.readLicense = function() {
   const resMax = {count: 999999, type: constants.LICENSE_RESULT.Success};
-  var res = {count: 1, type: constants.LICENSE_RESULT.Error};
+  var res = {count: 1, type: constants.LICENSE_RESULT.Error, light: false};
   try {
     var oLicense = JSON.parse(fs.readFileSync(config.get('license_file')).toString());
     const sign = oLicense['signature'];
@@ -59,6 +59,8 @@ exports.readLicense = function() {
       } else {
         res.type = constants.LICENSE_RESULT.Expired;
       }
+
+      res.light = !!oLicense['light'];
     }
   } catch(e) {
     res.count = 1;
