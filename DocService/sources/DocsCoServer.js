@@ -135,7 +135,7 @@ var redisClient = pubsubRedis.getClientRedis();
 var pubsub;
 var queue;
 var clientStatsD = statsDClient.getClient();
-var licenseInfo = constants.LICENSE_RESULT.Error;
+var licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false};
 var shutdownFlag = false;
 
 var asc_coAuthV = '3.0.9';				// Версия сервера совместного редактирования
@@ -1855,9 +1855,9 @@ exports.install = function(server, callbackFunction) {
   function _checkLicense(conn) {
     return co(function* () {
       try {
-        var license = licenseInfo;
-        if (constants.LICENSE_RESULT.Success !== licenseInfo) {
-          license = constants.LICENSE_RESULT.Success;
+        var licenseType = licenseInfo.type;
+        if (constants.LICENSE_RESULT.Success !== licenseType) {
+          licenseType = constants.LICENSE_RESULT.Success;
 
           var count = constants.LICENSE_CONNECTIONS;
           var cursor = '0', sum = 0, scanRes, tmp, length, i, users;
@@ -1868,7 +1868,7 @@ exports.install = function(server, callbackFunction) {
 
             for (i = 0; i < length; ++i) {
               if (sum >= count) {
-                license = constants.LICENSE_RESULT.Connections;
+                licenseType = constants.LICENSE_RESULT.Connections;
                 break;
               }
 
@@ -1877,7 +1877,7 @@ exports.install = function(server, callbackFunction) {
             }
 
             if (sum >= count) {
-              license = constants.LICENSE_RESULT.Connections;
+              licenseType = constants.LICENSE_RESULT.Connections;
               break;
             }
 
@@ -1887,7 +1887,7 @@ exports.install = function(server, callbackFunction) {
             }
           }
         }
-        sendData(conn, {type: 'license', license: license});
+        sendData(conn, {type: 'license', license: {type: licenseType, light: licenseInfo.light}});
       } catch (err) {
         logger.error('_checkLicense error:\r\n%s', err.stack);
       }

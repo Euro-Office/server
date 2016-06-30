@@ -49,7 +49,7 @@ if (cluster.isMaster) {
     workersCount = 1; //Math.min(licenseInfo.count, Math.ceil(numCPUs * cfgWorkerPerCpu));
   };
   const updateLicenseWorker = (worker) => {
-    worker.send({data: licenseInfo.type});
+    worker.send({data: licenseInfo});
   };
   const updateWorkers = () => {
     var i;
