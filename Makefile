@@ -31,10 +31,17 @@ TOOLS = $(OUTPUT)/$(TOOLS_DIR)/
 LICENSE_FILES = LICENSE.txt 3rd-Party.txt license/
 LICENSE = $(addsuffix $(OUTPUT)/, LICENSE_FILES)
 
+LICENSE_JS := $(OUTPUT)/Common/sources/license.js
+
 .PHONY: all clean install uninstall
 
 all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE)
-		
+
+build-date: $(GRUNT_FILES)
+	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}'|" $(LICENSE_JS)
+	sed "s|const buildNumber = .*|const buildNumber = '${BULD_NUMBER}'|" $(LICENSE_JS)
+	sed "s|const buildDate = .*|const buildDate = '$$(date +%F)'|" $(LICENSE_JS)
+
 $(FILE_CONVERTER): $(GRUNT_FILES)
 	mkdir -p $(FILE_CONVERTER) $(HTML_FILE_INTERNAL) && \
 		cp -r -t $(FILE_CONVERTER) $(FILE_CONVERTER_FILES) && \
