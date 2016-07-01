@@ -38,9 +38,9 @@ LICENSE_JS := $(OUTPUT)/Common/sources/license.js
 all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE)
 
 build-date: $(GRUNT_FILES)
-	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}'|" $(LICENSE_JS)
-	sed "s|const buildNumber = .*|const buildNumber = '${BUILD_NUMBER}'|" $(LICENSE_JS)
-	sed "s|const buildDate = .*|const buildDate = '$$(date +%F)'|" $(LICENSE_JS)
+	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}';|" $(LICENSE_JS)
+	sed "s|const buildNumber = .*|const buildNumber = ${BUILD_NUMBER};|" $(LICENSE_JS)
+	sed "s|const buildDate = .*|const buildDate = '$$(date +%F)';|" $(LICENSE_JS)
 
 $(FILE_CONVERTER): $(GRUNT_FILES)
 	mkdir -p $(FILE_CONVERTER) $(HTML_FILE_INTERNAL) && \
