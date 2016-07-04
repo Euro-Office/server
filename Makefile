@@ -33,7 +33,7 @@ LICENSE = $(addsuffix $(OUTPUT)/, LICENSE_FILES)
 
 LICENSE_JS := $(OUTPUT)/Common/sources/license.js
 
-.PHONY: all clean install uninstall
+.PHONY: all clean install uninstall build-date htmlfileinternal
 
 all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE)
 
