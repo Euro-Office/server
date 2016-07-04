@@ -41,11 +41,14 @@ build-date: $(GRUNT_FILES)
 	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}';|" -i $(LICENSE_JS)
 	sed "s|const buildNumber = .*|const buildNumber = ${BUILD_NUMBER};|" -i $(LICENSE_JS)
 	sed "s|const buildDate = .*|const buildDate = '$$(date +%F)';|" -i $(LICENSE_JS)
-
-$(FILE_CONVERTER): $(GRUNT_FILES)
-	mkdir -p $(FILE_CONVERTER) $(HTML_FILE_INTERNAL) && \
-		cp -r -t $(FILE_CONVERTER) $(FILE_CONVERTER_FILES) && \
+	
+htmlfileinternal: $(FILE_CONVERTER)
+	mkdir -p $(HTML_FILE_INTERNAL) && \
 		cp -r -t $(HTML_FILE_INTERNAL) $(HTML_FILE_INTERNAL_FILES) && \
+		
+$(FILE_CONVERTER): $(GRUNT_FILES)
+	mkdir -p $(FILE_CONVERTER) && \
+		cp -r -t $(FILE_CONVERTER) $(FILE_CONVERTER_FILES) && \
 		sed 's,../../..,/var/www/onlyoffice/documentserver,' -i $(FILE_CONVERTER)/DoctRenderer.config
 
 $(SPELLCHECKER_DICTIONARIES): $(GRUNT_FILES)
