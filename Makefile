@@ -125,3 +125,4 @@ uninstall:
 	sudo rm -rf /var/www/onlyoffice/documentserver
 	sudo rm -rf /var/log/onlyoffice/documentserver
 	sudo rm -rf /var/lib/onlyoffice/documentserver	
+	sudo rm -rf /etc/onlyoffice/documentserver
