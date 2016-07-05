@@ -12,7 +12,17 @@
   "services": {
     "CoAuthoring": {
       "server": {
-        "sockjsUrl": "/web-apps/vendor/sockjs/sockjs.min.js"
+        "sockjsUrl": "/web-apps/vendor/sockjs/sockjs.min.js",
+        "static_content": [
+          {
+            "name": "/sdkjs",
+            "path": "/var/www/onlyoffice/documentserver/sdkjs"
+          },
+          {
+            "name": "/web-apps",
+            "path": "/var/www/onlyoffice/documentserver/web-apps"
+          }
+        ]
       },
       "utils": {
         "utils_common_fontdir": "/usr/share/fonts"
