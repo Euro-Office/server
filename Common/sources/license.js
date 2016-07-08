@@ -71,7 +71,7 @@ exports.readLicense = function*() {
 				res.type = constants.LICENSE_RESULT.Expired;
 			}
 
-			res.light = !!oLicense['light'];
+			res.light = !(false === oLicense['light'] || 'false' === oLicense['light']); // Someone who likes to put json string instead of bool
 		}
 	} catch (e) {
 		res.count = 1;
