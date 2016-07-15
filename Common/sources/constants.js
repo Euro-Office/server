@@ -169,6 +169,7 @@ exports.REDIS_KEY_LAST_SAVE = 'lastsave:';
 exports.REDIS_KEY_FORCE_SAVE = 'forcesave:';
 exports.REDIS_KEY_SAVED = 'saved:';
 exports.REDIS_KEY_SHUTDOWN = 'shutdown';
+exports.REDIS_KEY_LICENSE = 'license';
 
 exports.SHUTDOWN_CODE = 4001;
 exports.SHUTDOWN_REASON = 'server shutdown';

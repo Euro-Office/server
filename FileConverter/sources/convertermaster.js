@@ -35,6 +35,7 @@ const logger = require('./../../Common/sources/logger');
 
 if (cluster.isMaster) {
   const fs = require('fs');
+  const co = require('co');
   const numCPUs = require('os').cpus().length;
   const configCommon = require('config');
   const config = configCommon.get('FileConverter.converter');
@@ -42,8 +43,8 @@ if (cluster.isMaster) {
 
   const cfgMaxProcessCount = config.get('maxprocesscount');
   var licenseInfo, workersCount = 0;
-  const readLicense = () => {
-    licenseInfo = license.readLicense();
+  const readLicense = function* () {
+    licenseInfo = yield* license.readLicense();
     workersCount = Math.min(licenseInfo.count, Math.ceil(numCPUs * cfgMaxProcessCount));
   };
   const updateWorkers = () => {
@@ -64,9 +65,15 @@ if (cluster.isMaster) {
     }
   };
   const updateLicense = () => {
-    readLicense();
-    logger.warn('update cluster with %s workers', workersCount);
-    updateWorkers();
+    return co(function*() {
+      try {
+        yield* readLicense();
+        logger.warn('update cluster with %s workers', workersCount);
+        updateWorkers();
+      } catch (err) {
+        logger.error('updateLicense error:\r\n%s', err.stack);
+      }
+    });
   };
 
   cluster.on('exit', (worker) => {

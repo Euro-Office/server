@@ -30,7 +30,6 @@
  *
  */
 
-const fs = require('fs');
 const cluster = require('cluster');
 const configCommon = require('config');
 const config = configCommon.get('services.CoAuthoring');
@@ -39,14 +38,17 @@ const config = configCommon.get('services.CoAuthoring');
 const logger = require('./../../Common/sources/logger');
 
 if (cluster.isMaster) {
-  const numCPUs = require('os').cpus().length;
+  const fs = require('fs');
+  const co = require('co');
+
+  //const numCPUs = require('os').cpus().length;
   const license = require('./../../Common/sources/license');
 
-  const cfgWorkerPerCpu = config.get('server.workerpercpu');
+  //const cfgWorkerPerCpu = config.get('server.workerpercpu');
   var licenseInfo, workersCount = 0;
-  const readLicense = () => {
-    licenseInfo = license.readLicense();
-    workersCount = 1; //Math.min(licenseInfo.count, Math.ceil(numCPUs * cfgWorkerPerCpu));
+  const readLicense = function* () {
+    licenseInfo = yield* license.readLicense();
+    workersCount = Math.min(1, licenseInfo.count/*, Math.ceil(numCPUs * cfgWorkerPerCpu)*/);
   };
   const updateLicenseWorker = (worker) => {
     worker.send({data: licenseInfo});
@@ -69,12 +71,18 @@ if (cluster.isMaster) {
     }
   };
   const updateLicense = () => {
-    readLicense();
-    logger.warn('update cluster with %s workers', workersCount);
-    for (var i in cluster.workers) {
-      updateLicenseWorker(cluster.workers[i]);
-    }
-    updateWorkers();
+    return co(function*() {
+      try {
+        yield* readLicense();
+        logger.warn('update cluster with %s workers', workersCount);
+        for (var i in cluster.workers) {
+          updateLicenseWorker(cluster.workers[i]);
+        }
+        updateWorkers();
+      } catch (err) {
+        logger.error('updateLicense error:\r\n%s', err.stack);
+      }
+    });
   };
 
   cluster.on('fork', (worker) => {

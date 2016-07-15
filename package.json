@@ -17,20 +17,20 @@
       "./Common/config/log4js/*.json",
       "./Metrics/config/config.js"
     ],
-    "dest": "./build"
+    "dest": "./build/server"
   },
   "postprocess": {
     "src": [
-      "./build/**/sources/*.js"
+      "./build/server/**/sources/*.js"
     ],
     "dest": "./"
   },
   "npm": [
-    "./build/Common",
-    "./build/DocService",
-    "./build/FileConverter",
-    "./build/Metrics",
-    "./build/SpellChecker"
+    "./build/server/Common",
+    "./build/server/DocService",
+    "./build/server/FileConverter",
+    "./build/server/Metrics",
+    "./build/server/SpellChecker"
   ],
   "dependencies": {
     "grunt": "^0.4.5",

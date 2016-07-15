@@ -32,39 +32,71 @@
 
 const crypto = require('crypto');
 const fs = require('fs');
-const config = require('config').get('license');
+const config = require('config');
+const configL = config.get('license');
 const constants = require('./constants');
+const logger = require('./logger');
+const utils = require('./utils');
+const pubsubRedis = require('./../../DocService/sources/pubsubRedis');
+const redisClient = pubsubRedis.getClientRedis();
+
+const cfgRedisPrefix = config.get('services.CoAuthoring.redis.prefix');
+const redisKeyLicense = cfgRedisPrefix + constants.REDIS_KEY_LICENSE;
 
 const buildVersion = '4.0.0';
 const buildNumber = 19;
 const buildDate = '6/29/2016';
 const oBuildDate = new Date(buildDate);
 
-exports.readLicense = function() {
-  const resMax = {count: 999999, type: constants.LICENSE_RESULT.Success};
-  var res = {count: 1, type: constants.LICENSE_RESULT.Error, light: false};
-  try {
-    var oLicense = JSON.parse(fs.readFileSync(config.get('license_file')).toString());
-    const sign = oLicense['signature'];
-    delete oLicense['signature'];
+exports.readLicense = function*() {
+	const resMax = {count: 999999, type: constants.LICENSE_RESULT.Success};
+	var res = {count: 1, type: constants.LICENSE_RESULT.Error, light: false};
+	var checkFile = false;
+	try {
+		var oFile = fs.readFileSync(configL.get('license_file')).toString();
+		checkFile = true;
+		var oLicense = JSON.parse(oFile);
+		const sign = oLicense['signature'];
+		delete oLicense['signature'];
 
-    const verify = crypto.createVerify('RSA-SHA1');
-    verify.update(JSON.stringify(oLicense));
-    const publicKey = '-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDRhGF7X4A0ZVlEg594WmODVVUI\niiPQs04aLmvfg8SborHss5gQXu0aIdUT6nb5rTh5hD2yfpF2WIW6M8z0WxRhwicg\nXwi80H1aLPf6lEPPLvN29EhQNjBpkFkAJUbS8uuhJEeKw0cE49g80eBBF4BCqSL6\nPFQbP9/rByxdxEoAIQIDAQAB\n-----END PUBLIC KEY-----\n';
-    if (verify.verify(publicKey, sign, 'hex')) {
-      const endDate = new Date(oLicense['end_date']);
-      if (endDate >= oBuildDate && 2 <= oLicense['version']) {
-        res.count = Math.min(Math.max(res.count, oLicense['process'] >> 0), resMax.count);
-        res.type = constants.LICENSE_RESULT.Success;
-      } else {
-        res.type = constants.LICENSE_RESULT.Expired;
-      }
+		const verify = crypto.createVerify('RSA-SHA1');
+		verify.update(JSON.stringify(oLicense));
+		const publicKey = '-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDRhGF7X4A0ZVlEg594WmODVVUI\niiPQs04aLmvfg8SborHss5gQXu0aIdUT6nb5rTh5hD2yfpF2WIW6M8z0WxRhwicg\nXwi80H1aLPf6lEPPLvN29EhQNjBpkFkAJUbS8uuhJEeKw0cE49g80eBBF4BCqSL6\nPFQbP9/rByxdxEoAIQIDAQAB\n-----END PUBLIC KEY-----\n';
+		if (verify.verify(publicKey, sign, 'hex')) {
+			const endDate = new Date(oLicense['end_date']);
+			const checkDate = (true === oLicense['trial'] || 'true' === oLicense['trial']) ? new Date() : oBuildDate; // Someone who likes to put json string instead of bool
+			if (endDate >= checkDate && 2 <= oLicense['version']) {
+				res.count = Math.min(Math.max(res.count, oLicense['process'] >> 0), resMax.count);
+				res.type = constants.LICENSE_RESULT.Success;
+			} else {
+				res.type = constants.LICENSE_RESULT.Expired;
+			}
 
-      res.light = !!oLicense['light'];
-    }
-  } catch(e) {
-    res.count = 1;
-    res.type = constants.LICENSE_RESULT.Error;
-  }
-  return res;
+			res.light = (true === oLicense['light'] || 'true' === oLicense['light']); // Someone who likes to put json string instead of bool
+		}
+	} catch (e) {
+		res.count = 1;
+		res.type = constants.LICENSE_RESULT.Error;
+
+		if (checkFile || (yield* _getFileState())) {
+			res.type = constants.LICENSE_RESULT.Expired;
+		}
+	}
+	if (res.type === constants.LICENSE_RESULT.Expired) {
+		res.count = 0;
+		logger.error('License Expired!!!');
+	}
+
+	if (checkFile) {
+		yield* _updateFileState();
+	}
+
+	return res;
 };
+
+function* _getFileState() {
+	return yield utils.promiseRedis(redisClient, redisClient.hget, redisKeyLicense, redisKeyLicense);
+}
+function* _updateFileState() {
+	yield utils.promiseRedis(redisClient, redisClient.hset, redisKeyLicense, redisKeyLicense, redisKeyLicense);
+}
