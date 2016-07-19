@@ -173,7 +173,7 @@ function* downloadFile(docId, uri, fileFrom) {
       res = true;
     } catch (err) {
       res = false;
-      logger.error('error downloadFile:url=%s;attempt=%d;(id=%s)\r\n%s', uri, downloadAttemptCount, docId, err.stack);
+      logger.error('error downloadFile:url=%s;attempt=%d;code:%s;connect:%s;(id=%s)\r\n%s', uri, downloadAttemptCount, err.code, err.connect, docId, err.stack);
       //not continue attempts if timeout
       if (err.code === 'ETIMEDOUT' || err.code === 'EMSGSIZE') {
         break;
