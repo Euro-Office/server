@@ -337,7 +337,7 @@ exports.fillXmlResponse = function(res, uri, error) {
   res.setHeader('Content-Length', body.length);
   res.send(body);
 };
-exports.promiseCreateWriteStream = function(strPath, optOptions) {
+function promiseCreateWriteStream(strPath, optOptions) {
   return new Promise(function(resolve, reject) {
     var file = fs.createWriteStream(strPath, optOptions);
     var errorCallback = function(e) {
@@ -350,7 +350,8 @@ exports.promiseCreateWriteStream = function(strPath, optOptions) {
     });
   });
 };
-exports.promiseCreateReadStream = function(strPath) {
+exports.promiseCreateWriteStream = promiseCreateWriteStream;
+function promiseCreateReadStream(strPath) {
   return new Promise(function(resolve, reject) {
     var file = fs.createReadStream(strPath);
     var errorCallback = function(e) {
@@ -363,6 +364,7 @@ exports.promiseCreateReadStream = function(strPath) {
     });
   });
 };
+exports.promiseCreateReadStream = promiseCreateReadStream;
 exports.compareStringByLength = function(x, y) {
   if (x && y) {
     if (x.length == y.length) {
@@ -480,3 +482,21 @@ function changeOnlyOfficeUrl(inputUrl, strPath, optFilename) {
   return inputUrl + constants.ONLY_OFFICE_URL_PARAM + '=' + constants.OUTPUT_NAME + path.extname(optFilename || strPath);
 }
 exports.changeOnlyOfficeUrl = changeOnlyOfficeUrl;
+function pipeStreams(from, to, isEnd) {
+  return new Promise(function(resolve, reject) {
+    from.pipe(to, {end: isEnd});
+    from.on('end', function() {
+      resolve();
+    });
+    from.on('error', function(e) {
+      reject(e);
+    });
+  });
+}
+exports.pipeStreams = pipeStreams;
+function* pipeFiles(from, to) {
+  var fromStream = yield promiseCreateReadStream(from);
+  var toStream = yield promiseCreateWriteStream(to);
+  yield pipeStreams(fromStream, toStream, true);
+}
+exports.pipeFiles = co.wrap(pipeFiles);

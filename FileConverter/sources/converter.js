@@ -231,17 +231,6 @@ function* downloadFileFromStorage(id, strPath, dir) {
     fs.writeFileSync(path.join(dir, fileRel), data);
   }
 }
-function pipeFile(fsFrom, fsTo) {
-  return new Promise(function(resolve, reject) {
-    fsFrom.pipe(fsTo, {end: false});
-    fsFrom.on('end', function() {
-      resolve();
-    });
-    fsFrom.on('error', function(e) {
-      reject(e);
-    });
-  });
-}
 function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
   if (task.getFromOrigin() || task.getFromSettings()) {
     dataConvert.fileFrom = path.join(tempDirs.source, 'origin.' + cmd.getFormat());
@@ -262,7 +251,7 @@ function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
           fsFullFile = yield utils.promiseCreateWriteStream(dataConvert.fileFrom);
         }
         var fsCurFile = yield utils.promiseCreateReadStream(file);
-        yield pipeFile(fsCurFile, fsFullFile);
+        yield utils.pipeStreams(fsCurFile, fsFullFile, false);
       }
     }
     if (fsFullFile) {
@@ -473,7 +462,7 @@ function* ExecuteTask(task) {
   if (constants.NO_ERROR === error) {
     if(constants.AVS_OFFICESTUDIO_FILE_OTHER_HTMLZIP === dataConvert.formatTo && cmd.getSaveKey() && !dataConvert.mailMergeSend) {
       //todo заглушка.вся конвертация на клиенте, но нет простого механизма сохранения на клиенте
-      fs.writeFileSync(dataConvert.fileTo, fs.readFileSync(dataConvert.fileFrom));
+      yield utils.pipeFiles(dataConvert.fileFrom, dataConvert.fileTo);
     } else {
       var paramsFile = path.join(tempDirs.temp, 'params.xml');
       dataConvert.serialize(paramsFile);
