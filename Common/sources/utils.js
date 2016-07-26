@@ -198,11 +198,11 @@ function downloadUrlPromise(uri, optTimeout, optLimit) {
     var urlParsed = url.parse(uri);
     //if you expect binary data, you should set encoding: null
     var options = {uri: urlParsed, encoding: null, timeout: optTimeout};
-    if (urlParsed.protocol === 'https:') {
-      //TODO: Check how to correct handle a ssl link
-      urlParsed.rejectUnauthorized = false;
-      options.rejectUnauthorized = false;
-    }
+
+    //TODO: Check how to correct handle a ssl link
+    urlParsed.rejectUnauthorized = false;
+    options.rejectUnauthorized = false;
+
     request.get(options, function (err, response, body) {
       if (err) {
         reject(err);
@@ -229,11 +229,11 @@ function postRequestPromise(uri, postData, optTimeout) {
     uri = URI.serialize(URI.parse(uri));
     var urlParsed = url.parse(uri);
     var options = {uri: urlParsed, body: postData, encoding: 'utf8', headers: {'Content-Type': 'application/json'}, timeout: optTimeout};
-    if (urlParsed.protocol === 'https:') {
-      //TODO: Check how to correct handle a ssl link
-      urlParsed.rejectUnauthorized = false;
-      options.rejectUnauthorized = false;
-    }
+
+    //TODO: Check how to correct handle a ssl link
+    urlParsed.rejectUnauthorized = false;
+    options.rejectUnauthorized = false;
+
     request.post(options, function(err, response, body) {
       if (err) {
         reject(err);
