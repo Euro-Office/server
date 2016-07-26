@@ -35,6 +35,7 @@ var path = require('path');
 var url = require('url');
 var request = require('request');
 var co = require('co');
+var URI = require("uri-js");
 var constants = require('./constants');
 
 var ANDROID_SAFE_FILENAME = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-+,@£$€!½§~\'=()[]{}0123456789';
@@ -192,11 +193,8 @@ exports.getContentDisposition = getContentDisposition;
 exports.getContentDispositionS3 = getContentDispositionS3;
 function downloadUrlPromise(uri, optTimeout, optLimit) {
   return new Promise(function (resolve, reject) {
-    //todo может стоит делать url.parse, а потом с каждой частью отдельно работать
-    //для ссылок с руссикими буквами приходит 404
-    if (!containsAllAsciiNP(uri)) {
-      uri = encodeURI(uri);
-    }
+    //IRI to URI
+    uri = URI.serialize(URI.parse(uri));
     var urlParsed = url.parse(uri);
     //if you expect binary data, you should set encoding: null
     var options = {uri: urlParsed, encoding: null, timeout: optTimeout};
@@ -227,11 +225,8 @@ function downloadUrlPromise(uri, optTimeout, optLimit) {
 }
 function postRequestPromise(uri, postData, optTimeout) {
   return new Promise(function(resolve, reject) {
-    //todo может стоит делать url.parse, а потом с каждой частью отдельно работать
-    //для ссылок с руссикими буквами приходит 404
-    if (!containsAllAsciiNP(uri)) {
-      uri = encodeURI(uri);
-    }
+    //IRI to URI
+    uri = URI.serialize(URI.parse(uri));
     var urlParsed = url.parse(uri);
     var options = {uri: urlParsed, body: postData, encoding: 'utf8', headers: {'Content-Type': 'application/json'}, timeout: optTimeout};
     if (urlParsed.protocol === 'https:') {
