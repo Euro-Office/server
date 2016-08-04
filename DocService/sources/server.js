@@ -132,7 +132,7 @@ if (cluster.isMaster) {
     var cfgStorageFolderName = configStorage.get('storageFolderName');
     app.use('/' + cfgBucketName + '/' + cfgStorageFolderName, (req, res, next) => {
       var index = req.url.lastIndexOf('/');
-      if (-1 != index) {
+      if ('GET' === req.method && -1 != index) {
         var contentDisposition = req.query['disposition'] || 'attachment';
         var sendFileOptions = {
           root: configStorage.get('fs.folderPath'),
@@ -154,7 +154,7 @@ if (cluster.isMaster) {
           }
         });
       } else {
-        req.sendStatus(404)
+        res.sendStatus(404)
       }
     });
   }
