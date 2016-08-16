@@ -49,7 +49,7 @@
  * d) Когда пользователь остается один, после принятия чужих изменений начинается пункт 'а'
  *-----------------------------------------------------------------------------------------------------------------------
  *--------------------------------------------Схема работы с сервером----------------------------------------------------
- * а) Когда все уходят, спустя время c_oAscSaveTimeOutDelay на сервер документов шлется команда на сборку.
+ * а) Когда все уходят, спустя время cfgAscSaveTimeOutDelay на сервер документов шлется команда на сборку.
  * b) Если приходит статус '1' на CommandService.ashx, то удалось сохранить и поднять версию. Очищаем callback-и и
  * 	изменения из базы и из памяти.
  * с) Если приходит статус, отличный от '1'(сюда можно отнести как генерацию файла, так и работа внешнего подписчика
@@ -95,6 +95,8 @@ var pubsubService = require('./' + config.get('pubsub.name'));
 var queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 var cfgSpellcheckerUrl = config.get('server.editor_settings_spellchecker_url');
 var cfgCallbackRequestTimeout = config.get('server.callbackRequestTimeout');
+//The waiting time to document assembly when all out(not 0 in case of F5 in the browser)
+var cfgAscSaveTimeOutDelay = config.get('server.savetimeoutdelay');
 
 var cfgPubSubMaxChanges = config.get('pubsub.maxChanges');
 
@@ -183,7 +185,6 @@ var c_oAscChangeBase = {
   All: 2
 };
 
-var c_oAscSaveTimeOutDelay = 5000;	// Время ожидания для сохранения на сервере (для отработки F5 в браузере)
 var c_oAscLockTimeOutDelay = 500;	// Время ожидания для сохранения, когда зажата база данных
 
 var c_oAscRecalcIndexTypes = {
@@ -755,7 +756,7 @@ function* _createSaveTimer(docId, opt_userId, opt_queue, opt_noDelay) {
   var updateIfRes = yield taskResult.updateIf(updateTask, updateMask);
   if (updateIfRes.affectedRows > 0) {
     if(!opt_noDelay){
-      yield utils.sleep(c_oAscSaveTimeOutDelay);
+      yield utils.sleep(cfgAscSaveTimeOutDelay);
     }
     while (true) {
       if (!sqlBase.isLockCriticalSection(docId)) {
