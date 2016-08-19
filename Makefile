@@ -89,7 +89,7 @@ $(SCHEMA):
 $(TOOLS):
 	mkdir -p $(TOOLS) && \
 		cp -r -t $(TOOLS) $(TOOLS_FILES) && \
-		mv $(TOOLS)/linux_64 $(TOOLS)/AllFontsGen
+		mv $(TOOLS)/$(TARGET)$(EXEC_EXT) $(TOOLS)/AllFontsGen$(EXEC_EXT)
 		
 $(LICENSE):
 	mkdir -p $(OUTPUT) && \
