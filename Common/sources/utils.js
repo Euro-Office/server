@@ -49,9 +49,9 @@ var g_oIpFilterRules = function() {
   var res = [];
   for (var i = 0; i < cfgIpFilterRules.length; ++i) {
     var rule = cfgIpFilterRules[i];
-    var regExpStr = rule[1].split('*').map(escapeStringRegexp).join('.*');
-    var exp = new RegExp("^" + regExpStr + "$", 'i');
-    res.push({allow: rule[0], exp: exp});
+    var regExpStr = rule['address'].split('*').map(escapeStringRegexp).join('.*');
+    var exp = new RegExp('^' + regExpStr + '$', 'i');
+    res.push({allow: rule['allowed'], exp: exp});
   }
   return res;
 }();

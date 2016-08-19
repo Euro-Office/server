@@ -101,7 +101,7 @@
 				"filesremovedatonce": 10
 			},
 			"ipfilter": {
-				"rules": [[true, "*"]],
+				"rules": [{"address": "*", "allowed": true}],
 				"useforrequest": false,
 				"errorcode": 401
 			}
