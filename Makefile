@@ -45,7 +45,7 @@ endif
 ifeq ($(PLATFORM),win)
 FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icudt55$(SHARED_EXT)
 FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icuuc55$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/$(TARGET)/icudt.dll
+FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/$(TARGET)/release/icudt.dll
 endif
 
 FILE_CONVERTER_FILES += ../core/build/bin/$(TARGET)/x2t$(EXEC_EXT)
