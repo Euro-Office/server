@@ -63,7 +63,7 @@ SCHEMA = $(OUTPUT)/$(SCHEMA_DIR)/
 
 TOOLS_DIR = tools
 TOOLS_FILES = ../core/build/bin/AllFontsGen/$(TARGET)
-TOOLS = $(OUTPUT)/$(TOOLS_DIR)/
+TOOLS = $(OUTPUT)/$(TOOLS_DIR)
 
 LICENSE_FILES = LICENSE.txt 3rd-Party.txt license/
 LICENSE = $(addsuffix $(OUTPUT)/, LICENSE_FILES)
