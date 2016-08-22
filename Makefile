@@ -35,8 +35,17 @@ TARGET := $(PLATFORM)_$(ARCHITECTURE)
 
 FILE_CONVERTER = $(OUTPUT)/FileConverter/bin
 FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/*$(SHARED_EXT)
+
+ifeq ($(PLATFORM),linux)
 FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/libicudata$(SHARED_EXT)
 FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/libicuuc$(SHARED_EXT)
+endif
+
+ifeq ($(PLATFORM),win)
+FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icudt$(SHARED_EXT)
+FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icuuc$(SHARED_EXT)
+endif
+
 FILE_CONVERTER_FILES += ../core/build/bin/$(TARGET)/x2t$(EXEC_EXT)
 FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/$(TARGET)/icudtl_dat.S
 
