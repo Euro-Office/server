@@ -238,6 +238,7 @@ exports.getChangesPromise = function (docId, optStartIndex, optEndIndex) {
     if (null != optStartIndex && null != optEndIndex) {
       getCondition += ' AND change_id>=' + optStartIndex + ' AND change_id<' + optEndIndex;
     }
+    getCondition += ' ORDER BY change_id ASC';
     getDataFromTable(c_oTableId.changes, "*", getCondition, function(error, result) {
       if (error) {
         reject(error);
