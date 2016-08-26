@@ -174,7 +174,6 @@ if (cluster.isMaster) {
           ipString = ip.toIPv4Address().toString();
         }
       }
-      console.log('ipString'+ipString);
       status = utils.checkIpFilter(ipString);
     }
     if (status > 0) {
