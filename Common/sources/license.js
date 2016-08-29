@@ -49,8 +49,9 @@ const buildDate = '6/29/2016';
 const oBuildDate = new Date(buildDate);
 
 exports.readLicense = function*() {
-	const resMax = {count: 999999, type: constants.LICENSE_RESULT.Success};
-	var res = {count: 1, type: constants.LICENSE_RESULT.Error, light: false};
+	const c_LR = constants.LICENSE_RESULT;
+	const resMax = {count: 999999, type: c_LR.Success};
+	var res = {count: 1, type: c_LR.Error, light: false};
 	var checkFile = false;
 	try {
 		var oFile = fs.readFileSync(configL.get('license_file')).toString();
@@ -64,26 +65,27 @@ exports.readLicense = function*() {
 		const publicKey = '-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDRhGF7X4A0ZVlEg594WmODVVUI\niiPQs04aLmvfg8SborHss5gQXu0aIdUT6nb5rTh5hD2yfpF2WIW6M8z0WxRhwicg\nXwi80H1aLPf6lEPPLvN29EhQNjBpkFkAJUbS8uuhJEeKw0cE49g80eBBF4BCqSL6\nPFQbP9/rByxdxEoAIQIDAQAB\n-----END PUBLIC KEY-----\n';
 		if (verify.verify(publicKey, sign, 'hex')) {
 			const endDate = new Date(oLicense['end_date']);
-			const checkDate = (true === oLicense['trial'] || 'true' === oLicense['trial']) ? new Date() : oBuildDate; // Someone who likes to put json string instead of bool
+			const isTrial = (true === oLicense['trial'] || 'true' === oLicense['trial']);
+			const checkDate = isTrial ? new Date() : oBuildDate; // Someone who likes to put json string instead of bool
 			if (endDate >= checkDate && 2 <= oLicense['version']) {
 				res.count = Math.min(Math.max(res.count, oLicense['process'] >> 0), resMax.count);
-				res.type = constants.LICENSE_RESULT.Success;
+				res.type = c_LR.Success;
 			} else {
-				res.type = constants.LICENSE_RESULT.Expired;
+				res.type = isTrial ? c_LR.ExpiredTrial : c_LR.Expired;
 			}
 
 			res.light = (true === oLicense['light'] || 'true' === oLicense['light']); // Someone who likes to put json string instead of bool
 		}
 	} catch (e) {
 		res.count = 1;
-		res.type = constants.LICENSE_RESULT.Error;
+		res.type = c_LR.Error;
 
 		if (checkFile || (yield* _getFileState())) {
-			res.type = constants.LICENSE_RESULT.Expired;
+			res.type = c_LR.ExpiredTrial;
 		}
 	}
-	if (res.type === constants.LICENSE_RESULT.Expired) {
-		res.count = 0;
+	if (res.type === c_LR.Expired || res.type === c_LR.ExpiredTrial) {
+		res.count = 1;
 		logger.error('License Expired!!!');
 	}
 

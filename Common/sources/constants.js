@@ -41,7 +41,8 @@ exports.LICENSE_RESULT = {
   Expired     : 2,
   Success     : 3,
   UnknownUser : 4,
-  Connections : 5
+  Connections : 5,
+  ExpiredTrial: 6
 };
 
 exports.LICENSE_CONNECTIONS = 21;

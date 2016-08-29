@@ -1881,9 +1881,10 @@ exports.install = function(server, callbackFunction) {
   function _checkLicense(conn) {
     return co(function* () {
       try {
+        const c_LR = constants.LICENSE_RESULT;
         var licenseType = licenseInfo.type;
-        if (constants.LICENSE_RESULT.Success !== licenseType) {
-          licenseType = constants.LICENSE_RESULT.Success;
+        if (c_LR.Error === licenseType) {
+          licenseType = c_LR.Success;
 
           var count = constants.LICENSE_CONNECTIONS;
           var cursor = '0', sum = 0, scanRes, tmp, length, i, users;
@@ -1894,7 +1895,7 @@ exports.install = function(server, callbackFunction) {
 
             for (i = 0; i < length; ++i) {
               if (sum >= count) {
-                licenseType = constants.LICENSE_RESULT.Connections;
+                licenseType = c_LR.Connections;
                 break;
               }
 
@@ -1903,7 +1904,7 @@ exports.install = function(server, callbackFunction) {
             }
 
             if (sum >= count) {
-              licenseType = constants.LICENSE_RESULT.Connections;
+              licenseType = c_LR.Connections;
               break;
             }
 
