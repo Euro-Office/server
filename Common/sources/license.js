@@ -40,18 +40,20 @@ const utils = require('./utils');
 const pubsubRedis = require('./../../DocService/sources/pubsubRedis');
 const redisClient = pubsubRedis.getClientRedis();
 
-const cfgRedisPrefix = config.get('services.CoAuthoring.redis.prefix');
-const redisKeyLicense = cfgRedisPrefix + constants.REDIS_KEY_LICENSE;
-
 const buildVersion = '4.0.0';
 const buildNumber = 19;
 const buildDate = '6/29/2016';
 const oBuildDate = new Date(buildDate);
+const oPackageType = constants.PACKAGE_TYPE_OS;
+
+const cfgRedisPrefix = config.get('services.CoAuthoring.redis.prefix');
+const redisKeyLicense = cfgRedisPrefix + ((constants.PACKAGE_TYPE_OS === oPackageType) ? constants.REDIS_KEY_LICENSE :
+	constants.REDIS_KEY_LICENSE_T);
 
 exports.readLicense = function*() {
 	const c_LR = constants.LICENSE_RESULT;
 	const resMax = {count: 999999, type: c_LR.Success};
-	var res = {count: 1, type: c_LR.Error, light: false};
+	var res = {count: 1, type: c_LR.Error, light: false, packageType: oPackageType};
 	var checkFile = false;
 	try {
 		var oFile = fs.readFileSync(configL.get('license_file')).toString();
@@ -80,8 +82,19 @@ exports.readLicense = function*() {
 		res.count = 1;
 		res.type = c_LR.Error;
 
-		if (checkFile || (yield* _getFileState())) {
+		if (checkFile) {
 			res.type = c_LR.ExpiredTrial;
+		} else {
+			if (constants.PACKAGE_TYPE_OS === oPackageType) {
+				if (yield* _getFileState()) {
+					res.type = c_LR.ExpiredTrial;
+				}
+			} else {
+				res.type = (yield* _getFileState()) ? c_LR.Success : c_LR.ExpiredTrial;
+				if (res.type === c_LR.Success) {
+					return res;
+				}
+			}
 		}
 	}
 	if (res.type === c_LR.Expired || res.type === c_LR.ExpiredTrial) {
@@ -97,8 +110,21 @@ exports.readLicense = function*() {
 };
 
 function* _getFileState() {
-	return yield utils.promiseRedis(redisClient, redisClient.hget, redisKeyLicense, redisKeyLicense);
+	const val = yield utils.promiseRedis(redisClient, redisClient.hget, redisKeyLicense, redisKeyLicense);
+	if (constants.PACKAGE_TYPE_OS === oPackageType) {
+		return val;
+	}
+
+	if (null === val) {
+		yield* _updateFileState();
+		return true;
+	}
+
+	var now = new Date();
+	now.setMonth(now.getMonth() - 1);
+	return (0 >= (now - new Date(val)));
 }
 function* _updateFileState() {
-	yield utils.promiseRedis(redisClient, redisClient.hset, redisKeyLicense, redisKeyLicense, redisKeyLicense);
+	const val = constants.PACKAGE_TYPE_OS === oPackageType ? redisKeyLicense : new Date();
+	yield utils.promiseRedis(redisClient, redisClient.hset, redisKeyLicense, redisKeyLicense, val);
 }

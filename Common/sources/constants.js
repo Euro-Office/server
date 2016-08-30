@@ -156,6 +156,9 @@ exports.EDITOR_TYPE_SPREADSHEET = 1;
 exports.EDITOR_TYPE_PRESENTATION = 2;
 exports.EDITOR_TYPE_CONVERTATION = 3;
 
+exports.PACKAGE_TYPE_OS = 0;
+exports.PACKAGE_TYPE_I = 1;
+
 exports.REDIS_KEY_PUBSUB = 'pubsub';
 exports.REDIS_KEY_SAVE_LOCK = 'savelock:';
 exports.REDIS_KEY_PRESENCE_HASH = 'presence:hash:';
@@ -170,6 +173,7 @@ exports.REDIS_KEY_FORCE_SAVE = 'forcesave:';
 exports.REDIS_KEY_SAVED = 'saved:';
 exports.REDIS_KEY_SHUTDOWN = 'shutdown';
 exports.REDIS_KEY_LICENSE = 'license';
+exports.REDIS_KEY_LICENSE_T = 'licenseT';
 
 exports.SHUTDOWN_CODE = 4001;
 exports.SHUTDOWN_REASON = 'server shutdown';
