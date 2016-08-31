@@ -82,10 +82,7 @@ exports.loadTable = function (tableId, callbackFunction) {
 	baseConnector.sqlQuery(sqlCommand, callbackFunction);
 };
 exports.insertCallback = function(id, href, baseUrl, callbackFunction) {
-  var sqlCommand = "INSERT " + baseConnector.ignoreStr + " INTO " + tableCallbacks + " VALUES (" + baseConnector.sqlEscape(id) + "," +
-    baseConnector.sqlEscape(href) + "," + baseConnector.sqlEscape(baseUrl) + ") " + baseConnector.doNothingStr + ";";
-
-  baseConnector.sqlQuery(sqlCommand, callbackFunction);
+  baseConnector.insertCallback(id, href, baseUrl, callbackFunction);
 };
 exports.insertCallbackPromise = function(id, href, baseUrl) {
   return new Promise(function(resolve, reject) {
