@@ -13,6 +13,7 @@
       "./FileConverter/bin/DoctRenderer.config",
       "./Metrics/package.json",
       "./SpellChecker/package.json",
+      "./Winser/package.json",
       "./Common/config/*.json",
       "./Common/config/log4js/*.json",
       "./Metrics/config/config.js"
