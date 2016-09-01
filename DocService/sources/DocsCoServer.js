@@ -610,6 +610,9 @@ function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl, 
     var getRes = yield* getCallback(docId);
     if (getRes) {
       callback = getRes.server;
+      if (!baseUrl) {
+        baseUrl = getRes.baseUrl;
+      }
     }
   }
   if (null == callback) {
@@ -747,7 +750,7 @@ function* cleanDocumentOnExit(docId, deleteChanges) {
 function* cleanDocumentOnExitNoChanges(docId, opt_userId) {
   var userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
   // Отправляем, что все ушли и нет изменений (чтобы выставить статус на сервере об окончании редактирования)
-  yield* sendStatusDocument(docId, c_oAscChangeBase.All, userAction);
+  yield* sendStatusDocument(docId, c_oAscChangeBase.No, userAction);
   //если пользователь зашел в документ, соединение порвалось, на сервере удалилась вся информация,
   //при восстановлении соединения userIndex сохранится и он совпадет с userIndex следующего пользователя
   yield* cleanDocumentOnExit(docId, false);
