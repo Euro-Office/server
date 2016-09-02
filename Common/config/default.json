@@ -1,4 +1,4 @@
-﻿{
+{
 	"statsd": {
 		"useMetrics": false,
 		"host": "localhost",
