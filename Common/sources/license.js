@@ -103,7 +103,7 @@ exports.readLicense = function*() {
 	}
 
 	if (checkFile) {
-		yield* _updateFileState();
+		yield* _updateFileState(true);
 	}
 
 	return res;
@@ -116,7 +116,7 @@ function* _getFileState() {
 	}
 
 	if (null === val) {
-		yield* _updateFileState();
+		yield* _updateFileState(false);
 		return true;
 	}
 
@@ -124,7 +124,7 @@ function* _getFileState() {
 	now.setMonth(now.getMonth() - 1);
 	return (0 >= (now - new Date(val)));
 }
-function* _updateFileState() {
-	const val = constants.PACKAGE_TYPE_OS === oPackageType ? redisKeyLicense : new Date();
+function* _updateFileState(state) {
+	const val = constants.PACKAGE_TYPE_OS === oPackageType ? redisKeyLicense : (state ? new Date(1) : new Date());
 	yield utils.promiseRedis(redisClient, redisClient.hset, redisKeyLicense, redisKeyLicense, val);
 }
