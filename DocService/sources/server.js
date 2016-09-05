@@ -104,6 +104,8 @@ if (cluster.isMaster) {
   const path = require('path');
   const bodyParser = require("body-parser");
   const mime = require('mime');
+  const forwarded = require('forwarded');
+  const ipaddr = require('ipaddr.js');
   const docsCoServer = require('./DocsCoServer');
   const canvasService = require('./canvasservice');
   const converterService = require('./converterservice');
@@ -112,6 +114,8 @@ if (cluster.isMaster) {
   const constants = require('./../../Common/sources/constants');
   const utils = require('./../../Common/sources/utils');
   const configStorage = configCommon.get('storage');
+  var configIpFilter = configCommon.get('services.CoAuthoring.ipfilter');
+  var cfgIpFilterEseForRequest = configIpFilter.get('useforrequest');
   const app = express();
   var server = null;
 
@@ -132,7 +136,7 @@ if (cluster.isMaster) {
     var cfgStorageFolderName = configStorage.get('storageFolderName');
     app.use('/' + cfgBucketName + '/' + cfgStorageFolderName, (req, res, next) => {
       var index = req.url.lastIndexOf('/');
-      if (-1 != index) {
+      if ('GET' === req.method && -1 != index) {
         var contentDisposition = req.query['disposition'] || 'attachment';
         var sendFileOptions = {
           root: configStorage.get('fs.folderPath'),
@@ -154,11 +158,30 @@ if (cluster.isMaster) {
           }
         });
       } else {
-        req.sendStatus(404)
+        res.sendStatus(404)
       }
     });
   }
-
+  function checkClientIp(req, res, next) {
+    var status = 0;
+    if (cfgIpFilterEseForRequest) {
+      var addresses = forwarded(req);
+      var ipString = addresses[addresses.length - 1];
+      //IPv6 -> IPv4
+      if (ipaddr.IPv6.isValid(ipString)) {
+        var ip = ipaddr.IPv6.parse(ipString);
+        if (ip.isIPv4MappedAddress()) {
+          ipString = ip.toIPv4Address().toString();
+        }
+      }
+      status = utils.checkIpFilter(ipString);
+    }
+    if (status > 0) {
+      res.sendStatus(status);
+    } else {
+      next();
+    }
+  }
   // Если захочется использовать 'development' и 'production',
   // то с помощью app.settings.env (https://github.com/strongloop/express/issues/936)
   // Если нужна обработка ошибок, то теперь она такая https://github.com/expressjs/errorhandler
@@ -171,8 +194,8 @@ if (cluster.isMaster) {
       res.send('Server is functioning normally. Version: ' + docsCoServer.version);
     });
 
-    app.get('/coauthoring/CommandService.ashx', docsCoServer.commandFromServer);
-    app.post('/coauthoring/CommandService.ashx', docsCoServer.commandFromServer);
+    app.get('/coauthoring/CommandService.ashx', checkClientIp, docsCoServer.commandFromServer);
+    app.post('/coauthoring/CommandService.ashx', checkClientIp, docsCoServer.commandFromServer);
 
     if (config.has('server.fonts_route')) {
       var fontsRoute = config.get('server.fonts_route');
@@ -181,12 +204,12 @@ if (cluster.isMaster) {
       app.get('/' + fontsRoute + 'odttf/:fontname', fontService.getFont);
     }
 
-    app.get('/ConvertService.ashx', converterService.convert);
-    app.post('/ConvertService.ashx', converterService.convert);
+    app.get('/ConvertService.ashx', checkClientIp, converterService.convert);
+    app.post('/ConvertService.ashx', checkClientIp, converterService.convert);
 
     var rawFileParser = bodyParser.raw({ inflate: true, limit: config.get('server.limits_tempfile_upload'), type: '*/*' });
-    app.get('/FileUploader.ashx', rawFileParser, fileUploaderService.uploadTempFile);
-    app.post('/FileUploader.ashx', rawFileParser, fileUploaderService.uploadTempFile);
+    app.get('/FileUploader.ashx', checkClientIp, rawFileParser, fileUploaderService.uploadTempFile);
+    app.post('/FileUploader.ashx', checkClientIp, rawFileParser, fileUploaderService.uploadTempFile);
 
     var docIdRegExp = new RegExp("^[" + constants.DOC_ID_PATTERN + "]*$", 'i');
     app.param('docid', (req, res, next, val) => {
@@ -207,7 +230,7 @@ if (cluster.isMaster) {
     app.post('/upload/:docid/:userid/:index/:vkey?', rawFileParser, fileUploaderService.uploadImageFile);
 
     app.post('/downloadas/:docid', rawFileParser, canvasService.downloadAs);
-    app.get('/healthcheck', converterService.convertHealthCheck);
+    app.get('/healthcheck', checkClientIp, converterService.convertHealthCheck);
   });
 
   process.on('message', (msg) => {

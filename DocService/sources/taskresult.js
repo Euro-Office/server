@@ -83,36 +83,8 @@ TaskResultData.prototype.completeDefaults = function() {
   }
 };
 
-function getUpsertString(task, opt_updateUserIndex) {
-  task.completeDefaults();
-  var dateNow = sqlBase.getDateTime(new Date());
-  var commandArg = [task.key, task.status, task.statusInfo, dateNow, task.title, task.userIndex, task.changeId];
-  var commandArgEsc = commandArg.map(function(curVal) {
-    return sqlBase.baseConnector.sqlEscape(curVal)
-  });
-  var sql = 'INSERT INTO task_result ( id, status, status_info, last_open_date, title,' +
-    ' user_index, change_id  ) VALUES (' + commandArgEsc.join(', ') + ') ON DUPLICATE KEY UPDATE' +
-    ' last_open_date = ' + sqlBase.baseConnector.sqlEscape(dateNow);
-  if (opt_updateUserIndex) {
-    //todo LAST_INSERT_ID in posgresql - RETURNING
-    sql += ', user_index = LAST_INSERT_ID(user_index + 1);';
-  } else {
-    sql += ';';
-  }
-  return sql;
-}
-
 function upsert(task, opt_updateUserIndex) {
-  return new Promise(function(resolve, reject) {
-    var sqlCommand = getUpsertString(task, opt_updateUserIndex);
-    sqlBase.baseConnector.sqlQuery(sqlCommand, function(error, result) {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(result);
-      }
-    });
-  });
+  return sqlBase.baseConnector.upsert(task, opt_updateUserIndex);
 }
 
 function getSelectString(docId) {
@@ -281,7 +253,6 @@ exports.upsert = upsert;
 exports.select = select;
 exports.update = update;
 exports.updateIf = updateIf;
-exports.addRandomKey = addRandomKey;
 exports.addRandomKeyTask = addRandomKeyTask;
 exports.remove = remove;
 exports.getExpired = getExpired;

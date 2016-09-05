@@ -129,9 +129,18 @@ var checkDocumentExpire = function() {
     }
   });
 };
+var documentExpireJob = function(opt_isStart) {
+  if (!opt_isStart) {
+    logger.warn('checkDocumentExpire restart');
+  }
+  new cron.CronJob(cfgExpDocumentsCron, checkDocumentExpire, documentExpireJob, true);
+};
+documentExpireJob(true);
 
-var documentExpireJob = new cron.CronJob(cfgExpDocumentsCron, checkDocumentExpire);
-documentExpireJob.start();
-
-var fileExpireJob = new cron.CronJob(cfgExpFilesCron, checkFileExpire);
-fileExpireJob.start();
+var fileExpireJob = function(opt_isStart) {
+  if (!opt_isStart) {
+    logger.warn('checkFileExpire restart');
+  }
+  new cron.CronJob(cfgExpFilesCron, checkFileExpire, fileExpireJob, true);
+};
+fileExpireJob(true);

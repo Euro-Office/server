@@ -29,15 +29,32 @@
  * terms at http://creativecommons.org/licenses/by-sa/4.0/legalcode
  *
  */
-
+var config = require('config');
 var fs = require('fs');
 var path = require('path');
 var url = require('url');
 var request = require('request');
 var co = require('co');
+var URI = require("uri-js");
+const escapeStringRegexp = require('escape-string-regexp');
 var constants = require('./constants');
 
+var configIpFilter = config.get('services.CoAuthoring.ipfilter');
+var cfgIpFilterRules = configIpFilter.get('rules');
+var cfgIpFilterErrorCode = configIpFilter.get('errorcode');
+
 var ANDROID_SAFE_FILENAME = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-+,@£$€!½§~\'=()[]{}0123456789';
+
+var g_oIpFilterRules = function() {
+  var res = [];
+  for (var i = 0; i < cfgIpFilterRules.length; ++i) {
+    var rule = cfgIpFilterRules[i];
+    var regExpStr = rule['address'].split('*').map(escapeStringRegexp).join('.*');
+    var exp = new RegExp('^' + regExpStr + '$', 'i');
+    res.push({allow: rule['allowed'], exp: exp});
+  }
+  return res;
+}();
 
 exports.addSeconds = function(date, sec) {
   date.setSeconds(date.getSeconds() + sec);
@@ -192,19 +209,16 @@ exports.getContentDisposition = getContentDisposition;
 exports.getContentDispositionS3 = getContentDispositionS3;
 function downloadUrlPromise(uri, optTimeout, optLimit) {
   return new Promise(function (resolve, reject) {
-    //todo может стоит делать url.parse, а потом с каждой частью отдельно работать
-    //для ссылок с руссикими буквами приходит 404
-    if (!containsAllAsciiNP(uri)) {
-      uri = encodeURI(uri);
-    }
+    //IRI to URI
+    uri = URI.serialize(URI.parse(uri));
     var urlParsed = url.parse(uri);
     //if you expect binary data, you should set encoding: null
     var options = {uri: urlParsed, encoding: null, timeout: optTimeout};
-    if (urlParsed.protocol === 'https:') {
-      //TODO: Check how to correct handle a ssl link
-      urlParsed.rejectUnauthorized = false;
-      options.rejectUnauthorized = false;
-    }
+
+    //TODO: Check how to correct handle a ssl link
+    urlParsed.rejectUnauthorized = false;
+    options.rejectUnauthorized = false;
+
     request.get(options, function (err, response, body) {
       if (err) {
         reject(err);
@@ -227,18 +241,15 @@ function downloadUrlPromise(uri, optTimeout, optLimit) {
 }
 function postRequestPromise(uri, postData, optTimeout) {
   return new Promise(function(resolve, reject) {
-    //todo может стоит делать url.parse, а потом с каждой частью отдельно работать
-    //для ссылок с руссикими буквами приходит 404
-    if (!containsAllAsciiNP(uri)) {
-      uri = encodeURI(uri);
-    }
+    //IRI to URI
+    uri = URI.serialize(URI.parse(uri));
     var urlParsed = url.parse(uri);
     var options = {uri: urlParsed, body: postData, encoding: 'utf8', headers: {'Content-Type': 'application/json'}, timeout: optTimeout};
-    if (urlParsed.protocol === 'https:') {
-      //TODO: Check how to correct handle a ssl link
-      urlParsed.rejectUnauthorized = false;
-      options.rejectUnauthorized = false;
-    }
+
+    //TODO: Check how to correct handle a ssl link
+    urlParsed.rejectUnauthorized = false;
+    options.rejectUnauthorized = false;
+
     request.post(options, function(err, response, body) {
       if (err) {
         reject(err);
@@ -337,7 +348,7 @@ exports.fillXmlResponse = function(res, uri, error) {
   res.setHeader('Content-Length', body.length);
   res.send(body);
 };
-exports.promiseCreateWriteStream = function(strPath, optOptions) {
+function promiseCreateWriteStream(strPath, optOptions) {
   return new Promise(function(resolve, reject) {
     var file = fs.createWriteStream(strPath, optOptions);
     var errorCallback = function(e) {
@@ -350,7 +361,8 @@ exports.promiseCreateWriteStream = function(strPath, optOptions) {
     });
   });
 };
-exports.promiseCreateReadStream = function(strPath) {
+exports.promiseCreateWriteStream = promiseCreateWriteStream;
+function promiseCreateReadStream(strPath) {
   return new Promise(function(resolve, reject) {
     var file = fs.createReadStream(strPath);
     var errorCallback = function(e) {
@@ -363,6 +375,7 @@ exports.promiseCreateReadStream = function(strPath) {
     });
   });
 };
+exports.promiseCreateReadStream = promiseCreateReadStream;
 exports.compareStringByLength = function(x, y) {
   if (x && y) {
     if (x.length == y.length) {
@@ -480,3 +493,35 @@ function changeOnlyOfficeUrl(inputUrl, strPath, optFilename) {
   return inputUrl + constants.ONLY_OFFICE_URL_PARAM + '=' + constants.OUTPUT_NAME + path.extname(optFilename || strPath);
 }
 exports.changeOnlyOfficeUrl = changeOnlyOfficeUrl;
+function pipeStreams(from, to, isEnd) {
+  return new Promise(function(resolve, reject) {
+    from.pipe(to, {end: isEnd});
+    from.on('end', function() {
+      resolve();
+    });
+    from.on('error', function(e) {
+      reject(e);
+    });
+  });
+}
+exports.pipeStreams = pipeStreams;
+function* pipeFiles(from, to) {
+  var fromStream = yield promiseCreateReadStream(from);
+  var toStream = yield promiseCreateWriteStream(to);
+  yield pipeStreams(fromStream, toStream, true);
+}
+exports.pipeFiles = co.wrap(pipeFiles);
+function checkIpFilter(hostname) {
+  var status = 0;
+  for (var i = 0; i < g_oIpFilterRules.length; ++i) {
+    var rule = g_oIpFilterRules[i];
+    if (rule.exp.test(hostname)) {
+      if (!rule.allow) {
+        status = cfgIpFilterErrorCode;
+      }
+      break;
+    }
+  }
+  return status;
+}
+exports.checkIpFilter = checkIpFilter;

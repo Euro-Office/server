@@ -81,39 +81,8 @@ exports.loadTable = function (tableId, callbackFunction) {
 	var sqlCommand = "SELECT * FROM " + table + ";";
 	baseConnector.sqlQuery(sqlCommand, callbackFunction);
 };
-exports.upsertInTable = function (tableId, toInsert, toUpdate, callbackFunction) {
-  var table = getTableById(tableId);
-  var sqlCommand = "INSERT INTO " + table + " VALUES (";
-  for (var i = 0, l = toInsert.length; i < l; ++i) {
-    sqlCommand += baseConnector.sqlEscape(toInsert[i]);
-    if (i !== l - 1)
-      sqlCommand += ",";
-  }
-  sqlCommand += ") ON DUPLICATE KEY UPDATE ";
-  for (var i = 0, l = toUpdate.length; i + 1 < l; i += 2) {
-    sqlCommand += toUpdate[i] + "=" + baseConnector.sqlEscape(toUpdate[i+1]);
-    if (i + 1 !== l - 1)
-      sqlCommand += ",";
-  }
-  sqlCommand += ";";
-  baseConnector.sqlQuery(sqlCommand, callbackFunction);
-};
-exports.upsertInTablePromise = function (tableId, toInsert, toUpdate) {
-  return new Promise(function(resolve, reject) {
-    exports.upsertInTable(tableId, toInsert, toUpdate, function(error, result) {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(result);
-      }
-    });
-  });
-};
 exports.insertCallback = function(id, href, baseUrl, callbackFunction) {
-  var sqlCommand = "INSERT IGNORE INTO " + tableCallbacks + " VALUES (" + baseConnector.sqlEscape(id) + "," +
-    baseConnector.sqlEscape(href) + "," + baseConnector.sqlEscape(baseUrl) + ");";
-
-  baseConnector.sqlQuery(sqlCommand, callbackFunction);
+  baseConnector.insertCallback(id, href, baseUrl, callbackFunction);
 };
 exports.insertCallbackPromise = function(id, href, baseUrl) {
   return new Promise(function(resolve, reject) {
@@ -266,6 +235,7 @@ exports.getChangesPromise = function (docId, optStartIndex, optEndIndex) {
     if (null != optStartIndex && null != optEndIndex) {
       getCondition += ' AND change_id>=' + optStartIndex + ' AND change_id<' + optEndIndex;
     }
+    getCondition += ' ORDER BY change_id ASC';
     getDataFromTable(c_oTableId.changes, "*", getCondition, function(error, result) {
       if (error) {
         reject(error);
@@ -279,7 +249,7 @@ exports.getChanges = function (docId, callback) {
 	lockCriticalSection(docId, function () {_getChanges(docId, callback);});
 };
 function _getChanges (docId, callback) {
-	getDataFromTable(c_oTableId.changes, "*", "id='" + docId + "'",
+	getDataFromTable(c_oTableId.changes, "*", "id='" + docId + "' ORDER BY change_id ASC",
 		function (error, result) {unLockCriticalSection(docId); if (callback) callback(error, result);});
 }
 

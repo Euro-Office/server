@@ -52,7 +52,8 @@
 				"limits_image_download_timeout": 120,
 				"editor_settings_spellchecker_url": "/spellchecker",
 				"callbackRequestTimeout": 120,
-				"healthcheckfilepath": "../public/healthcheck.docx"
+				"healthcheckfilepath": "../public/healthcheck.docx",
+				"savetimeoutdelay": 5000
 			},
 			"utils": {
 				"utils_common_fontdir": "null",
@@ -62,16 +63,17 @@
 				"limits_image_types_copy": "jpg;png;gif;bmp;emf;wmf;svg;txt;bin"
 			},
 			"sql": {
-				"type": "mysql",
+				"type": "postgres",
 				"tableChanges": "doc_changes",
 				"tableCallbacks": "doc_callbacks",
 				"tableResult": "task_result",
 				"dbHost": "localhost",
-				"dbPort": 3306,
+				"dbPort": 5432,
 				"dbName": "onlyoffice",
-				"dbUser": "root",
+				"dbUser": "onlyoffice",
 				"dbPass": "onlyoffice",
 				"charset": "utf8",
+				"connectionlimit": 10,
 				"max_allowed_packet": 1048575
 			},
 			"redis": {
@@ -98,6 +100,11 @@
 				"files": 604800,
 				"filesCron": "00 00 */1 * * *",
 				"filesremovedatonce": 10
+			},
+			"ipfilter": {
+				"rules": [{"address": "*", "allowed": true}],
+				"useforrequest": false,
+				"errorcode": 401
 			}
 		}
 	},

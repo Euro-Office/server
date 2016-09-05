@@ -119,24 +119,14 @@ function clear(taskqueue) {
   taskqueue.channelConvertResponseReceive = null;
 }
 function repeat(taskqueue) {
-  var i;
-  for (i = 0; i < taskqueue.addTaskStore.length; ++i) {
+  //repeat addTask because they are lost after the reconnection
+  //unlike unconfirmed task will come again
+  //acknowledge data after reconnect raises an exception 'PRECONDITION_FAILED - unknown delivery tag'
+  for (var i = 0; i < taskqueue.addTaskStore.length; ++i) {
     var elem = taskqueue.addTaskStore[i];
     addTask(taskqueue, elem.task, elem.priority, function () {});
   }
-  for (i = 0; i < taskqueue.addResponseStore.length; ++i) {
-    addResponse(taskqueue, taskqueue.addResponseStore[i], function () {});
-  }
-  for (i = 0; i < taskqueue.removeTaskStore.length; ++i) {
-    removeTask(taskqueue, taskqueue.removeTaskStore[i]);
-  }
-  for (i = 0; i < taskqueue.removeResponseStore.length; ++i) {
-    removeResponse(taskqueue, taskqueue.removeResponseStore[i]);
-  }
   taskqueue.addTaskStore.length = 0;
-  taskqueue.addResponseStore.length = 0;
-  taskqueue.removeTaskStore.length = 0;
-  taskqueue.removeResponseStore.length = 0;
 }
 function addTask(taskqueue, content, priority, callback) {
   var options = {persistent: true, priority: priority};
@@ -161,9 +151,6 @@ function TaskQueueRabbitMQ() {
   this.channelConvertResponse = null;
   this.channelConvertResponseReceive = null;
   this.addTaskStore = [];
-  this.addResponseStore = [];
-  this.removeTaskStore = [];
-  this.removeResponseStore = [];
 }
 util.inherits(TaskQueueRabbitMQ, events.EventEmitter);
 TaskQueueRabbitMQ.prototype.init = function (isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, callback) {
@@ -214,7 +201,6 @@ TaskQueueRabbitMQ.prototype.addResponse = function (task) {
         }
       });
     } else {
-      t.addResponseStore.push(content);
       resolve();
     }
   });
@@ -224,8 +210,6 @@ TaskQueueRabbitMQ.prototype.removeTask = function (data) {
   return new Promise(function (resolve, reject) {
     if (null != t.channelConvertTaskReceive) {
       removeTask(t, data);
-    } else {
-      t.removeTaskStore.push(data);
     }
     resolve();
   });
@@ -235,8 +219,6 @@ TaskQueueRabbitMQ.prototype.removeResponse = function (data) {
   return new Promise(function (resolve, reject) {
     if (null != t.channelConvertResponseReceive) {
       removeResponse(t, data);
-    } else {
-      t.removeResponseStore.push(data);
     }
     resolve();
   });

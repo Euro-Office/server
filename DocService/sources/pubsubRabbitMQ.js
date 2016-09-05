@@ -54,14 +54,16 @@ function init(pubsub, callback) {
       pubsub.exchangePublish = yield rabbitMQCore.assertExchangePromise(pubsub.channelPublish, cfgRabbitExchangePubSub,
         'fanout', {durable: true});
 
-      var channelReceive = yield rabbitMQCore.createChannelPromise(conn);
-      var queue = yield rabbitMQCore.assertQueuePromise(channelReceive, '', {autoDelete: true, exclusive: true});
-      channelReceive.bindQueue(queue, cfgRabbitExchangePubSub, '');
-      yield rabbitMQCore.consumePromise(channelReceive, queue, function (message) {
-        if (message) {
-          pubsub.emit('message', message.content.toString());
+      pubsub.channelReceive = yield rabbitMQCore.createChannelPromise(conn);
+      var queue = yield rabbitMQCore.assertQueuePromise(pubsub.channelReceive, '', {autoDelete: true, exclusive: true});
+      pubsub.channelReceive.bindQueue(queue, cfgRabbitExchangePubSub, '');
+      yield rabbitMQCore.consumePromise(pubsub.channelReceive, queue, function (message) {
+        if(null != pubsub.channelReceive){
+          if (message) {
+            pubsub.emit('message', message.content.toString());
+          }
+          pubsub.channelReceive.ack(message);
         }
-        channelReceive.ack(message);
       }, {noAck: false});
       //process messages received while reconnection time
       repeat(pubsub);
@@ -76,6 +78,7 @@ function init(pubsub, callback) {
 function clear(pubsub) {
   pubsub.channelPublish = null;
   pubsub.exchangePublish = null;
+  pubsub.channelReceive = null;
 }
 function repeat(pubsub) {
   for (var i = 0; i < pubsub.publishStore.length; ++i) {
@@ -92,6 +95,7 @@ function PubsubRabbitMQ() {
   this.connection = null;
   this.channelPublish = null;
   this.exchangePublish = null;
+  this.channelReceive = null;
   this.publishStore = [];
 }
 util.inherits(PubsubRabbitMQ, events.EventEmitter);

@@ -41,7 +41,8 @@ exports.LICENSE_RESULT = {
   Expired     : 2,
   Success     : 3,
   UnknownUser : 4,
-  Connections : 5
+  Connections : 5,
+  ExpiredTrial: 6
 };
 
 exports.LICENSE_CONNECTIONS = 21;
@@ -127,7 +128,6 @@ exports.CONVERT_DOWNLOAD = -81;
 exports.CONVERT_UNKNOWN_FORMAT = -82;
 exports.CONVERT_TIMEOUT = -83;
 exports.CONVERT_READ_FILE = -84;
-exports.CONVERT_MS_OFFCRYPTO = -85;
 exports.CONVERT_CORRUPTED = -86;
 exports.CONVERT_LIBREOFFICE = -87;
 exports.CONVERT_PARAMS = -88;
@@ -156,6 +156,9 @@ exports.EDITOR_TYPE_SPREADSHEET = 1;
 exports.EDITOR_TYPE_PRESENTATION = 2;
 exports.EDITOR_TYPE_CONVERTATION = 3;
 
+exports.PACKAGE_TYPE_OS = 0;
+exports.PACKAGE_TYPE_I = 1;
+
 exports.REDIS_KEY_PUBSUB = 'pubsub';
 exports.REDIS_KEY_SAVE_LOCK = 'savelock:';
 exports.REDIS_KEY_PRESENCE_HASH = 'presence:hash:';
@@ -170,6 +173,7 @@ exports.REDIS_KEY_FORCE_SAVE = 'forcesave:';
 exports.REDIS_KEY_SAVED = 'saved:';
 exports.REDIS_KEY_SHUTDOWN = 'shutdown';
 exports.REDIS_KEY_LICENSE = 'license';
+exports.REDIS_KEY_LICENSE_T = 'licenseT';
 
 exports.SHUTDOWN_CODE = 4001;
 exports.SHUTDOWN_REASON = 'server shutdown';

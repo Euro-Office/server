@@ -32,6 +32,7 @@
 
 var config = require('config');
 var co = require('co');
+const forwarded = require('forwarded');
 var taskResult = require('./taskresult');
 var logger = require('./../../Common/sources/logger');
 var utils = require('./../../Common/sources/utils');
@@ -74,7 +75,7 @@ function* getConvertStatus(cmd, selectRes, baseUrl) {
         status.err = constants.UNKNOWN;
         break;
       case taskResult.FileStatus.NeedPassword:
-        status.err = constants.CONVERT_DRM;
+        status.err = row.status_info;
         break;
     }
     var lastOpenDate = row.last_open_date;
@@ -150,12 +151,13 @@ function convertHealthCheck(req, res) {
       var docId = task.key;
       //put test file to storage
       var data = yield utils.readFile(cfgHealthCheckFilePath);
-      yield storage.putObject(docId + '/origin', data, data.length);
+      var format = 'docx';
+      yield storage.putObject(docId + '/origin.' + format, data, data.length);
       //convert
       var cmd = new commonDefines.InputCommand();
       cmd.setCommand('conv');
       cmd.setSaveKey(docId);
-      cmd.setFormat('docx');
+      cmd.setFormat(format);
       cmd.setDocId(docId);
       cmd.setTitle('Editor.bin');
       cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
@@ -200,7 +202,7 @@ function convertRequest(req, res) {
       cmd.setUrl(req.query['url']);
       cmd.setEmbeddedFonts(false);//req.query['embeddedfonts'];
       cmd.setFormat(req.query['filetype']);
-      var outputtype = req.query['outputtype'];
+      var outputtype = req.query['outputtype'] || '';
       docId = 'conv_' + req.query['key'] + '_' + outputtype;
       cmd.setDocId(docId);
       cmd.setTitle(constants.OUTPUT_NAME + '.' + outputtype);
@@ -211,8 +213,14 @@ function convertRequest(req, res) {
       cmd.setPassword(req.query['password']);
       var async = 'true' == req.query['async'];
 
-      var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req));
-      utils.fillXmlResponse(res, status.url, status.err);
+      if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== cmd.getOutputFormat()) {
+        var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req));
+        utils.fillXmlResponse(res, status.url, status.err);
+      } else {
+        var addresses = forwarded(req);
+        logger.error('Error convert unknown outputtype: query = %s from = %s docId = %s', JSON.stringify(req.query), addresses, docId);
+        utils.fillXmlResponse(res, undefined, constants.UNKNOWN);
+      }
     }
     catch (e) {
       logger.error('Error convert: docId = %s\r\n%s', docId, e.stack);

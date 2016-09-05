@@ -285,6 +285,7 @@ function CMailMergeSendData(obj) {
     this['recordFrom'] = obj['recordFrom'];
     this['recordTo'] = obj['recordTo'];
     this['recordCount'] = obj['recordCount'];
+    this['recordErrorCount'] = obj['recordErrorCount'];
     this['userId'] = obj['userId'];
     this['url'] = obj['url'];
     this['baseUrl'] = obj['baseUrl'];
@@ -299,6 +300,7 @@ function CMailMergeSendData(obj) {
     this['recordFrom'] = null;
     this['recordTo'] = null;
     this['recordCount'] = null;
+    this['recordErrorCount'] = null;
     this['userId'] = null;
     this['url'] = null;
     this['baseUrl'] = null;
@@ -358,6 +360,12 @@ CMailMergeSendData.prototype.getRecordCount = function() {
 };
 CMailMergeSendData.prototype.setRecordCount = function(v) {
   this['recordCount'] = v;
+};
+CMailMergeSendData.prototype.getRecordErrorCount = function() {
+  return this['recordErrorCount']
+};
+CMailMergeSendData.prototype.setRecordErrorCount = function(v) {
+  this['recordErrorCount'] = v;
 };
 CMailMergeSendData.prototype.getUserId = function() {
   return this['userId']
@@ -463,8 +471,8 @@ function OutputSfcData() {
   this['url'] = undefined;
   this['changesurl'] = undefined;
   this['changeshistory'] = undefined;
-  this['users'] = [];
-  this['actions'] = [];
+  this['users'] = undefined;
+  this['actions'] = undefined;
   this['mailMerge'] = undefined;
   this['userdata'] = undefined;
 }
@@ -544,6 +552,7 @@ function OutputMailMerge(mailMergeSendData) {
         break;
     }
     this['recordCount'] = mailMergeSendData.getRecordCount();
+    this['recordErrorCount'] = mailMergeSendData.getRecordErrorCount();
     this['to'] = null;
     this['recordIndex'] = null;
   } else {
@@ -555,6 +564,7 @@ function OutputMailMerge(mailMergeSendData) {
     this['type'] = null;
     this['recordCount'] = null;
     this['recordIndex'] = null;
+    this['recordErrorCount'] = null;
   }
 }
 OutputMailMerge.prototype.getRecordIndex = function() {
@@ -562,6 +572,12 @@ OutputMailMerge.prototype.getRecordIndex = function() {
 };
 OutputMailMerge.prototype.setRecordIndex = function(data) {
   return this['recordIndex'] = data;
+};
+OutputMailMerge.prototype.getRecordErrorCount = function() {
+  return this['recordErrorCount'];
+};
+OutputMailMerge.prototype.setRecordErrorCount = function(data) {
+  return this['recordErrorCount'] = data;
 };
 OutputMailMerge.prototype.getTo = function() {
   return this['to'];
@@ -670,8 +686,7 @@ var c_oAscEncodingsMap = {"437": 43, "720": 1, "737": 21, "775": 5, "850": 39, "
 var c_oAscCodePageUtf8 = 46;//65001
 var c_oAscUserAction = {
   Out: 0,
-  In: 1,
-  AllIn: 2
+  In: 1
 };
 var c_oAscServerCommandErrors = {
   NoError: 0,

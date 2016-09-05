@@ -32,6 +32,12 @@
       },
       "utils": {
         "utils_common_fontdir": "C:\\Windows\\Fonts"
+      },
+      "sql": {
+        "type": "mysql",
+        "dbPort": 3306,
+        "dbUser": "root",
+        "dbPass": "onlyoffice"
       }
     }
   },

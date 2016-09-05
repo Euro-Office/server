@@ -49,7 +49,7 @@
  * d) Когда пользователь остается один, после принятия чужих изменений начинается пункт 'а'
  *-----------------------------------------------------------------------------------------------------------------------
  *--------------------------------------------Схема работы с сервером----------------------------------------------------
- * а) Когда все уходят, спустя время c_oAscSaveTimeOutDelay на сервер документов шлется команда на сборку.
+ * а) Когда все уходят, спустя время cfgAscSaveTimeOutDelay на сервер документов шлется команда на сборку.
  * b) Если приходит статус '1' на CommandService.ashx, то удалось сохранить и поднять версию. Очищаем callback-и и
  * 	изменения из базы и из памяти.
  * с) Если приходит статус, отличный от '1'(сюда можно отнести как генерацию файла, так и работа внешнего подписчика
@@ -95,6 +95,8 @@ var pubsubService = require('./' + config.get('pubsub.name'));
 var queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 var cfgSpellcheckerUrl = config.get('server.editor_settings_spellchecker_url');
 var cfgCallbackRequestTimeout = config.get('server.callbackRequestTimeout');
+//The waiting time to document assembly when all out(not 0 in case of F5 in the browser)
+var cfgAscSaveTimeOutDelay = config.get('server.savetimeoutdelay');
 
 var cfgPubSubMaxChanges = config.get('pubsub.maxChanges');
 
@@ -183,7 +185,6 @@ var c_oAscChangeBase = {
   All: 2
 };
 
-var c_oAscSaveTimeOutDelay = 5000;	// Время ожидания для сохранения на сервере (для отработки F5 в браузере)
 var c_oAscLockTimeOutDelay = 500;	// Время ожидания для сохранения, когда зажата база данных
 
 var c_oAscRecalcIndexTypes = {
@@ -531,7 +532,10 @@ function* sendServerRequest(docId, uri, postData) {
 function parseUrl(callbackUrl) {
   var result = null;
   try {
-    var parseObject = url.parse(decodeURIComponent(callbackUrl));
+    //делать decodeURIComponent не нужно http://expressjs.com/en/4x/api.html#app.settings.table
+    //по умолчанию express использует 'query parser' = 'extended', но даже в 'simple' версии делается decode
+    //percent-encoded characters within the query string will be assumed to use UTF-8 encoding
+    var parseObject = url.parse(callbackUrl);
     var isHttps = 'https:' === parseObject.protocol;
     var port = parseObject.port;
     if (!port) {
@@ -601,11 +605,14 @@ function* setForceSave(docId, lastSave, savePathDoc) {
  * @param callback
  * @param baseUrl
  */
-function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl) {
+function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl, opt_userData) {
   if (!callback) {
     var getRes = yield* getCallback(docId);
-    if(getRes) {
+    if (getRes) {
       callback = getRes.server;
+      if (!baseUrl) {
+        baseUrl = getRes.baseUrl;
+      }
     }
   }
   if (null == callback) {
@@ -634,21 +641,14 @@ function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl) 
   var sendData = new commonDefines.OutputSfcData();
   sendData.setKey(docId);
   sendData.setStatus(status);
-  if(c_oAscServerStatus.Closed !== status){
+  if (c_oAscServerStatus.Closed !== status) {
     sendData.setUsers(participants);
-  } else {
-    sendData.setUsers(undefined);
   }
   if (userAction) {
-    var actions = [];
-    if (commonDefines.c_oAscUserAction.AllIn === userAction.type) {
-      for (var i = 0; i < participants.length; ++i) {
-        actions.push(new commonDefines.OutputAction(commonDefines.c_oAscUserAction.In, participants[i]));
-      }
-    } else {
-      actions.push(userAction);
-    }
-    sendData.setActions(actions);
+    sendData.setActions([userAction]);
+  }
+  if (opt_userData) {
+    sendData.setUserData(opt_userData);
   }
   var uri = callback.href;
   var replyData = null;
@@ -705,26 +705,34 @@ function dropUserFromDocument(docId, userId, description) {
 }
 
 // Подписка на эвенты:
-function* bindEvents(docId, callback, baseUrl, opt_userAction) {
+function* bindEvents(docId, callback, baseUrl, opt_userAction, opt_userData) {
   // Подписка на эвенты:
   // - если пользователей нет и изменений нет, то отсылаем статус "закрыто" и в базу не добавляем
   // - если пользователей нет, а изменения есть, то отсылаем статус "редактируем" без пользователей, но добавляем в базу
   // - если есть пользователи, то просто добавляем в базу
-  var bChangeBase = c_oAscChangeBase.Delete;
-  var getRes = yield* getCallback(docId);
+  var bChangeBase;
   var oCallbackUrl;
+  var getRes = yield* getCallback(docId);
   if (getRes) {
     oCallbackUrl = getRes.server;
+    bChangeBase = c_oAscChangeBase.Delete;
   } else {
     oCallbackUrl = parseUrl(callback);
-    if (null === oCallbackUrl) {
-      return commonDefines.c_oAscServerCommandErrors.ParseError;
-    }
     bChangeBase = c_oAscChangeBase.All;
+    if (null !== oCallbackUrl) {
+      if (utils.checkIpFilter(oCallbackUrl.host) > 0) {
+        logger.error('checkIpFilter error: docId = %s;url = %s', docId, callback);
+        //todo add new error type
+        oCallbackUrl = null;
+      }
+    }
   }
-  var userAction = opt_userAction ? opt_userAction : new commonDefines.OutputAction(commonDefines.c_oAscUserAction.AllIn, null);
-  yield* sendStatusDocument(docId, bChangeBase, userAction, oCallbackUrl, baseUrl);
-  return commonDefines.c_oAscServerCommandErrors.NoError;
+  if (null === oCallbackUrl) {
+    return commonDefines.c_oAscServerCommandErrors.ParseError;
+  } else {
+    yield* sendStatusDocument(docId, bChangeBase, opt_userAction, oCallbackUrl, baseUrl, opt_userData);
+    return commonDefines.c_oAscServerCommandErrors.NoError;
+  }
 }
 
 function* cleanDocumentOnExit(docId, deleteChanges) {
@@ -742,7 +750,7 @@ function* cleanDocumentOnExit(docId, deleteChanges) {
 function* cleanDocumentOnExitNoChanges(docId, opt_userId) {
   var userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
   // Отправляем, что все ушли и нет изменений (чтобы выставить статус на сервере об окончании редактирования)
-  yield* sendStatusDocument(docId, c_oAscChangeBase.All, userAction);
+  yield* sendStatusDocument(docId, c_oAscChangeBase.No, userAction);
   //если пользователь зашел в документ, соединение порвалось, на сервере удалилась вся информация,
   //при восстановлении соединения userIndex сохранится и он совпадет с userIndex следующего пользователя
   yield* cleanDocumentOnExit(docId, false);
@@ -758,7 +766,7 @@ function* _createSaveTimer(docId, opt_userId, opt_queue, opt_noDelay) {
   var updateIfRes = yield taskResult.updateIf(updateTask, updateMask);
   if (updateIfRes.affectedRows > 0) {
     if(!opt_noDelay){
-      yield utils.sleep(c_oAscSaveTimeOutDelay);
+      yield utils.sleep(cfgAscSaveTimeOutDelay);
     }
     while (true) {
       if (!sqlBase.isLockCriticalSection(docId)) {
@@ -823,6 +831,10 @@ exports.install = function(server, callbackFunction) {
         if(getIsShutdown())
         {
           logger.debug('Server shutdown receive data');
+          return;
+        }
+        if (conn.isCiriticalError && ('message' == data.type || 'getLock' == data.type || 'saveChanges' == data.type)) {
+          logger.warn("conn.isCiriticalError send command: docId = %s type = %s", docId, data.type);
           return;
         }
         switch (data.type) {
@@ -1085,6 +1097,7 @@ exports.install = function(server, callbackFunction) {
 
   function sendFileError(conn, errorId) {
     logger.error('error description: docId = %s errorId = %s', conn.docId, errorId);
+    conn.isCiriticalError = true;
     sendData(conn, {type: 'error', description: errorId});
   }
 
@@ -1235,6 +1248,16 @@ exports.install = function(server, callbackFunction) {
     return resultLock;
   }
 
+  function* authRestore(conn, sessionId) {
+    conn.sessionId = sessionId;//restore old
+    //Kill previous connections
+    connections = _.reject(connections, function(el) {
+      return el.sessionId === sessionId;//Delete this connection
+    });
+
+    yield* endAuth(conn, true);
+  }
+
   function* auth(conn, data) {
     // Проверка версий
     if (data.version !== asc_coAuthV) {
@@ -1305,76 +1328,73 @@ exports.install = function(server, callbackFunction) {
       if (bIsRestore) {
         logger.info("restored old session: docId = %s id = %s", docId, data.sessionId);
 
-        // Останавливаем сборку (вдруг она началась)
-        // Когда переподсоединение, нам нужна проверка на сборку файла
-        try {
-          var result = yield sqlBase.checkStatusFilePromise(docId);
+        if (!conn.user.view) {
+          // Останавливаем сборку (вдруг она началась)
+          // Когда переподсоединение, нам нужна проверка на сборку файла
+          try {
+            var result = yield sqlBase.checkStatusFilePromise(docId);
 
-          var status = result && result.length > 0 ? result[0]['status'] : null;
-          if (taskResult.FileStatus.Ok === status) {
-            // Все хорошо, статус обновлять не нужно
-          } else if (taskResult.FileStatus.SaveVersion === status) {
-            // Обновим статус файла (идет сборка, нужно ее остановить)
-            var updateMask = new taskResult.TaskResultData();
-            updateMask.key = docId;
-            updateMask.status = status;
-            updateMask.statusInfo = result[0]['status_info'];
-            var updateTask = new taskResult.TaskResultData();
-            updateTask.status = taskResult.FileStatus.Ok;
-            updateTask.statusInfo = constants.NO_ERROR;
-            var updateIfRes = yield taskResult.updateIf(updateTask, updateMask);
-            if (!(updateIfRes.affectedRows > 0)) {
+            var status = result && result.length > 0 ? result[0]['status'] : null;
+            if (taskResult.FileStatus.Ok === status) {
+              // Все хорошо, статус обновлять не нужно
+            } else if (taskResult.FileStatus.SaveVersion === status) {
+              // Обновим статус файла (идет сборка, нужно ее остановить)
+              var updateMask = new taskResult.TaskResultData();
+              updateMask.key = docId;
+              updateMask.status = status;
+              updateMask.statusInfo = result[0]['status_info'];
+              var updateTask = new taskResult.TaskResultData();
+              updateTask.status = taskResult.FileStatus.Ok;
+              updateTask.statusInfo = constants.NO_ERROR;
+              var updateIfRes = yield taskResult.updateIf(updateTask, updateMask);
+              if (!(updateIfRes.affectedRows > 0)) {
+                // error version
+                sendFileError(conn, 'Update Version error');
+                return;
+              }
+            } else if (taskResult.FileStatus.UpdateVersion === status) {
               // error version
               sendFileError(conn, 'Update Version error');
               return;
+            } else {
+              // Other error
+              sendFileError(conn, 'Other error');
+              return;
             }
-          } else if (taskResult.FileStatus.UpdateVersion === status) {
-            // error version
-            sendFileError(conn, 'Update Version error');
-            return;
-          } else {
-            // Other error
-            sendFileError(conn, 'Other error');
-            return;
-          }
 
-          var objChangesDocument = yield* getDocumentChanges(docId);
-          var bIsSuccessRestore = true;
-          if (objChangesDocument && 0 < objChangesDocument.arrChanges.length) {
-            var change = objChangesDocument.arrChanges[objChangesDocument.getLength() - 1];
-            if (change['change']) {
-              if (change['user'] !== curUserId) {
-                bIsSuccessRestore = 0 === (((data['lastOtherSaveTime'] - change['time']) / 1000) >> 0);
+            var objChangesDocument = yield* getDocumentChanges(docId);
+            var bIsSuccessRestore = true;
+            if (objChangesDocument && 0 < objChangesDocument.arrChanges.length) {
+              var change = objChangesDocument.arrChanges[objChangesDocument.getLength() - 1];
+              if (change['change']) {
+                if (change['user'] !== curUserId) {
+                  bIsSuccessRestore = 0 === (((data['lastOtherSaveTime'] - change['time']) / 1000) >> 0);
+                }
               }
             }
-          }
 
-          if (bIsSuccessRestore) {
-            conn.sessionId = data.sessionId;//restore old
-
-            // Проверяем lock-и
-            var arrayBlocks = data['block'];
-            var getLockRes = yield* getLock(conn, data, true);
-            if (arrayBlocks && (0 === arrayBlocks.length || getLockRes)) {
-              //Kill previous connections
-              connections = _.reject(connections, function(el) {
-                return el.sessionId === data.sessionId;//Delete this connection
-              });
-
-              yield* endAuth(conn, true);
+            if (bIsSuccessRestore) {
+              // Проверяем lock-и
+              var arrayBlocks = data['block'];
+              var getLockRes = yield* getLock(conn, data, true);
+              if (arrayBlocks && (0 === arrayBlocks.length || getLockRes)) {
+                yield* authRestore(conn, data.sessionId);
+              } else {
+                sendFileError(conn, 'Restore error. Locks not checked.');
+              }
             } else {
-              sendFileError(conn, 'Restore error. Locks not checked.');
+              sendFileError(conn, 'Restore error. Document modified.');
             }
-          } else {
-            sendFileError(conn, 'Restore error. Document modified.');
+          } catch (err) {
+            sendFileError(conn, 'DataBase error\r\n' + err.stack);
           }
-        } catch (err) {
-          sendFileError(conn, 'DataBase error\r\n' + err.stack);
+        } else {
+          yield* authRestore(conn, data.sessionId);
         }
       } else {
         conn.sessionId = conn.id;
-        yield* endAuth(conn, false, data.documentCallbackUrl);
-        if (cmd) {
+        var endAuthRes = yield* endAuth(conn, false, data.documentCallbackUrl);
+        if (endAuthRes && cmd) {
           yield canvasService.openDocument(conn, cmd, upsertRes);
         }
       }
@@ -1382,6 +1402,7 @@ exports.install = function(server, callbackFunction) {
   }
 
   function* endAuth(conn, bIsRestore, documentCallbackUrl) {
+    var res = true;
     var docId = conn.docId;
     var tmpUser = conn.user;
     connections.push(conn);
@@ -1399,48 +1420,56 @@ exports.install = function(server, callbackFunction) {
     }
 
     // Отправляем на внешний callback только для тех, кто редактирует
+    var bindEventsRes = commonDefines.c_oAscServerCommandErrors.NoError;
     if (!tmpUser.view) {
       var userAction = new commonDefines.OutputAction(commonDefines.c_oAscUserAction.In, tmpUser.idOriginal);
       // Если пришла информация о ссылке для посылания информации, то добавляем
       if (documentCallbackUrl) {
-        yield* bindEvents(docId, documentCallbackUrl, conn.baseUrl, userAction);
+        bindEventsRes = yield* bindEvents(docId, documentCallbackUrl, conn.baseUrl, userAction);
       } else {
         yield* sendStatusDocument(docId, c_oAscChangeBase.No, userAction);
       }
     }
-    var lockDocument = null;
-    if (!bIsRestore && 2 === countNoView && !tmpUser.view) {
-      // Ставим lock на документ
-      var isLock = yield utils.promiseRedis(redisClient, redisClient.setnx,
-          redisKeyLockDoc + docId, JSON.stringify(firstParticipantNoView));
-      if(isLock) {
-        lockDocument = firstParticipantNoView;
-        yield utils.promiseRedis(redisClient, redisClient.expire, redisKeyLockDoc + docId, cfgExpLockDoc);
-      }
-    }
-    if (!lockDocument) {
-      var getRes = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyLockDoc + docId);
-      if (getRes) {
-        lockDocument = JSON.parse(getRes);
-      }
-    }
 
-    if (lockDocument && !tmpUser.view) {
-      // Для view не ждем снятия lock-а
-      var sendObject = {
-        type: "waitAuth",
-        lockDocument: lockDocument
-      };
-      sendData(conn, sendObject);//Or 0 if fails
-    } else {
-      if (bIsRestore) {
-        yield* sendAuthInfo(undefined, undefined, conn, participantsMap);
-      } else {
-        var objChangesDocument = yield* getDocumentChanges(docId);
-        yield* sendAuthInfo(objChangesDocument.arrChanges, objChangesDocument.getLength(), conn, participantsMap);
+    if (commonDefines.c_oAscServerCommandErrors.NoError === bindEventsRes) {
+      var lockDocument = null;
+      if (!bIsRestore && 2 === countNoView && !tmpUser.view) {
+        // Ставим lock на документ
+        var isLock = yield utils.promiseRedis(redisClient, redisClient.setnx,
+                                              redisKeyLockDoc + docId, JSON.stringify(firstParticipantNoView));
+        if (isLock) {
+          lockDocument = firstParticipantNoView;
+          yield utils.promiseRedis(redisClient, redisClient.expire, redisKeyLockDoc + docId, cfgExpLockDoc);
+        }
       }
+      if (!lockDocument) {
+        var getRes = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyLockDoc + docId);
+        if (getRes) {
+          lockDocument = JSON.parse(getRes);
+        }
+      }
+
+      if (lockDocument && !tmpUser.view) {
+        // Для view не ждем снятия lock-а
+        var sendObject = {
+          type: "waitAuth",
+          lockDocument: lockDocument
+        };
+        sendData(conn, sendObject);//Or 0 if fails
+      } else {
+        if (bIsRestore) {
+          yield* sendAuthInfo(undefined, undefined, conn, participantsMap);
+        } else {
+          var objChangesDocument = yield* getDocumentChanges(docId);
+          yield* sendAuthInfo(objChangesDocument.arrChanges, objChangesDocument.getLength(), conn, participantsMap);
+        }
+      }
+      yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, user: tmpUser, state: true}, docId, tmpUser.id);
+    } else {
+      sendFileError(conn, 'ip filter');
+      res = false;
     }
-    yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, user: tmpUser, state: true}, docId, tmpUser.id);
+    return res;
   }
 
   function* sendAuthInfo(objChangesDocument, changesIndex, conn, participantsMap) {
@@ -1860,9 +1889,10 @@ exports.install = function(server, callbackFunction) {
   function _checkLicense(conn) {
     return co(function* () {
       try {
+        const c_LR = constants.LICENSE_RESULT;
         var licenseType = licenseInfo.type;
-        if (constants.LICENSE_RESULT.Success !== licenseType) {
-          licenseType = constants.LICENSE_RESULT.Success;
+        if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
+          licenseType = c_LR.Success;
 
           var count = constants.LICENSE_CONNECTIONS;
           var cursor = '0', sum = 0, scanRes, tmp, length, i, users;
@@ -1873,7 +1903,7 @@ exports.install = function(server, callbackFunction) {
 
             for (i = 0; i < length; ++i) {
               if (sum >= count) {
-                licenseType = constants.LICENSE_RESULT.Connections;
+                licenseType = c_LR.Connections;
                 break;
               }
 
@@ -1882,7 +1912,7 @@ exports.install = function(server, callbackFunction) {
             }
 
             if (sum >= count) {
-              licenseType = constants.LICENSE_RESULT.Connections;
+              licenseType = c_LR.Connections;
               break;
             }
 
@@ -2057,8 +2087,13 @@ exports.install = function(server, callbackFunction) {
       }
     });
   }
-  var innerPintJob = new cron.CronJob(cfgExpDocumentsCron, expireDoc);
-  innerPintJob.start();
+  var innerPingJob = function(opt_isStart) {
+    if (!opt_isStart) {
+      logger.warn('expireDoc restart');
+    }
+    new cron.CronJob(cfgExpDocumentsCron, expireDoc, innerPingJob, true);
+  };
+  innerPingJob(true);
 
   pubsub = new pubsubService();
   pubsub.on('message', pubsubOnMessage);
@@ -2096,7 +2131,13 @@ exports.commandFromServer = function (req, res) {
         logger.debug('Start commandFromServer: docId = %s c = %s', docId, query.c);
         switch (query.c) {
           case 'info':
-            result = yield* bindEvents(docId, query.callback, utils.getBaseUrlByRequest(req));
+            //If no files in the database means they have not been edited.
+            var selectRes = yield taskResult.select(docId);
+            if (selectRes.length > 0) {
+              result = yield* bindEvents(docId, query.callback, utils.getBaseUrlByRequest(req), undefined, query.userdata);
+            } else {
+              result = commonDefines.c_oAscServerCommandErrors.DocumentIdError;
+            }
             break;
           case 'drop':
             if (query.userid) {
