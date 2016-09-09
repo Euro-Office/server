@@ -12,7 +12,6 @@
   "services": {
     "CoAuthoring": {
       "server": {
-        "port": 80,
         "sockjsUrl": "/web-apps/vendor/sockjs/sockjs.min.js",
         "editor_settings_spellchecker_url": "",
         "static_content": [
