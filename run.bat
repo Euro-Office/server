@@ -25,7 +25,7 @@ copy "..\..\..\core\build\lib\win_32\HtmlFileInternal.exe" ".\HtmlFileInternal"
 xcopy /s/h/e/k/c/y/q "..\..\..\core\build\cef\win_32" ".\HtmlFileInternal"
 copy "..\..\..\core\build\bin\windows\x2t32.exe" "."
 
-"..\..\..\core\build\bin\AllFontsGen\windows_32.exe" "%windir%\Fonts" "%~dp0\..\sdkjs\common\AllFonts.js" "%~dp0\..\sdkjs\common\Images" "%~dp0\FileConverter\bin\font_selection.bin"
+"..\..\..\core\build\bin\AllFontsGen\win_32.exe" "%windir%\Fonts" "%~dp0\..\sdkjs\common\AllFonts.js" "%~dp0\..\sdkjs\common\Images" "%~dp0\FileConverter\bin\font_selection.bin"
 
 ECHO.
 ECHO ----------------------------------------
