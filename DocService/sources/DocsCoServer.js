@@ -395,6 +395,9 @@ function sendDataMessage(conn, msg) {
 function sendDataCursor(conn, msg) {
   sendData(conn, {type: "cursor", messages: msg});
 }
+function sendDataMeta(conn, msg) {
+  sendData(conn, {type: "meta", messages: msg});
+}
 function sendReleaseLock(conn, userLocks) {
   sendData(conn, {type: "releaseLock", locks: _.map(userLocks, function(e) {
     return {
@@ -2079,6 +2082,12 @@ exports.install = function(server, callbackFunction) {
             }
             logger.debug('end shutdown');
             break;
+          case commonDefines.c_oPublishType.meta:
+            participants = getParticipants(false, data.docId);
+            _.each(participants, function(participant) {
+              sendDataMeta(participant, data.meta);
+            });
+            break;
           default:
             logger.debug('pubsub unknown message type:%s', msg);
         }
@@ -2146,39 +2155,44 @@ exports.commandFromServer = function (req, res) {
     var result = commonDefines.c_oAscServerCommandErrors.NoError;
     var docId = 'null';
     try {
-      var query = req.query;
+      var params;
+      if (req.body && Buffer.isBuffer(req.body)) {
+        params = JSON.parse(req.body.toString('utf8'));
+      } else {
+        params = req.query;
+      }
       // Ключ id-документа
-      docId = query.key;
+      docId = params.key;
       if (null == docId) {
         result = commonDefines.c_oAscServerCommandErrors.DocumentIdError;
       } else {
-        logger.debug('Start commandFromServer: docId = %s c = %s', docId, query.c);
-        switch (query.c) {
+        logger.debug('Start commandFromServer: docId = %s c = %s', docId, params.c);
+        switch (params.c) {
           case 'info':
             //If no files in the database means they have not been edited.
             var selectRes = yield taskResult.select(docId);
             if (selectRes.length > 0) {
-              result = yield* bindEvents(docId, query.callback, utils.getBaseUrlByRequest(req), undefined, query.userdata);
+              result = yield* bindEvents(docId, params.callback, utils.getBaseUrlByRequest(req), undefined, params.userdata);
             } else {
               result = commonDefines.c_oAscServerCommandErrors.DocumentIdError;
             }
             break;
           case 'drop':
-            if (query.userid) {
-              yield* publish({type: commonDefines.c_oPublishType.drop, docId: docId, users: [query.userid], description: query.description});
+            if (params.userid) {
+              yield* publish({type: commonDefines.c_oPublishType.drop, docId: docId, users: [params.userid], description: params.description});
             }
-            else if (query.users) {
-              yield* dropUsersFromDocument(docId, query.users);
+            else if (params.users) {
+              yield* dropUsersFromDocument(docId, params.users);
             }
             break;
           case 'saved':
             // Результат от менеджера документов о статусе обработки сохранения файла после сборки
-            if ('1' !== query.status) {
+            if ('1' !== params.status) {
               //запрос saved выполняется синхронно, поэтому заполняем переменную чтобы проверить ее после sendServerRequest
-              yield utils.promiseRedis(redisClient, redisClient.setex, redisKeySaved + docId, cfgExpSaved, query.status);
-              logger.error('saved corrupted id = %s status = %s conv = %s', docId, query.status, query.conv);
+              yield utils.promiseRedis(redisClient, redisClient.setex, redisKeySaved + docId, cfgExpSaved, params.status);
+              logger.error('saved corrupted id = %s status = %s conv = %s', docId, params.status, params.conv);
             } else {
-              logger.info('saved id = %s status = %s conv = %s', docId, query.status, query.conv);
+              logger.info('saved id = %s status = %s conv = %s', docId, params.status, params.conv);
             }
             break;
           case 'forcesave':
@@ -2199,13 +2213,20 @@ exports.commandFromServer = function (req, res) {
                 result = commonDefines.c_oAscServerCommandErrors.NotModify;
               } else {
                 //start new convert
-                var status = yield* converterService.convertFromChanges(docId, baseUrl, lastSave, query.userdata);
+                var status = yield* converterService.convertFromChanges(docId, baseUrl, lastSave, params.userdata);
                 if (constants.NO_ERROR !== status.err) {
                   result = commonDefines.c_oAscServerCommandErrors.UnknownError;
                 }
               }
             } else {
               result = commonDefines.c_oAscServerCommandErrors.NotModify;
+            }
+            break;
+          case 'meta':
+            if (params.meta) {
+              yield* publish({type: commonDefines.c_oPublishType.meta, docId: docId, meta: params.meta});
+            } else {
+              result = commonDefines.c_oAscServerCommandErrors.UnknownError;
             }
             break;
           default:
@@ -2217,7 +2238,7 @@ exports.commandFromServer = function (req, res) {
       result = commonDefines.c_oAscServerCommandErrors.UnknownError;
       logger.error('Error commandFromServer: docId = %s\r\n%s', docId, err.stack);
     } finally {
-      var output = JSON.stringify({'key': req.query.key, 'error': result});
+      var output = JSON.stringify({'key': docId, 'error': result});
       logger.debug('End commandFromServer: docId = %s %s', docId, output);
       var outputBuffer = new Buffer(output, 'utf8');
       res.setHeader('Content-Type', 'application/json');

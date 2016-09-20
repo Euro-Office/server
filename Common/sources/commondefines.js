@@ -600,7 +600,8 @@ var c_oPublishType = {
   receiveTask : 7,
   warning: 8,
   cursor: 9,
-  shutdown: 10
+  shutdown: 10,
+  meta: 11
 };
 var c_oAscCsvDelimiter = {
   None: 0,
