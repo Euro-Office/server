@@ -97,9 +97,9 @@
 				"forcesave": 604800,
 				"saved": 3600,
 				"documentsCron": "0 */2 * * * *",
-				"files": 604800,
+				"files": 86400,
 				"filesCron": "00 00 */1 * * *",
-				"filesremovedatonce": 10
+				"filesremovedatonce": 100
 			},
 			"ipfilter": {
 				"rules": [{"address": "*", "allowed": true}],
