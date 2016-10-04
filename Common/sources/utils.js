@@ -37,6 +37,13 @@ var request = require('request');
 var co = require('co');
 var URI = require("uri-js");
 const escapeStringRegexp = require('escape-string-regexp');
+const ipaddr = require('ipaddr.js');
+var configDnsCache = config.get('dnscache');
+const dnscache = require('dnscache')({
+                                     "enable": configDnsCache.get('enable'),
+                                     "ttl": configDnsCache.get('ttl'),
+                                     "cachesize": configDnsCache.get('cachesize'),
+                                   });
 var constants = require('./constants');
 
 var configIpFilter = config.get('services.CoAuthoring.ipfilter');
@@ -511,11 +518,25 @@ function* pipeFiles(from, to) {
   yield pipeStreams(fromStream, toStream, true);
 }
 exports.pipeFiles = co.wrap(pipeFiles);
-function checkIpFilter(hostname) {
+function checkIpFilter(ipString, opt_hostname) {
   var status = 0;
-  for (var i = 0; i < g_oIpFilterRules.length; ++i) {
+  var ip4;
+  var ip6;
+  if (ipaddr.isValid(ipString)) {
+    var ip = ipaddr.parse(ipString);
+    if ('ipv6' == ip.kind()) {
+      if (ip.isIPv4MappedAddress()) {
+        ip4 = ip.toIPv4Address().toString();
+      }
+      ip6 = ip.toNormalizedString();
+    } else {
+      ip4 = ip.toString();
+      ip6 = ip.toIPv4MappedAddress().toNormalizedString();
+    }
+  }
+  for (i = 0; i < g_oIpFilterRules.length; ++i) {
     var rule = g_oIpFilterRules[i];
-    if (rule.exp.test(hostname)) {
+    if ((opt_hostname && rule.exp.test(opt_hostname)) || (ip4 && rule.exp.test(ip4)) || (ip6 && rule.exp.test(ip6))) {
       if (!rule.allow) {
         status = cfgIpFilterErrorCode;
       }
@@ -525,3 +546,15 @@ function checkIpFilter(hostname) {
   return status;
 }
 exports.checkIpFilter = checkIpFilter;
+function dnsLookup(hostname, options) {
+  return new Promise(function(resolve, reject) {
+    dnscache.lookup(hostname, options, function(err, addresses){
+      if (err) {
+        reject(err);
+      } else {
+        resolve(addresses);
+      }
+    });
+  });
+}
+exports.dnsLookup = dnsLookup;

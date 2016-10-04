@@ -105,7 +105,6 @@ if (cluster.isMaster) {
   const bodyParser = require("body-parser");
   const mime = require('mime');
   const forwarded = require('forwarded');
-  const ipaddr = require('ipaddr.js');
   const docsCoServer = require('./DocsCoServer');
   const canvasService = require('./canvasservice');
   const converterService = require('./converterservice');
@@ -167,13 +166,6 @@ if (cluster.isMaster) {
     if (cfgIpFilterEseForRequest) {
       var addresses = forwarded(req);
       var ipString = addresses[addresses.length - 1];
-      //IPv6 -> IPv4
-      if (ipaddr.IPv6.isValid(ipString)) {
-        var ip = ipaddr.IPv6.parse(ipString);
-        if (ip.isIPv4MappedAddress()) {
-          ipString = ip.toIPv4Address().toString();
-        }
-      }
       status = utils.checkIpFilter(ipString);
     }
     if (status > 0) {

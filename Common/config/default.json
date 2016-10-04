@@ -39,6 +39,11 @@
 		"queueconverttask": "dc.converttask",
 		"queueconvertresponse": "dc.convertresponse"
 	},
+	"dnscache": {
+		"enable" : true,
+		"ttl" : 300,
+		"cachesize" : 1000
+	},
 	"services": {
 		"CoAuthoring": {
 			"server": {

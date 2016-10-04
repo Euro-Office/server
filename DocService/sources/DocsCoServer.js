@@ -720,7 +720,8 @@ function* bindEvents(docId, callback, baseUrl, opt_userAction, opt_userData) {
     oCallbackUrl = parseUrl(callback);
     bChangeBase = c_oAscChangeBase.All;
     if (null !== oCallbackUrl) {
-      if (utils.checkIpFilter(oCallbackUrl.host) > 0) {
+      var hostIp = yield utils.dnsLookup(oCallbackUrl.host);
+      if (utils.checkIpFilter(hostIp, oCallbackUrl.host) > 0) {
         logger.error('checkIpFilter error: docId = %s;url = %s', docId, callback);
         //todo add new error type
         oCallbackUrl = null;
