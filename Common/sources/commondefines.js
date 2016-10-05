@@ -714,3 +714,5 @@ exports.c_oAscEncodingsMap = c_oAscEncodingsMap;
 exports.c_oAscCodePageUtf8 = c_oAscCodePageUtf8;
 exports.c_oAscUserAction = c_oAscUserAction;
 exports.c_oAscServerCommandErrors = c_oAscServerCommandErrors;
+exports.buildVersion = buildVersion;
+exports.buildNumber = buildNumber;

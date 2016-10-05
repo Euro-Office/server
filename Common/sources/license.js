@@ -40,8 +40,6 @@ const utils = require('./utils');
 const pubsubRedis = require('./../../DocService/sources/pubsubRedis');
 const redisClient = pubsubRedis.getClientRedis();
 
-const buildVersion = '4.0.0';
-const buildNumber = 19;
 const buildDate = '6/29/2016';
 const oBuildDate = new Date(buildDate);
 const oPackageType = constants.PACKAGE_TYPE_OS;

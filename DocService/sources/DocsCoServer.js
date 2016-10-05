@@ -1957,7 +1957,8 @@ exports.install = function(server, callbackFunction) {
           license: {
             type: licenseType,
             light: licenseInfo.light,
-            trial: constants.PACKAGE_TYPE_OS === licenseInfo.packageType ? false : licenseInfo.trial
+            trial: constants.PACKAGE_TYPE_OS === licenseInfo.packageType ? false : licenseInfo.trial,
+            buildVersion: commonDefines.buildVersion
           }
         });
       } catch (err) {
