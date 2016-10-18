@@ -130,3 +130,5 @@ function* _updateFileState(state) {
 	const val = constants.PACKAGE_TYPE_OS === oPackageType ? redisKeyLicense : (state ? new Date(1) : new Date());
 	yield utils.promiseRedis(redisClient, redisClient.hset, redisKeyLicense, redisKeyLicense, val);
 }
+exports.buildVersion = buildVersion;
+exports.buildNumber = buildNumber;
