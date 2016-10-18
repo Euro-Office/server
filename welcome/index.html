@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ONLYOFFICE™</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=IE8"/>
+    <link href="img/favicon.ico" rel="icon" type="image/x-icon">
+
+    <style type="text/css">
+        html {
+            height: 100%;
+        }
+
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            line-height: 20px;
+        }
+
+        #doc-server-status {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333333;
+        }
+
+        #doc-server-status > div{
+            display: inline-block;
+            width:48px;
+            height: 48px;
+            vertical-align: middle;
+            margin-right: 15px;
+            margin-bottom: 3px;
+        }
+
+        #doc-server-status-ok {
+            background-image: url(img/icon-done.png);
+        }
+
+        #doc-server-status-err {
+            background-image: url(img/icon-cross.png);
+        }
+
+        #doc-server-header {
+            height: 80px;
+            font-size: 18px;
+            color: #adadad;
+        }
+
+        #doc-server-footer {
+            height: 100px;
+            font-size: 12px;
+            color: #333333;
+        }
+    </style>
+</head>
+<body>
+    <script>
+        document.write(
+            '<table width="100%" height="100%">' +
+                '<tr><td id="doc-server-header" valign="bottom" align="center">Thank you for choosing ONLYOFFICE!</td></tr>' +
+                '<tr><td align="center">' +
+                    '<div id="doc-server-status"><div style="width: 0;"></div>Please, wait...</div>' +
+                '</td></tr>' +
+                '<tr><td id="doc-server-footer" valign="top" align="center">' +
+                    '<div>Any questions?</div>' +
+                    '<div>Explore ONLYOFFICE™ Document Server <a href="https://api.onlyoffice.com/editors/basic" target="_blank">API Documentation</a></div>' +
+                    '<div>or visit our <a href="http://dev.onlyoffice.org/viewforum.php?f=44&sid=505c86017ee42e6005d24fc5b8c6818c" target="_blank">developers forum.</a></div>' +
+                '</td></tr>' +
+            '</table>'
+        );
+
+        var _createXMLHTTPObject = function() {
+            var xmlhttp;
+            try {
+                xmlhttp = new ActiveXObject("Msxml2.XMLHTTP");
+            }
+            catch (e) {
+                try {
+                    xmlhttp = new ActiveXObject("Microsoft.XMLHTTP");
+                }
+                catch (E) {
+                    xmlhttp = false;
+                }
+            }
+            if (!xmlhttp && typeof XMLHttpRequest != 'undefined') {
+                xmlhttp = new XMLHttpRequest();
+            }
+            return xmlhttp;
+        };
+
+        (function(){
+            try {
+                var xhrObj = _createXMLHTTPObject();
+                if (xhrObj) {
+                    xhrObj.open('GET', '/healthcheck');
+                    xhrObj.onreadystatechange = function() {
+                        if (xhrObj.readyState == 4) {
+                            var serverstatus = document.getElementById('doc-server-status');
+                            if (xhrObj.status == 200 && xhrObj.responseText=="true") {
+                                serverstatus.innerHTML = '<div id="doc-server-status-ok"></div>Document Server is running';
+                            } else {
+                                serverstatus.innerHTML = '<div id="doc-server-status-err"></div>Something went wrong';
+                            }
+                        }
+                    };
+                    xhrObj.send('');
+                }
+            }
+            catch (e) {}
+        })();
+        
+    </script>
+</body>
+</html>
