@@ -84,6 +84,7 @@ const constants = require('./../../Common/sources/constants');
 var utils = require('./../../Common/sources/utils');
 var commonDefines = require('./../../Common/sources/commondefines');
 var statsDClient = require('./../../Common/sources/statsdclient');
+const license = require('./../../Common/sources/license');
 var config = require('config').get('services.CoAuthoring');
 var sqlBase = require('./baseConnector');
 var canvasService = require('./canvasservice');
@@ -2130,10 +2131,11 @@ exports.commandFromServer = function (req, res) {
     var result = commonDefines.c_oAscServerCommandErrors.NoError;
     var docId = 'null';
     try {
+      var version = undefined;
       var query = req.query;
       // Ключ id-документа
       docId = query.key;
-      if (null == docId) {
+      if (null == docId && 'version' != query.c) {
         result = commonDefines.c_oAscServerCommandErrors.DocumentIdError;
       } else {
         logger.debug('Start commandFromServer: docId = %s c = %s', docId, query.c);
@@ -2192,6 +2194,9 @@ exports.commandFromServer = function (req, res) {
               result = commonDefines.c_oAscServerCommandErrors.NotModify;
             }
             break;
+          case 'version':
+              version = license.buildVersion + '.' + license.buildNumber;
+            break;
           default:
             result = commonDefines.c_oAscServerCommandErrors.UnknownCommand;
             break;
@@ -2201,7 +2206,8 @@ exports.commandFromServer = function (req, res) {
       result = commonDefines.c_oAscServerCommandErrors.UnknownError;
       logger.error('Error commandFromServer: docId = %s\r\n%s', docId, err.stack);
     } finally {
-      var output = JSON.stringify({'key': req.query.key, 'error': result});
+      //undefined value are excluded in JSON.stringify
+      var output = JSON.stringify({'key': req.query.key, 'error': result, 'version': version});
       logger.debug('End commandFromServer: docId = %s %s', docId, output);
       var outputBuffer = new Buffer(output, 'utf8');
       res.setHeader('Content-Type', 'application/json');
