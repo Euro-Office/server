@@ -59,7 +59,7 @@
 				"callbackRequestTimeout": 120,
 				"healthcheckfilepath": "../public/healthcheck.docx",
 				"savetimeoutdelay": 5000,
-				"edit_singleton": true
+				"edit_singleton": false
 			},
 			"utils": {
 				"utils_common_fontdir": "null",
