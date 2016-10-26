@@ -911,7 +911,7 @@ exports.install = function(server, callbackFunction) {
             break;
           case 'extendSession' :
             conn.sessionIsSendWarning = false;
-            conn.sessionTimeLastAction = new Date().getTime();
+            conn.sessionTimeLastAction = new Date().getTime() - data.idletime;
             break;
           default:
             logger.debug("unknown command %s", message);
@@ -1349,6 +1349,9 @@ exports.install = function(server, callbackFunction) {
       conn.editorType = data['editorType'];
       if (data.sessionTimeConnect) {
         conn.sessionTimeConnect = data.sessionTimeConnect;
+      }
+      if (data.sessionTimeIdle) {
+        conn.sessionTimeLastAction = new Date().getTime() - data.sessionTimeIdle;
       }
 
       // Ситуация, когда пользователь уже отключен от совместного редактирования
@@ -2149,23 +2152,29 @@ exports.install = function(server, callbackFunction) {
         var idSet = new Set();
         var nowMs = new Date().getTime();
         var nextMs = cronJob.nextDate();
+        var maxMs = Math.max(nowMs + cfgExpSessionCloseCommand, nextMs);
         for (var i = 0; i < connections.length; ++i) {
           var conn = connections[i];
           if (cfgExpSessionAbsolute > 0) {
-            if (nextMs - conn.sessionTimeConnect > cfgExpSessionAbsolute - cfgExpSessionCloseCommand &&
-                !conn.sessionIsSendWarning) {
+            if (maxMs - conn.sessionTimeConnect > cfgExpSessionAbsolute && !conn.sessionIsSendWarning) {
               conn.sessionIsSendWarning = true;
-              sendDataSession(conn, {code: constants.SESSION_ABSOLUTE_CODE, reason: constants.SESSION_ABSOLUTE_REASON});
+              sendDataSession(conn, {
+                code: constants.SESSION_ABSOLUTE_CODE,
+                reason: constants.SESSION_ABSOLUTE_REASON
+              });
             } else if (nowMs - conn.sessionTimeConnect > cfgExpSessionAbsolute) {
               conn.close(constants.SESSION_ABSOLUTE_CODE, constants.SESSION_ABSOLUTE_REASON);
               continue;
             }
           }
           if (cfgExpSessionIdle > 0) {
-            if (nextMs - conn.sessionTimeLastAction > cfgExpSessionIdle - cfgExpSessionCloseCommand &&
-                !conn.sessionIsSendWarning) {
+            if (maxMs - conn.sessionTimeLastAction > cfgExpSessionIdle && !conn.sessionIsSendWarning) {
               conn.sessionIsSendWarning = true;
-              sendDataSession(conn, {code: constants.SESSION_IDLE_CODE, reason: constants.SESSION_IDLE_REASON});
+              sendDataSession(conn, {
+                code: constants.SESSION_IDLE_CODE,
+                reason: constants.SESSION_IDLE_REASON,
+                interval: cfgExpSessionIdle
+              });
             } else if (nowMs - conn.sessionTimeLastAction > cfgExpSessionIdle) {
               conn.close(constants.SESSION_IDLE_CODE, constants.SESSION_IDLE_REASON);
               continue;
