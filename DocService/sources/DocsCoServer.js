@@ -138,7 +138,7 @@ var redisClient = pubsubRedis.getClientRedis();
 var pubsub;
 var queue;
 var clientStatsD = statsDClient.getClient();
-var licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false};
+var licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false, branding: false};
 var shutdownFlag = false;
 
 var asc_coAuthV = '3.0.9';				// Версия сервера совместного редактирования
@@ -1929,7 +1929,8 @@ exports.install = function(server, callbackFunction) {
           license: {
             type: licenseType,
             light: licenseInfo.light,
-            trial: constants.PACKAGE_TYPE_OS === licenseInfo.packageType ? false : licenseInfo.trial
+            trial: constants.PACKAGE_TYPE_OS === licenseInfo.packageType ? false : licenseInfo.trial,
+            branding: licenseInfo.branding
           }
         });
       } catch (err) {
