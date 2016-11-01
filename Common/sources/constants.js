@@ -189,6 +189,14 @@ exports.SESSION_IDLE_CODE = 4002;
 exports.SESSION_IDLE_REASON = 'idle session expires';
 exports.SESSION_ABSOLUTE_CODE = 4003;
 exports.SESSION_ABSOLUTE_REASON = 'absolute session expires';
+exports.ACCESS_DENIED_CODE = 4004;
+exports.ACCESS_DENIED_REASON = 'access deny';
+exports.JWT_EMPTYSECRET_CODE = 4005;
+exports.JWT_EMPTYSECRET_REASON = 'token:empty secret';
+exports.JWT_EXPIRED_CODE = 4006;
+exports.JWT_EXPIRED_REASON = 'token:';
+exports.JWT_ERROR_CODE = 4007;
+exports.JWT_ERROR_REASON = 'token:';
 
 exports.CONTENT_DISPOSITION_INLINE = 'inline';
 exports.CONTENT_DISPOSITION_ATTACHMENT = 'attachment';

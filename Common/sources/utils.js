@@ -558,3 +558,12 @@ function dnsLookup(hostname, options) {
   });
 }
 exports.dnsLookup = dnsLookup;
+function isEditMode(permissions, mode, def) {
+  if (permissions && mode) {
+    //as in web-apps/apps/documenteditor/main/app/controller/Main.js
+    return (permissions.edit !== false || permissions.review === true) && mode !== 'view';
+  } else {
+    return def;
+  }
+}
+exports.isEditMode = isEditMode;

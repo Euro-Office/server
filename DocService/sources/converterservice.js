@@ -198,7 +198,6 @@ function convertRequest(req, res) {
     try {
       var cmd = new commonDefines.InputCommand();
       cmd.setCommand('conv');
-      cmd.setVKey(req.query['vkey']);
       cmd.setUrl(req.query['url']);
       cmd.setEmbeddedFonts(false);//req.query['embeddedfonts'];
       cmd.setFormat(req.query['filetype']);

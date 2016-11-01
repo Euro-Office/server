@@ -114,6 +114,13 @@
 				"rules": [{"address": "*", "allowed": true}],
 				"useforrequest": false,
 				"errorcode": 401
+			},
+			"signature": {
+				"enable": false,
+				"useforrequest": false,
+				"secret": "",
+				"secretByTenant": {},
+				"expiresSession": "1d"
 			}
 		}
 	},

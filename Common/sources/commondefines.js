@@ -37,7 +37,7 @@ function InputCommand(data) {
     this['c'] = data['c'];
     this['id'] = data['id'];
     this['userid'] = data['userid'];
-    this['vkey'] = data['vkey'];
+    this['jwt'] = data['jwt'];
     this['data'] = data['data'];
     this['editorid'] = data['editorid'];
     this['format'] = data['format'];
@@ -50,7 +50,6 @@ function InputCommand(data) {
     this['codepage'] = data['codepage'];
     this['delimiter'] = data['delimiter'];
     this['embeddedfonts'] = data['embeddedfonts'];
-    this['viewmode'] = data['viewmode'];
     if (data['mailmergesend']) {
       this['mailmergesend'] = new CMailMergeSendData(data['mailmergesend']);
     } else {
@@ -76,7 +75,7 @@ function InputCommand(data) {
     this['c'] = undefined;//string command
     this['id'] = undefined;//string document id
     this['userid'] = undefined;//string
-    this['vkey'] = undefined;//string validate
+    this['jwt'] = undefined;//string validate
     this['data'] = undefined;//string
     //to open
     this['editorid'] = undefined;//int
@@ -92,7 +91,6 @@ function InputCommand(data) {
     this['codepage'] = undefined;
     this['delimiter'] = undefined;
     this['embeddedfonts'] = undefined;//bool
-    this['viewmode'] = undefined;//bool
     this['mailmergesend'] = undefined;
     this['thumbnail'] = undefined;
     //private
@@ -128,11 +126,8 @@ InputCommand.prototype = {
   setUserId: function(data) {
     this['userid'] = data;
   },
-  getVKey: function() {
-    return this['vkey'];
-  },
-  setVKey: function(data) {
-    this['vkey'] = data;
+  getJwt: function() {
+    return this['jwt'];
   },
   getData: function() {
     return this['data'];
@@ -199,12 +194,6 @@ InputCommand.prototype = {
   },
   setEmbeddedFonts: function(data) {
     this['embeddedfonts'] = data;
-  },
-  getViewMode: function() {
-    return this['viewmode'];
-  },
-  setViewMode: function(data) {
-    this['viewmode'] = data;
   },
   getMailMergeSend: function() {
     return this['mailmergesend'];
