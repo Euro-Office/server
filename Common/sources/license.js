@@ -51,7 +51,7 @@ const redisKeyLicense = cfgRedisPrefix + ((constants.PACKAGE_TYPE_OS === oPackag
 exports.readLicense = function*() {
 	const c_LR = constants.LICENSE_RESULT;
 	const resMax = {count: 999999, type: c_LR.Success};
-	var res = {count: 1, type: c_LR.Error, light: false, packageType: oPackageType, trial: false};
+	var res = {count: 1, type: c_LR.Error, light: false, packageType: oPackageType, trial: false, branding: false};
 	var checkFile = false;
 	try {
 		var oFile = fs.readFileSync(configL.get('license_file')).toString();
@@ -65,8 +65,8 @@ exports.readLicense = function*() {
 		const publicKey = '-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDRhGF7X4A0ZVlEg594WmODVVUI\niiPQs04aLmvfg8SborHss5gQXu0aIdUT6nb5rTh5hD2yfpF2WIW6M8z0WxRhwicg\nXwi80H1aLPf6lEPPLvN29EhQNjBpkFkAJUbS8uuhJEeKw0cE49g80eBBF4BCqSL6\nPFQbP9/rByxdxEoAIQIDAQAB\n-----END PUBLIC KEY-----\n';
 		if (verify.verify(publicKey, sign, 'hex')) {
 			const endDate = new Date(oLicense['end_date']);
-			const isTrial = res.trial = (true === oLicense['trial'] || 'true' === oLicense['trial']);
-			const checkDate = (isTrial && constants.PACKAGE_TYPE_OS === oPackageType) ? new Date() : oBuildDate; // Someone who likes to put json string instead of bool
+			const isTrial = res.trial = (true === oLicense['trial'] || 'true' === oLicense['trial']); // Someone who likes to put json string instead of bool
+			const checkDate = (isTrial && constants.PACKAGE_TYPE_OS === oPackageType) ? new Date() : oBuildDate;
 			if (endDate >= checkDate && 2 <= oLicense['version']) {
 				res.count = Math.min(Math.max(res.count, oLicense['process'] >> 0), resMax.count);
 				res.type = c_LR.Success;
@@ -75,6 +75,7 @@ exports.readLicense = function*() {
 			}
 
 			res.light = (true === oLicense['light'] || 'true' === oLicense['light']); // Someone who likes to put json string instead of bool
+			res.branding = (true === oLicense['branding'] || 'true' === oLicense['branding']); // Someone who likes to put json string instead of bool
 		}
 	} catch (e) {
 		res.count = 1;
