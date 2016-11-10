@@ -26,6 +26,7 @@ USE onlyoffice;
 --
 DROP TABLE IF EXISTS `doc_callbacks`;
 DROP TABLE IF EXISTS `doc_changes`;
+DROP TABLE IF EXISTS `task_result`;
 
 --
 -- Definition of table `doc_callbacks`
