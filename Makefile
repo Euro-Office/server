@@ -52,7 +52,7 @@ FILE_CONVERTER_FILES += ../core/build/bin/$(TARGET)/x2t$(EXEC_EXT)
 
 HTML_FILE_INTERNAL := $(FILE_CONVERTER)/HtmlFileInternal
 HTML_FILE_INTERNAL_FILES += ../core/build/lib/$(TARGET)/HtmlFileInternal$(EXEC_EXT)
-HTML_FILE_INTERNAL_FILES += ../core/build/cef/$(TARGET)/**
+HTML_FILE_INTERNAL_FILES += ../core/Common/3dParty/cef/$(TARGET)/build/**
 
 SPELLCHECKER_DICTIONARIES := $(OUTPUT)/SpellChecker/dictionaries
 SPELLCHECKER_DICTIONARY_FILES += ../dictionaries/**
