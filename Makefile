@@ -73,7 +73,7 @@ COMMON_DEFINES_JS := $(OUTPUT)/Common/sources/commondefines.js
 
 .PHONY: all clean install uninstall build-date htmlfileinternal
 
-all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE) build-date htmlfileinternal
+all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE) build-date
 
 build-date: $(GRUNT_FILES)
 	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}';|" -i $(COMMON_DEFINES_JS)
