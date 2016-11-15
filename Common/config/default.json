@@ -106,20 +106,24 @@
 				"files": 86400,
 				"filesCron": "00 00 */1 * * *",
 				"filesremovedatonce": 100,
-				"sessionidle": 0,
-				"sessionabsolute": 0,
-				"sessionclosecommand": 120000
+				"sessionidle": "0",
+				"sessionabsolute": "0",
+				"sessionclosecommand": "2m",
+				"pemStdTTL": "1h",
+				"pemCheckPeriod": "10m"
 			},
 			"ipfilter": {
 				"rules": [{"address": "*", "allowed": true}],
 				"useforrequest": false,
 				"errorcode": 401
 			},
-			"signature": {
+			"secret": {
+				"public": {"string": "secret", "file": ""},
+				"tenants": {}
+			},
+			"token": {
 				"enable": false,
 				"useforrequest": false,
-				"secret": "",
-				"secretByTenant": {},
 				"expiresSession": "1d"
 			}
 		}

@@ -45,7 +45,7 @@ var configUtils = config.get('services.CoAuthoring.utils');
 
 var cfgImageSize = configServer.get('limits_image_size');
 var cfgTypesUpload = configUtils.get('limits_image_types_upload');
-var cfgSignatureEnable = config.get('services.CoAuthoring.signature.enable');
+var cfgSignatureEnable = config.get('services.CoAuthoring.token.enable');
 
 exports.uploadTempFile = function(req, res) {
   return co(function* () {
@@ -74,11 +74,11 @@ exports.uploadTempFile = function(req, res) {
 };
 function checkJwt(docId, errorName, jwt){
   var res = {err: true, docId: null, userid: null};
-  var checkJwtRes = docsCoServer.checkJwt(jwt);
+  var checkJwtRes = docsCoServer.checkJwt(docId, jwt);
   if (checkJwtRes.decoded) {
     var doc = checkJwtRes.decoded.document;
     var edit = checkJwtRes.decoded.editorConfig;
-    if (utils.isEditMode(doc.permissions, edit.mode, true)) {
+    if (edit.ds_view) {
       res.err = false;
       res.docId = doc.key;
       if (edit.user) {

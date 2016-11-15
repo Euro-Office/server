@@ -75,8 +75,12 @@ var _ = require('underscore');
 var https = require('https');
 var http = require('http');
 var url = require('url');
+const fs = require('fs');
 var cron = require('cron');
 var co = require('co');
+const jwt = require('jsonwebtoken');
+const ms = require('ms');
+const NodeCache = require( "node-cache" );
 var storage = require('./../../Common/sources/storage-base');
 var logger = require('./../../Common/sources/logger');
 const constants = require('./../../Common/sources/constants');
@@ -110,10 +114,17 @@ var cfgExpLastSave = config.get('expire.lastsave');
 var cfgExpForceSave = config.get('expire.forcesave');
 var cfgExpSaved = config.get('expire.saved');
 var cfgExpDocumentsCron = config.get('expire.documentsCron');
-var cfgExpSessionIdle = config.get('expire.sessionidle');
-var cfgExpSessionAbsolute = config.get('expire.sessionabsolute');
-var cfgExpSessionCloseCommand = config.get('expire.sessionclosecommand');
+var cfgExpSessionIdle = ms(config.get('expire.sessionidle'));
+var cfgExpSessionAbsolute = ms(config.get('expire.sessionabsolute'));
+var cfgExpSessionCloseCommand = ms(config.get('expire.sessionclosecommand'));
+var cfgExpPemStdTtl = config.get('expire.pemStdTTL');
+var cfgExpPemCheckPeriod = config.get('expire.pemCheckPeriod');
 var cfgSockjsUrl = config.get('server.sockjsUrl');
+var cfgSockjsUrl = config.get('server.sockjsUrl');
+var cfgSignatureEnable = config.get('token.enable');
+var cfgSignatureSecretExpiresSession = ms(config.get('token.expiresSession'));
+var cfgSignatureSecretPublic = config.get('secret.public');
+var cfgSignatureSecretTenants = config.get('secret.tenants');
 
 var redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
 var redisKeyPresenceHash = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_HASH;
@@ -141,6 +152,8 @@ var queue;
 var clientStatsD = statsDClient.getClient();
 var licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false, branding: false};
 var shutdownFlag = false;
+var isEmptySecretTenants = !Object.keys(cfgSignatureSecretTenants).length;sd
+const pemfileCache = new NodeCache({stdTTL: ms(cfgExpPemStdTtl) / 1000, checkperiod: ms(cfgExpPemCheckPeriod) / 1000, errorOnMissing: false, useClones: true});
 
 var asc_coAuthV = '3.0.9';				// Версия сервера совместного редактирования
 
@@ -403,6 +416,9 @@ function sendDataMeta(conn, msg) {
 function sendDataSession(conn, msg) {
   sendData(conn, {type: "session", messages: msg});
 }
+function sendDataRefreshToken(conn, msg) {
+  sendData(conn, {type: "refreshToken", messages: msg});
+}
 function sendReleaseLock(conn, userLocks) {
   sendData(conn, {type: "releaseLock", locks: _.map(userLocks, function(e) {
     return {
@@ -413,9 +429,9 @@ function sendReleaseLock(conn, userLocks) {
     };
   })});
 }
-function getParticipants(excludeClosed, docId, excludeUserId, excludeViewer) {
+function getParticipants(docId, excludeClosed, excludeUserId, excludeViewer) {
   return _.filter(connections, function(el) {
-    return el.isCloseCoAuthoring !== excludeClosed && el.docId === docId &&
+    return el.docId === docId && el.isCloseCoAuthoring !== excludeClosed &&
       el.user.id !== excludeUserId && el.user.view !== excludeViewer;
   });
 }
@@ -432,7 +448,8 @@ function getConnectionInfo(conn) {
     username: user.username,
     indexUser: user.indexUser,
     view: user.view,
-    connectionId: conn.id
+    connectionId: conn.id,
+    isCloseCoAuthoring: conn.isCloseCoAuthoring
   };
   return JSON.stringify(data);
 }
@@ -453,23 +470,15 @@ function* updatePresence(docId, userId, connInfo) {
   var multi = redisClient.multi(commands);
   yield utils.promiseRedis(multi, multi.exec);
 }
-function* getAllPresence(docId, optZRange, optHVals) {
+function* getAllPresence(docId) {
   var now = (new Date()).getTime();
-  var expiredKeys;
-  var hvals;
-  var multi;
-  if (optHVals && optZRange) {
-    expiredKeys = optZRange;
-    hvals = optHVals;
-  } else {
-    multi = redisClient.multi([
+  var multi = redisClient.multi([
       ['zrangebyscore', redisKeyPresenceSet + docId, 0, now],
       ['hvals', redisKeyPresenceHash + docId]
     ]);
-    var multiRes = yield utils.promiseRedis(multi, multi.exec);
-    expiredKeys = multiRes[0];
-    hvals = multiRes[1];
-  }
+  var multiRes = yield utils.promiseRedis(multi, multi.exec);
+  var expiredKeys = multiRes[0];
+  var hvals = multiRes[1];
   if (expiredKeys.length > 0) {
     var commands = [
       ['zremrangebyscore', redisKeyPresenceSet + docId, 0, now]
@@ -488,12 +497,17 @@ function* getAllPresence(docId, optZRange, optHVals) {
   }
   return hvals;
 }
-function* hasEditors(docId, optZRange, optHVals) {
+function* hasEditors(docId, opt_hvals) {
   var elem, hasEditors = false;
-  var hvals = yield* getAllPresence(docId, optZRange, optHVals);
+  var hvals;
+  if(opt_hvals){
+    hvals = opt_hvals;
+  } else {
+    hvals = yield* getAllPresence(docId);
+  }
   for (var i = 0; i < hvals.length; ++i) {
     elem = JSON.parse(hvals[i]);
-    if(!elem.view) {
+    if(!elem.view && !elem.isCloseCoAuthoring) {
       hasEditors = true;
       break;
     }
@@ -768,8 +782,8 @@ function* bindEvents(docId, callback, baseUrl, opt_userAction, opt_userData) {
 }
 
 function* cleanDocumentOnExit(docId, deleteChanges) {
-  //clean redis
-  var redisArgs = [redisClient, redisClient.del, redisKeyLocks + docId, redisKeyPresenceSet + docId, redisKeyPresenceHash + docId,
+  //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
+  var redisArgs = [redisClient, redisClient.del, redisKeyLocks + docId,
       redisKeyMessage + docId, redisKeyChangeIndex + docId, redisKeyForceSave + docId, redisKeyLastSave + docId];
   utils.promiseRedis.apply(this, redisArgs);
   //remove callback
@@ -813,6 +827,61 @@ function* _createSaveTimer(docId, opt_userId, opt_queue, opt_noDelay) {
     logger.debug('_createSaveTimer updateIf no effect');
   }
 }
+function getSecret(docId, opt_iss, opt_token){
+  var secretElem = cfgSignatureSecretPublic;
+  if (!isEmptySecretTenants) {
+    var iss;
+    if (opt_token) {
+      //look for issuer
+      var decodedTemp = jwt.decode(opt_token);
+      if (decodedTemp && decodedTemp.iss) {
+        iss = decodedTemp.iss;
+      }
+    } else {
+      iss = opt_iss;
+    }
+    if (iss) {
+      secretElem = cfgSignatureSecretTenants[iss];
+      if (!secretElem) {
+        logger.error('getSecret unknown issuer: docId = %s iss = %s', docId, iss);
+      }
+    }
+  }
+  var secret;
+  if (secretElem) {
+    if (secretElem.string) {
+      secret = secretElem.string;
+    } else if (secretElem.file) {
+      secret = pemfileCache.get(secretElem.file);
+      if (!secret) {
+        secret = fs.readFileSync(secretElem.file);
+        pemfileCache.set(secretElem.file, secret);
+      }
+    }
+  }
+  return secret;
+}
+function checkJwt(docId, token) {
+  var res = {decoded: null, description: null, code: null};
+  var secret = getSecret(docId, null, token);
+  if (undefined == secret) {
+    logger.error('empty secret: docId = %s token = %s', docId, token);
+  }
+  try {
+    res.decoded = jwt.verify(token, secret);
+    logger.debug('checkJwt success: docId = %s decoded = %j', docId, res.decoded);
+  } catch (err) {
+    logger.warn('checkJwt error: docId = %s name = %s message = %s token = %s', docId, err.name, err.message, token);
+    if ('TokenExpiredError' === err.name) {
+      res.code = constants.JWT_EXPIRED_CODE;
+      res.description = constants.JWT_EXPIRED_REASON + err.message;
+    } else if ('JsonWebTokenError' === err.name) {
+      res.code = constants.JWT_ERROR_CODE;
+      res.description = constants.JWT_ERROR_REASON + err.message;
+    }
+  }
+  return res;
+}
 
 exports.version = asc_coAuthV;
 exports.c_oAscServerStatus = c_oAscServerStatus;
@@ -832,6 +901,7 @@ exports.getChangesIndexPromise = co.wrap(getChangesIndex);
 exports.cleanDocumentOnExitPromise = co.wrap(cleanDocumentOnExit);
 exports.cleanDocumentOnExitNoChangesPromise = co.wrap(cleanDocumentOnExitNoChanges);
 exports.setForceSave= setForceSave;
+exports.checkJwt = checkJwt;
 exports.install = function(server, callbackFunction) {
   'use strict';
   var sockjs_opts = {sockjs_url: cfgSockjsUrl},
@@ -867,8 +937,16 @@ exports.install = function(server, callbackFunction) {
           logger.debug('Server shutdown receive data');
           return;
         }
-        if (conn.isCiriticalError && ('message' == data.type || 'getLock' == data.type || 'saveChanges' == data.type)) {
+        if (conn.isCiriticalError && ('message' == data.type || 'getLock' == data.type || 'saveChanges' == data.type ||
+            'isSaveLock' == data.type)) {
           logger.warn("conn.isCiriticalError send command: docId = %s type = %s", docId, data.type);
+          conn.close(constants.ACCESS_DENIED_CODE, constants.ACCESS_DENIED_REASON);
+          return;
+        }
+        if ((conn.isCloseCoAuthoring || (conn.user && conn.user.view)) &&
+            ('getLock' == data.type || 'saveChanges' == data.type || 'isSaveLock' == data.type)) {
+          logger.warn("conn.user.view||isCloseCoAuthoring access deny: docId = %s type = %s", docId, data.type);
+          conn.close(constants.ACCESS_DENIED_CODE, constants.ACCESS_DENIED_REASON);
           return;
         }
         switch (data.type) {
@@ -902,6 +980,9 @@ exports.install = function(server, callbackFunction) {
           case 'close':
             yield* closeDocument(conn, false);
             break;
+          case 'versionHistory'          :
+            yield* versionHistory(conn, new commonDefines.InputCommand(data.cmd));
+            break;
           case 'openDocument'      :
             var cmd = new commonDefines.InputCommand(data.message);
             yield canvasService.openDocument(conn, cmd);
@@ -912,6 +993,18 @@ exports.install = function(server, callbackFunction) {
           case 'extendSession' :
             conn.sessionIsSendWarning = false;
             conn.sessionTimeLastAction = new Date().getTime() - data.idletime;
+            break;
+          case 'refreshToken' :
+            var checkJwtRes = checkJwt(docId, data.jwt);
+            if (checkJwtRes.decoded) {
+              if (checkJwtRes.decoded.document.key == conn.docId) {
+                sendDataRefreshToken(conn, {token: fillJwtByConnection(conn), expires: cfgSignatureSecretExpiresSession});
+              } else {
+                conn.close(constants.ACCESS_DENIED_CODE, constants.ACCESS_DENIED_REASON);
+              }
+            } else {
+              conn.close(checkJwtRes.code, checkJwtRes.description);
+            }
             break;
           default:
             logger.debug("unknown command %s", message);
@@ -955,8 +1048,9 @@ exports.install = function(server, callbackFunction) {
     if (null == docId) {
       return;
     }
+    var hvals;
     var tmpUser = conn.user;
-    logger.info("Connection closed or timed out: userId = %s docId = %s", tmpUser.id, docId);
+    logger.info("Connection closed or timed out: userId = %s isCloseConnection = %s docId = %s", tmpUser.id, isCloseConnection, docId);
     var isCloseCoAuthoringTmp = conn.isCloseCoAuthoring;
     if (isCloseConnection) {
       //Notify that participant has gone
@@ -967,21 +1061,24 @@ exports.install = function(server, callbackFunction) {
       reconnected = yield* isUserReconnect(docId, tmpUser.id, conn.id);
       if (reconnected) {
         logger.info("reconnected: userId = %s docId = %s", tmpUser.id, docId);
+      } else {
+        var multi = redisClient.multi([['hdel', redisKeyPresenceHash + docId, tmpUser.id],
+                                        ['zrem', redisKeyPresenceSet + docId, tmpUser.id]]);
+        yield utils.promiseRedis(multi, multi.exec);
+        hvals = yield* getAllPresence(docId);
+        if (hvals.length <= 0) {
+          yield utils.promiseRedis(redisClient, redisClient.zrem, redisKeyDocuments, docId);
+        }
       }
     } else {
       conn.isCloseCoAuthoring = true;
+      yield* updatePresence(docId, tmpUser.id, getConnectionInfo(conn));
+      if (cfgSignatureEnable) {
+        sendDataRefreshToken(conn, {token: fillJwtByConnection(conn), expires: cfgSignatureSecretExpiresSession});
+      }
     }
 
-    var commands = [];
-    if (!reconnected) {
-      commands.push(['hdel', redisKeyPresenceHash + docId, tmpUser.id]);
-      commands.push(['zrem', redisKeyPresenceSet + docId, tmpUser.id]);
-    }
     if (isCloseCoAuthoringTmp) {
-      if (commands.length > 0) {
-        var multi = redisClient.multi(commands);
-        yield utils.promiseRedis(multi, multi.exec);
-      }
       //we already close connection
       return;
     }
@@ -994,13 +1091,10 @@ exports.install = function(server, callbackFunction) {
       if (conn.user.id == saveLock) {
         yield utils.promiseRedis(redisClient, redisClient.del, redisKeySaveLock + docId);
       }
+
       // Только если редактируем
       if (false === tmpUser.view) {
-        commands.push(['zrangebyscore', redisKeyPresenceSet + docId, 0, (new Date()).getTime()],
-          ['hvals', redisKeyPresenceHash + docId]);
-        var multi = redisClient.multi(commands);
-        var execRes = yield utils.promiseRedis(multi, multi.exec);
-        bHasEditors = yield* hasEditors(docId, execRes[2], execRes[3]);
+        bHasEditors = yield* hasEditors(docId, hvals);
         var puckerIndex = yield* getChangesIndex(docId);
         bHasChanges = puckerIndex > 0;
 
@@ -1008,8 +1102,6 @@ exports.install = function(server, callbackFunction) {
         if (!bHasEditors) {
           // На всякий случай снимаем lock
           yield utils.promiseRedis(redisClient, redisClient.del, redisKeySaveLock + docId);
-          //удаляем из списка документов
-          yield utils.promiseRedis(redisClient, redisClient.zrem, redisKeyDocuments, docId);
 
           // Send changes to save server
           if (bHasChanges) {
@@ -1032,11 +1124,35 @@ exports.install = function(server, callbackFunction) {
 
         // Для данного пользователя снимаем Lock с документа
         yield* checkEndAuthLock(false, docId, conn.user.id);
-      } else if(commands.length > 0) {
-        var multi = redisClient.multi(commands);
-        yield utils.promiseRedis(multi, multi.exec);
       }
     }
+  }
+
+  function* versionHistory(conn, cmd) {
+    var docIdOld = conn.docId;
+    var docIdNew = cmd.getDocId();
+    if (docIdOld !== docIdNew) {
+      var tmpUser = conn.user;
+      //remove presence(other data was removed before in closeDocument)
+      var multi = redisClient.multi([
+                                      ['hdel', redisKeyPresenceHash + docIdOld, tmpUser.id],
+                                      ['zrem', redisKeyPresenceSet + docIdOld, tmpUser.id]
+                                    ]);
+      yield utils.promiseRedis(multi, multi.exec);
+      var hvals = yield* getAllPresence(docIdOld);
+      if (hvals.length <= 0) {
+        yield utils.promiseRedis(redisClient, redisClient.zrem, redisKeyDocuments, docIdOld);
+      }
+
+      //apply new
+      conn.docId = docIdNew;
+      yield* updatePresence(docIdNew, tmpUser.id, getConnectionInfo(conn));
+      if (cfgSignatureEnable) {
+        sendDataRefreshToken(conn, {token: fillJwtByConnection(conn), expires: cfgSignatureSecretExpiresSession});
+      }
+    }
+    //open
+    yield canvasService.openDocument(conn, cmd, null);
   }
   // Получение изменений для документа (либо из кэша, либо обращаемся к базе, но только если были сохранения)
   function* getDocumentChanges(docId, optStartIndex, optEndIndex) {
@@ -1136,10 +1252,10 @@ exports.install = function(server, callbackFunction) {
     });
   }
 
-  function sendFileError(conn, errorId) {
-    logger.error('error description: docId = %s errorId = %s', conn.docId, errorId);
+  function sendFileError(conn, errorId, errorCode) {
+    logger.error('error description: docId = %s errorId = %s errorCode = %d', conn.docId, errorId, errorCode);
     conn.isCiriticalError = true;
-    sendData(conn, {type: 'error', description: errorId});
+    sendData(conn, {type: 'error', description: errorId, code: errorCode});
   }
 
   // Пересчет только для чужих Lock при сохранении на клиенте, который добавлял/удалял строки или столбцы
@@ -1299,6 +1415,116 @@ exports.install = function(server, callbackFunction) {
     yield* endAuth(conn, true);
   }
 
+  function fillUsername(data) {
+    var user = data.user;
+    if (user.firstname && user.lastname && data.lang) {
+      //as in web-apps/apps/common/main/lib/util/utils.js
+      return /^ru/.test(data.lang) ? user.lastname + ' ' + user.firstname : user.firstname + ' ' + user.lastname;
+    } else {
+      return user.username;
+    }
+  }
+  function isEditMode(permissions, mode, def) {
+    if (permissions && mode) {
+      //as in web-apps/apps/documenteditor/main/app/controller/Main.js
+      return (permissions.edit !== false || permissions.review === true) && mode !== 'view';
+    } else {
+      return def;
+    }
+  }
+  function fillDataFromJwt(decoded, data) {
+    var openCmd = data.openCmd;
+    if (decoded.document) {
+      var doc = decoded.document;
+      if(null != doc.key){
+        data.docid = doc.key;
+        if(openCmd){
+          openCmd.id = doc.key;
+        }
+      }
+      if(doc.permissions) {
+        if(!data.permissions){
+          data.permissions = {};
+        }
+        //not '=' because if it jwt from previous version, we must use values from data
+        Object.assign(data.permissions, doc.permissions);
+      }
+      if(openCmd){
+        if(null != doc.fileType) {
+          openCmd.format = doc.fileType;
+        }
+        if(null != doc.title) {
+          openCmd.title = doc.title;
+        }
+        if(null != doc.url) {
+          openCmd.url = doc.url;
+        }
+      }
+    }
+    if (decoded.editorConfig) {
+      var edit = decoded.editorConfig;
+      if (null != edit.callbackUrl) {
+        data.documentCallbackUrl = edit.callbackUrl;
+      }
+      if (null != edit.lang) {
+        data.lang = edit.lang;
+      }
+      if (null != edit.mode) {
+        data.mode = edit.mode;
+      }
+      if (null != edit.ds_view) {
+        data.view = edit.ds_view;
+      }
+      if (null != edit.ds_isCloseCoAuthoring) {
+        data.isCloseCoAuthoring = edit.ds_isCloseCoAuthoring;
+      }
+      if (edit.user) {
+        var user = edit.user;
+        if (null != user.id) {
+          data.id = user.id;
+          if (openCmd) {
+            openCmd.userid = user.id;
+          }
+        }
+        if (null != user.firstname) {
+          data.firstname = user.firstname;
+        }
+        if (null != user.lastname) {
+          data.lastname = user.lastname;
+        }
+        if (null != user.username) {
+          data.username = user.username;
+        }
+      }
+    }
+    //issuer for secret
+    if (decoded.iss) {
+      data.iss = decoded.iss;
+    }
+  }
+  function fillJwtByConnection(conn) {
+    var docId = conn.docId;
+    var payload = {document: {}, editorConfig: {user: {}}};
+    var doc = payload.document;
+    doc.key = conn.docId;
+    doc.permissions = conn.permissions;
+    var edit = payload.editorConfig;
+    //todo
+    //edit.callbackUrl = callbackUrl;
+    //edit.lang = conn.lang;
+    //edit.mode = conn.mode;
+    var user = edit.user;
+    user.id = conn.user.idOriginal;
+    user.username = conn.user.username;
+    //no standart
+    edit.ds_view = conn.user.view;
+    edit.ds_isCloseCoAuthoring = conn.isCloseCoAuthoring;
+
+    var options = {expiresIn: cfgSignatureSecretExpiresSession / 1000, issuer: conn.iss};
+    var secret = getSecret(docId, conn.iss, null);
+    return jwt.sign(payload, secret, options);
+  }
+
   function* auth(conn, data) {
     // Проверка версий
     if (data.version !== asc_coAuthV) {
@@ -1308,44 +1534,46 @@ exports.install = function(server, callbackFunction) {
 
     //TODO: Do authorization etc. check md5 or query db
     if (data.token && data.user) {
-      var docId;
-      var user = data.user;
-      //Parse docId
-      var parsed = urlParse.exec(conn.url);
-      if (parsed.length > 1) {
-        //в version history может приходить разные id в url и data
-        docId = conn.docId = data.docid;
-      } else {
-        //TODO: Send some shit back
-      }
-
-      var bIsRestore = null != data.sessionId;
-      var upsertRes = null;
-      var cmd = data.openCmd ? new commonDefines.InputCommand(data.openCmd) : null;
-      // Если восстанавливаем, индекс тоже восстанавливаем
-      var curIndexUser;
-      if (bIsRestore) {
-        curIndexUser = user.indexUser;
-      } else {
-        upsertRes = yield canvasService.commandOpenStartPromise(docId, cmd, true);
-        var bCreate = upsertRes.affectedRows == 1;
-        if (bCreate) {
-          curIndexUser = 1;
+      var docId = data.docid;
+      //check jwt
+      if (cfgSignatureEnable) {
+        var checkJwtRes = checkJwt(docId, data.jwt);
+        if (checkJwtRes.decoded) {
+          fillDataFromJwt(checkJwtRes.decoded, data);
         } else {
-          curIndexUser = upsertRes.insertId;
+          conn.close(checkJwtRes.code, checkJwtRes.description);
+          return;
         }
       }
 
-      var curUserId = user.id + curIndexUser;
+      docId = data.docid;
+      var user = data.user;
 
-      conn.sessionState = 1;
+      //get user index
+      var bIsRestore = null != data.sessionId;
+      var upsertRes = null;
+      var cmd = data.openCmd ? new commonDefines.InputCommand(data.openCmd) : null;
+      var curIndexUser;
+      if (bIsRestore) {
+        // Если восстанавливаем, индекс тоже восстанавливаем
+        curIndexUser = user.indexUser;
+      } else {
+        upsertRes = yield canvasService.commandOpenStartPromise(docId, cmd, true);
+        upsertRes.affectedRows == 1 ? curIndexUser = 1 : curIndexUser = upsertRes.insertId;
+      }
+
+      var curUserId = user.id + curIndexUser;
+      conn.docId = data.docid;
+      conn.permissions = data.permissions;
+      conn.iss = data.iss;
       conn.user = {
         id: curUserId,
         idOriginal: user.id,
-        username: user.username,
+        username: fillUsername(data),
         indexUser: curIndexUser,
-        view: data.view
+        view: !isEditMode(data.permissions, data.mode, !data.view)
       };
+      conn.isCloseCoAuthoring = data.isCloseCoAuthoring;
       conn.editorType = data['editorType'];
       if (data.sessionTimeConnect) {
         conn.sessionTimeConnect = data.sessionTimeConnect;
@@ -1433,7 +1661,8 @@ exports.install = function(server, callbackFunction) {
               sendFileError(conn, 'Restore error. Document modified.');
             }
           } catch (err) {
-            sendFileError(conn, 'DataBase error\r\n' + err.stack);
+            logger.error("DataBase error: docId = %s %s", docId, err.stack);
+            sendFileError(conn, 'DataBase error');
           }
         } else {
           yield* authRestore(conn, data.sessionId);
@@ -1550,6 +1779,7 @@ exports.install = function(server, callbackFunction) {
       changes: objChangesDocument,
       changesIndex: changesIndex,
       indexUser: conn.user.indexUser,
+      jwt: cfgSignatureEnable ? {token: fillJwtByConnection(conn), expires: cfgSignatureSecretExpiresSession} : undefined,
       g_cAscSpellCheckUrl: cfgSpellcheckerUrl
     };
     sendData(conn, sendObject);//Or 0 if fails
@@ -2026,27 +2256,27 @@ exports.install = function(server, callbackFunction) {
             }
             break;
           case commonDefines.c_oPublishType.releaseLock:
-            participants = getParticipants(true, data.docId, data.userId, true);
+            participants = getParticipants(data.docId, true, data.userId, true);
             _.each(participants, function(participant) {
               sendReleaseLock(participant, data.locks);
             });
             break;
           case commonDefines.c_oPublishType.participantsState:
-            participants = getParticipants(true, data.docId, data.user.id);
+            participants = getParticipants(data.docId, true, data.user.id);
             sendParticipantsState(participants, data);
             break;
           case commonDefines.c_oPublishType.message:
-            participants = getParticipants(true, data.docId, data.userId);
+            participants = getParticipants(data.docId, true, data.userId);
             _.each(participants, function(participant) {
               sendDataMessage(participant, data.messages);
             });
             break;
           case commonDefines.c_oPublishType.getLock:
-            participants = getParticipants(true, data.docId, data.userId, true);
+            participants = getParticipants(data.docId, true, data.userId, true);
             sendGetLock(participants, data.documentLocks);
             break;
           case commonDefines.c_oPublishType.changes:
-            participants = getParticipants(true, data.docId, data.userId, true);
+            participants = getParticipants(data.docId, true, data.userId, true);
             if(participants.length > 0) {
               var changes = data.changes;
               if (null == changes) {
@@ -2060,7 +2290,7 @@ exports.install = function(server, callbackFunction) {
             }
             break;
           case commonDefines.c_oPublishType.auth:
-            participants = getParticipants(true, data.docId, data.userId, true);
+            participants = getParticipants(data.docId, true, data.userId, true);
             if(participants.length > 0) {
               objChangesDocument = yield* getDocumentChanges(data.docId);
               for (i = 0; i < participants.length; ++i) {
@@ -2085,7 +2315,7 @@ exports.install = function(server, callbackFunction) {
             if (cmd.getUserConnectionId()) {
               participants = getParticipantUser(docId, cmd.getUserConnectionId());
             } else {
-              participants = getParticipants(false, docId);
+              participants = getParticipants(docId);
             }
             for (i = 0; i < participants.length; ++i) {
               participant = participants[i];
@@ -2103,13 +2333,13 @@ exports.install = function(server, callbackFunction) {
             }
             break;
           case commonDefines.c_oPublishType.warning:
-            participants = getParticipants(false, data.docId);
+            participants = getParticipants(data.docId);
             _.each(participants, function(participant) {
               sendDataWarning(participant, data.description);
             });
             break;
           case commonDefines.c_oPublishType.cursor:
-            participants = getParticipants(true, data.docId, data.userId);
+            participants = getParticipants(data.docId, true, data.userId);
             _.each(participants, function(participant) {
               sendDataCursor(participant, data.messages);
             });
@@ -2131,7 +2361,7 @@ exports.install = function(server, callbackFunction) {
             logger.debug('end shutdown');
             break;
           case commonDefines.c_oPublishType.meta:
-            participants = getParticipants(false, data.docId);
+            participants = getParticipants(data.docId);
             _.each(participants, function(participant) {
               sendDataMeta(participant, data.meta);
             });
