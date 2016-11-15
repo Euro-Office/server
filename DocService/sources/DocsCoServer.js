@@ -120,7 +120,6 @@ var cfgExpSessionCloseCommand = ms(config.get('expire.sessionclosecommand'));
 var cfgExpPemStdTtl = config.get('expire.pemStdTTL');
 var cfgExpPemCheckPeriod = config.get('expire.pemCheckPeriod');
 var cfgSockjsUrl = config.get('server.sockjsUrl');
-var cfgSockjsUrl = config.get('server.sockjsUrl');
 var cfgSignatureEnable = config.get('token.enable');
 var cfgSignatureSecretExpiresSession = ms(config.get('token.expiresSession'));
 var cfgSignatureSecretPublic = config.get('secret.public');
@@ -152,7 +151,7 @@ var queue;
 var clientStatsD = statsDClient.getClient();
 var licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false, branding: false};
 var shutdownFlag = false;
-var isEmptySecretTenants = !Object.keys(cfgSignatureSecretTenants).length;sd
+var isEmptySecretTenants = !Object.keys(cfgSignatureSecretTenants).length;
 const pemfileCache = new NodeCache({stdTTL: ms(cfgExpPemStdTtl) / 1000, checkperiod: ms(cfgExpPemCheckPeriod) / 1000, errorOnMissing: false, useClones: true});
 
 var asc_coAuthV = '3.0.9';				// Версия сервера совместного редактирования
