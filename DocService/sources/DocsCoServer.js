@@ -552,7 +552,7 @@ function* getOriginalParticipantsId(docId) {
   var hvals = yield* getAllPresence(docId);
   for (var i = 0; i < hvals.length; ++i) {
     var elem = JSON.parse(hvals[i]);
-    if (!elem.view) {
+    if (!elem.view && !elem.isCloseCoAuthoring) {
       tmpObject[elem.idOriginal] = 1;
     }
   }
@@ -1188,7 +1188,10 @@ exports.install = function(server, callbackFunction) {
     var participantsMap = [];
     var hvals = yield* getAllPresence(docId);
     for (var i = 0; i < hvals.length; ++i) {
-      participantsMap.push(JSON.parse(hvals[i]));
+      var elem = JSON.parse(hvals[i]);
+      if (!elem.isCloseCoAuthoring) {
+        participantsMap.push(elem);
+      }
     }
     return participantsMap;
   }
