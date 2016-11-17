@@ -1025,6 +1025,7 @@ exports.install = function(server, callbackFunction) {
     }
     var hvals;
     var tmpUser = conn.user;
+    var isView = tmpUser.view;
     logger.info("Connection closed or timed out: userId = %s isCloseConnection = %s docId = %s", tmpUser.id, isCloseConnection, docId);
     var isCloseCoAuthoringTmp = conn.isCloseCoAuthoring;
     if (isCloseConnection) {
@@ -1046,10 +1047,13 @@ exports.install = function(server, callbackFunction) {
         }
       }
     } else {
-      conn.isCloseCoAuthoring = true;
-      yield* updatePresence(docId, tmpUser.id, getConnectionInfo(conn));
-      if (cfgSignatureEnable) {
-        sendDataRefreshToken(conn, {token: fillJwtByConnection(conn), expires: cfgSignatureExpiresSession});
+      if (!conn.isCloseCoAuthoring) {
+        tmpUser.view = true;
+        conn.isCloseCoAuthoring = true;
+        yield* updatePresence(docId, tmpUser.id, getConnectionInfo(conn));
+        if (cfgSignatureEnable) {
+          sendDataRefreshToken(conn, {token: fillJwtByConnection(conn), expires: cfgSignatureExpiresSession});
+        }
       }
     }
 
@@ -1068,7 +1072,7 @@ exports.install = function(server, callbackFunction) {
       }
 
       // Только если редактируем
-      if (false === tmpUser.view) {
+      if (false === isView) {
         bHasEditors = yield* hasEditors(docId, hvals);
         var puckerIndex = yield* getChangesIndex(docId);
         bHasChanges = puckerIndex > 0;
