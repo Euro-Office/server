@@ -1063,7 +1063,11 @@ exports.install = function(server, callbackFunction) {
     }
 
     if (!reconnected) {
+      //revert old view to send event
+      var tmpView = tmpUser.view;
+      tmpUser.view = isView;
       yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, user: tmpUser, state: false}, docId, tmpUser.id);
+      tmpUser.view = tmpView;
 
       // Для данного пользователя снимаем лок с сохранения
       var saveLock = yield utils.promiseRedis(redisClient, redisClient.get, redisKeySaveLock + docId);
@@ -1234,10 +1238,10 @@ exports.install = function(server, callbackFunction) {
     });
   }
 
-  function sendFileError(conn, errorId, errorCode) {
-    logger.error('error description: docId = %s errorId = %s errorCode = %d', conn.docId, errorId, errorCode);
+  function sendFileError(conn, errorId) {
+    logger.error('error description: docId = %s errorId = %s', conn.docId, errorId);
     conn.isCiriticalError = true;
-    sendData(conn, {type: 'error', description: errorId, code: errorCode});
+    sendData(conn, {type: 'error', description: errorId});
   }
 
   // Пересчет только для чужих Lock при сохранении на клиенте, который добавлял/удалял строки или столбцы
@@ -2392,6 +2396,9 @@ exports.install = function(server, callbackFunction) {
               conn.close(constants.SESSION_IDLE_CODE, constants.SESSION_IDLE_REASON);
               continue;
             }
+          }
+          if (3 === conn.readyState) {
+            logger.error('expireDoc connection closed docId = %s', conn.docId);
           }
           idSet.add(conn.docId);
           updatePresenceCommandsToArray(commands, conn.docId, conn.user.id, getConnectionInfo(conn));
