@@ -71,9 +71,13 @@ LICENSE = $(addsuffix $(OUTPUT)/, LICENSE_FILES)
 LICENSE_JS := $(OUTPUT)/Common/sources/license.js
 COMMON_DEFINES_JS := $(OUTPUT)/Common/sources/commondefines.js
 
+WELCOME_DIR = welcome
+WELCOME_FILES = $(WELCOME_DIR)/**
+WELCOME = $(OUTPUT)/$(WELCOME_DIR)/
+
 .PHONY: all clean install uninstall build-date htmlfileinternal
 
-all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE) build-date
+all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE) $(WELCOME) build-date
 
 build-date: $(GRUNT_FILES)
 	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}';|" -i $(COMMON_DEFINES_JS)
@@ -110,7 +114,11 @@ $(GRUNT_FILES):
 		npm install && \
 		$(GRUNT) $(GRUNT_FLAGS)
 	echo "Done" > $@
-	
+
+$(WELCOME):
+	mkdir -p $(WELCOME) && \
+		cp -r -t $(WELCOME) $(WELCOME_FILES)
+
 clean:
 	rm -rf $(OUTPUT) $(GRUNT_FILES)
 
