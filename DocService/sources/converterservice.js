@@ -149,35 +149,27 @@ function convertHealthCheck(req, res) {
     var output = false;
     try {
       logger.debug('Start convertHealthCheck');
-      if (cfgSignatureEnable && cfgSignatureUseForRequest) {
-        var checkJwtRes = docsCoServer.checkJwtHeader('convertHealthCheck', req);
-        if (!(checkJwtRes && checkJwtRes.decoded)) {
-          output = false;
-        }
-      }
-      if (output) {
-        var task = yield* taskResult.addRandomKeyTask('healthcheck');
-        var docId = task.key;
-        //put test file to storage
-        var data = yield utils.readFile(cfgHealthCheckFilePath);
-        var format = 'docx';
-        yield storage.putObject(docId + '/origin.' + format, data, data.length);
-        //convert
-        var cmd = new commonDefines.InputCommand();
-        cmd.setCommand('conv');
-        cmd.setSaveKey(docId);
-        cmd.setFormat(format);
-        cmd.setDocId(docId);
-        cmd.setTitle('Editor.bin');
-        cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
+      var task = yield* taskResult.addRandomKeyTask('healthcheck');
+      var docId = task.key;
+      //put test file to storage
+      var data = yield utils.readFile(cfgHealthCheckFilePath);
+      var format = 'docx';
+      yield storage.putObject(docId + '/origin.' + format, data, data.length);
+      //convert
+      var cmd = new commonDefines.InputCommand();
+      cmd.setCommand('conv');
+      cmd.setSaveKey(docId);
+      cmd.setFormat(format);
+      cmd.setDocId(docId);
+      cmd.setTitle('Editor.bin');
+      cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
 
-        var status = yield* convertByCmd(cmd, false, utils.getBaseUrlByRequest(req), true);
-        if (status && constants.NO_ERROR == status.err) {
-          output = true;
-        }
-        //clean up
-        yield canvasService.cleanupCache(docId);
+      var status = yield* convertByCmd(cmd, false, utils.getBaseUrlByRequest(req), true);
+      if (status && constants.NO_ERROR == status.err) {
+        output = true;
       }
+      //clean up
+      yield canvasService.cleanupCache(docId);
       logger.debug('End convertHealthCheck');
     } catch (e) {
       logger.error('Error convertHealthCheck\r\n%s', e.stack);
