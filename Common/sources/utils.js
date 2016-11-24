@@ -56,10 +56,11 @@ var cfgExpPemStdTtl = config.get('services.CoAuthoring.expire.pemStdTTL');
 var cfgExpPemCheckPeriod = config.get('services.CoAuthoring.expire.pemCheckPeriod');
 var cfgSignatureAuthorizationHeader = config.get('services.CoAuthoring.token.authorizationHeader');
 var cfgSignatureAuthorizationHeaderPrefix = config.get('services.CoAuthoring.token.authorizationHeaderPrefix');
-var cfgSignatureExpiresRequest = config.get('services.CoAuthoring.token.expiresRequest');
-var cfgSignatureSecretPublic = config.get('services.CoAuthoring.secret.public');
-var cfgSignatureSecretTenants = config.get('services.CoAuthoring.secret.tenants');
-var cfgSignatureSecretAlgorithmRequest = config.get('services.CoAuthoring.token.algorithmRequest');
+var cfgSignatureExpiresOutbox = config.get('services.CoAuthoring.token.expiresOutbox');
+var cfgSignatureSecretInboxPublic = config.get('services.CoAuthoring.secret.inboxPublic');
+var cfgSignatureSecretInboxTenants = config.get('services.CoAuthoring.secret.inboxTenants');
+var cfgSignatureSecretOutbox = config.get('services.CoAuthoring.secret.outbox');
+var cfgSignatureSecretAlgorithmOutbox = config.get('services.CoAuthoring.token.algorithmOutbox');
 
 var ANDROID_SAFE_FILENAME = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-+,@£$€!½§~\'=()[]{}0123456789';
 
@@ -73,7 +74,7 @@ var g_oIpFilterRules = function() {
   }
   return res;
 }();
-var isEmptySecretTenants = isEmptyObject(cfgSignatureSecretTenants);
+var isEmptySecretTenants = isEmptyObject(cfgSignatureSecretInboxTenants);
 const pemfileCache = new NodeCache({stdTTL: ms(cfgExpPemStdTtl) / 1000, checkperiod: ms(cfgExpPemCheckPeriod) / 1000, errorOnMissing: false, useClones: true});
 
 exports.addSeconds = function(date, sec) {
@@ -582,27 +583,8 @@ function isEmptyObject(val) {
   return !(val && Object.keys(val).length);
 }
 exports.isEmptyObject = isEmptyObject;
-function getSecret(docId, opt_iss, opt_token) {
-  var secretElem = cfgSignatureSecretPublic;
-  if (!isEmptySecretTenants) {
-    var iss;
-    if (opt_token) {
-      //look for issuer
-      var decodedTemp = jwt.decode(opt_token);
-      if (decodedTemp && decodedTemp.iss) {
-        iss = decodedTemp.iss;
-      }
-    } else {
-      iss = opt_iss;
-    }
-    if (iss) {
-      secretElem = cfgSignatureSecretTenants[iss];
-      if (!secretElem) {
-        logger.error('getSecret unknown issuer: docId = %s iss = %s', docId, iss);
-      }
-    }
-  }
-  var secret;
+function getSecretByElem(secretElem) {
+  let secret;
   if (secretElem) {
     if (secretElem.string) {
       secret = secretElem.string;
@@ -616,13 +598,38 @@ function getSecret(docId, opt_iss, opt_token) {
   }
   return secret;
 }
-exports.getSecret = getSecret;
-function fillJwtByUrl(docId, uri, opt_dataObject, opt_iss) {
-  var parseObject = url.parse(uri, true);
-  var payload = {query: parseObject.query, payload: opt_dataObject};
-
-  var options = {algorithm: cfgSignatureSecretAlgorithmRequest, expiresIn: cfgSignatureExpiresRequest, issuer: opt_iss};
-  var secret = getSecret(docId, opt_iss, null);
-  return jwt.sign(payload, secret, options);
+exports.getSecretByElem = getSecretByElem;
+function getSecret(docId, opt_iss, opt_token) {
+  var secretElem = cfgSignatureSecretInboxPublic;
+  if (!isEmptySecretTenants) {
+    var iss;
+    if (opt_token) {
+      //look for issuer
+      var decodedTemp = jwt.decode(opt_token);
+      if (decodedTemp && decodedTemp.iss) {
+        iss = decodedTemp.iss;
+      }
+    } else {
+      iss = opt_iss;
+    }
+    if (iss) {
+      secretElem = cfgSignatureSecretInboxTenants[iss];
+      if (!secretElem) {
+        logger.error('getSecret unknown issuer: docId = %s iss = %s', docId, iss);
+      }
+    }
+  }
+  return getSecretByElem(secretElem);
 }
-exports.fillJwtByUrl = fillJwtByUrl;
+exports.getSecret = getSecret;
+function fillJwtForRequest(opt_payload) {
+  let data = {};
+  if(opt_payload){
+    data.payload = opt_payload;
+  }
+
+  let options = {algorithm: cfgSignatureSecretAlgorithmOutbox, expiresIn: cfgSignatureExpiresOutbox};
+  let secret = getSecretByElem(cfgSignatureSecretOutbox);
+  return jwt.sign(data, secret, options);
+}
+exports.fillJwtForRequest = fillJwtForRequest;

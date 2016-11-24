@@ -193,9 +193,9 @@ function* downloadFile(docId, uri, fileFrom) {
   if (0 == filterStatus) {
     while (!res && downloadAttemptCount++ < cfgDownloadAttemptMaxCount) {
       try {
-        var authorization;
+        let authorization;
         if (cfgSignatureEnable && cfgSignatureUseForRequest) {
-          authorization = utils.fillJwtByUrl(docId, uri);
+          authorization = utils.fillJwtForRequest();
         }
         data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout * 1000, cfgDownloadMaxBytes, authorization);
         res = true;

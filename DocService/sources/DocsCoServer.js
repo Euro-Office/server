@@ -122,7 +122,8 @@ var cfgSignatureExpiresSession = ms(config.get('token.expiresSession'));
 var cfgSignatureUseForRequest = config.get('token.useforrequest');
 var cfgSignatureAuthorizationHeader = config.get('token.authorizationHeader');
 var cfgSignatureAuthorizationHeaderPrefix = config.get('token.authorizationHeaderPrefix');
-var cfgSignatureSecretAlgorithmRequest = config.get('token.algorithmRequest');
+var cfgSignatureTokenAlgorithmSession = config.get('token.algorithmSession');
+var cfgSignatureSecretSession = config.get('secret.session');
 
 var redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
 var redisKeyPresenceHash = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_HASH;
@@ -566,7 +567,7 @@ function* sendServerRequest(docId, uri, dataObject) {
   logger.debug('postData request: docId = %s;url = %s;data = %j', docId, uri, dataObject);
   var authorization;
   if (cfgSignatureEnable && cfgSignatureUseForRequest) {
-    authorization = utils.fillJwtByUrl(docId, uri, dataObject);
+    authorization = utils.fillJwtForRequest(dataObject);
   }
   var res = yield utils.postRequestPromise(uri, JSON.stringify(dataObject), cfgCallbackRequestTimeout * 1000, authorization);
   logger.debug('postData response: docId = %s;data = %s', docId, res);
@@ -1402,10 +1403,11 @@ exports.install = function(server, callbackFunction) {
   }
 
   function fillUsername(data) {
-    var user = data.user;
-    if (user.firstname && user.lastname && data.lang) {
+    let user = data.user;
+    if (user.firstname && user.lastname) {
       //as in web-apps/apps/common/main/lib/util/utils.js
-      return /^ru/.test(data.lang) ? user.lastname + ' ' + user.firstname : user.firstname + ' ' + user.lastname;
+      let isRu = (data.lang && /^ru/.test(data.lang));
+      return isRu ? user.lastname + ' ' + user.firstname : user.firstname + ' ' + user.lastname;
     } else {
       return user.username;
     }
@@ -1478,8 +1480,8 @@ exports.install = function(server, callbackFunction) {
         if (null != user.lastname) {
           data.lastname = user.lastname;
         }
-        if (null != user.username) {
-          data.username = user.username;
+        if (null != user.name) {
+          data.username = user.name;
         }
       }
     }
@@ -1501,13 +1503,13 @@ exports.install = function(server, callbackFunction) {
     //edit.mode = conn.mode;
     var user = edit.user;
     user.id = conn.user.idOriginal;
-    user.username = conn.user.username;
+    user.name = conn.user.username;
     //no standart
     edit.ds_view = conn.user.view;
     edit.ds_isCloseCoAuthoring = conn.isCloseCoAuthoring;
 
-    var options = {algorithm: cfgSignatureSecretAlgorithmRequest, expiresIn: cfgSignatureExpiresSession / 1000, issuer: conn.iss};
-    var secret = utils.getSecret(docId, conn.iss, null);
+    var options = {algorithm: cfgSignatureTokenAlgorithmSession, expiresIn: cfgSignatureExpiresSession / 1000, issuer: conn.iss};
+    var secret = utils.getSecretByElem(cfgSignatureSecretSession);
     return jwt.sign(payload, secret, options);
   }
 
