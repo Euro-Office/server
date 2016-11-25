@@ -832,13 +832,13 @@ function* _createSaveTimer(docId, opt_userId, opt_queue, opt_noDelay) {
   }
 }
 
-function checkJwt(docId, token, isOpen) {
+function checkJwt(docId, token, isSession) {
   var res = {decoded: null, description: null, code: null, token: token};
   var secret;
-  if (isOpen) {
-    secret = utils.getSecret(docId, null, token);
-  } else {
+  if (isSession) {
     secret = utils.getSecretByElem(cfgSecretSession);
+  } else {
+    secret = utils.getSecret(docId, null, token);
   }
   if (undefined == secret) {
     logger.error('empty secret: docId = %s token = %s', docId, token);
@@ -991,8 +991,8 @@ exports.install = function(server, callbackFunction) {
             conn.sessionTimeLastAction = new Date().getTime() - data.idletime;
             break;
           case 'refreshToken' :
-            var isOpen = !!data.jwtOpen;
-            var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isOpen);
+            var isSession = !!data.jwtSession;
+            var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isSession);
             if (checkJwtRes.decoded) {
               if (checkJwtRes.decoded.document.key == conn.docId) {
                 sendDataRefreshToken(conn, {token: fillJwtByConnection(conn), expires: cfgTokenSessionExpires});
@@ -1546,8 +1546,8 @@ exports.install = function(server, callbackFunction) {
       var docId = data.docid;
       //check jwt
       if (cfgTokenEnableBrowser) {
-        var isOpen = !!data.jwtOpen;
-        var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isOpen);
+        var isSession = !!data.jwtSession;
+        var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isSession);
         if (checkJwtRes.decoded) {
           fillDataFromJwt(checkJwtRes.decoded, data);
         } else {
