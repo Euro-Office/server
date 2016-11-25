@@ -832,9 +832,14 @@ function* _createSaveTimer(docId, opt_userId, opt_queue, opt_noDelay) {
   }
 }
 
-function checkJwt(docId, token) {
+function checkJwt(docId, token, isOpen) {
   var res = {decoded: null, description: null, code: null, token: token};
-  var secret = utils.getSecret(docId, null, token);
+  var secret;
+  if (isOpen) {
+    secret = utils.getSecret(docId, null, token);
+  } else {
+    secret = utils.getSecretByElem(cfgSecretSession);
+  }
   if (undefined == secret) {
     logger.error('empty secret: docId = %s token = %s', docId, token);
   }
@@ -857,7 +862,7 @@ function checkJwtHeader(docId, req) {
   var authorization = req.get(cfgTokenInboxHeader);
   if (authorization && authorization.startsWith(cfgTokenInboxPrefix)) {
     var token = authorization.substring(cfgTokenInboxPrefix.length);
-    return checkJwt(docId, token);
+    return checkJwt(docId, token, false);
   }
   return null;
 }
@@ -986,7 +991,8 @@ exports.install = function(server, callbackFunction) {
             conn.sessionTimeLastAction = new Date().getTime() - data.idletime;
             break;
           case 'refreshToken' :
-            var checkJwtRes = checkJwt(docId, data.jwt);
+            var isOpen = !!data.jwtOpen;
+            var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isOpen);
             if (checkJwtRes.decoded) {
               if (checkJwtRes.decoded.document.key == conn.docId) {
                 sendDataRefreshToken(conn, {token: fillJwtByConnection(conn), expires: cfgTokenSessionExpires});
@@ -1523,7 +1529,7 @@ exports.install = function(server, callbackFunction) {
     edit.ds_view = conn.user.view;
     edit.ds_isCloseCoAuthoring = conn.isCloseCoAuthoring;
 
-    var options = {algorithm: cfgTokenSessionAlgorithm, expiresIn: cfgTokenSessionExpires / 1000, issuer: conn.iss};
+    var options = {algorithm: cfgTokenSessionAlgorithm, expiresIn: cfgTokenSessionExpires / 1000};
     var secret = utils.getSecretByElem(cfgSecretSession);
     return jwt.sign(payload, secret, options);
   }
@@ -1540,7 +1546,8 @@ exports.install = function(server, callbackFunction) {
       var docId = data.docid;
       //check jwt
       if (cfgTokenEnableBrowser) {
-        var checkJwtRes = checkJwt(docId, data.jwt);
+        var isOpen = !!data.jwtOpen;
+        var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isOpen);
         if (checkJwtRes.decoded) {
           fillDataFromJwt(checkJwtRes.decoded, data);
         } else {
@@ -1568,7 +1575,6 @@ exports.install = function(server, callbackFunction) {
       var curUserId = user.id + curIndexUser;
       conn.docId = data.docid;
       conn.permissions = data.permissions;
-      conn.iss = data.iss;
       conn.user = {
         id: curUserId,
         idOriginal: user.id,
@@ -1974,7 +1980,7 @@ exports.install = function(server, callbackFunction) {
           var docLock = yield* getAllLocks(docId);
           if (_recalcLockArray(userId, docLock, oRecalcIndexColumns, oRecalcIndexRows)) {
             var toCache = [];
-            for (i = 0; i < docLock.length; ++i) {
+            for (var i = 0; i < docLock.length; ++i) {
               toCache.push(JSON.stringify(docLock[i]));
             }
             yield* addLocks(docId, toCache, true);

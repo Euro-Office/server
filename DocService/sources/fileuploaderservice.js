@@ -99,11 +99,11 @@ exports.uploadTempFile = function(req, res) {
 };
 function checkJwtUpload(docId, errorName, token){
   var res = {err: true, docId: null, userid: null};
-  var checkJwtRes = docsCoServer.checkJwt(docId, token);
+  var checkJwtRes = docsCoServer.checkJwt(docId, token, false);
   if (checkJwtRes.decoded) {
     var doc = checkJwtRes.decoded.document;
     var edit = checkJwtRes.decoded.editorConfig;
-    if (edit.ds_view) {
+    if (!edit.ds_view && !edit.ds_isCloseCoAuthoring) {
       res.err = false;
       res.docId = doc.key;
       if (edit.user) {

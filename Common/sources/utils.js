@@ -557,7 +557,7 @@ function checkIpFilter(ipString, opt_hostname) {
       ip6 = ip.toIPv4MappedAddress().toNormalizedString();
     }
   }
-  for (i = 0; i < g_oIpFilterRules.length; ++i) {
+  for (var i = 0; i < g_oIpFilterRules.length; ++i) {
     var rule = g_oIpFilterRules[i];
     if ((opt_hostname && rule.exp.test(opt_hostname)) || (ip4 && rule.exp.test(ip4)) || (ip6 && rule.exp.test(ip6))) {
       if (!rule.allow) {
