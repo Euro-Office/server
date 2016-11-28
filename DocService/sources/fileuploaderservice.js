@@ -99,7 +99,7 @@ exports.uploadTempFile = function(req, res) {
 };
 function checkJwtUpload(docId, errorName, token){
   var res = {err: true, docId: null, userid: null};
-  var checkJwtRes = docsCoServer.checkJwt(docId, token, false);
+  var checkJwtRes = docsCoServer.checkJwt(docId, token, true);
   if (checkJwtRes.decoded) {
     var doc = checkJwtRes.decoded.document;
     var edit = checkJwtRes.decoded.editorConfig;
