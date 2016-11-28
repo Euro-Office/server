@@ -132,7 +132,6 @@ Optional Variables:
 */
 {
   port: 8125
-, deleteIdleStats: true
 , flushInterval: 600000
 , backends: [ "./backends/console" ]
 }
