@@ -16,11 +16,18 @@
         "static_content": [
           {
             "name": "/sdkjs",
-            "path": "/var/www/onlyoffice/documentserver/sdkjs"
+            "path": "/var/www/onlyoffice/documentserver/sdkjs",
+            "options": {"maxAge": "7d"}
           },
           {
             "name": "/web-apps",
-            "path": "/var/www/onlyoffice/documentserver/web-apps"
+            "path": "/var/www/onlyoffice/documentserver/web-apps",
+            "options": {"maxAge": "7d"}
+          },
+          {
+            "name": "/welcome",
+            "path": "/var/www/onlyoffice/documentserver/server/welcome",
+            "options": {"maxAge": "7d"}
           }
         ]
       },

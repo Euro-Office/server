@@ -40,8 +40,6 @@ const utils = require('./utils');
 const pubsubRedis = require('./../../DocService/sources/pubsubRedis');
 const redisClient = pubsubRedis.getClientRedis();
 
-const buildVersion = '4.0.0';
-const buildNumber = 19;
 const buildDate = '6/29/2016';
 const oBuildDate = new Date(buildDate);
 const oPackageType = constants.PACKAGE_TYPE_OS;
@@ -78,6 +76,8 @@ exports.readLicense = function*() {
 
 			res.light = (true === oLicense['light'] || 'true' === oLicense['light']); // Someone who likes to put json string instead of bool
 			res.branding = (true === oLicense['branding'] || 'true' === oLicense['branding']); // Someone who likes to put json string instead of bool
+		} else {
+			throw 'verify';
 		}
 	} catch (e) {
 		res.count = 1;
@@ -131,5 +131,3 @@ function* _updateFileState(state) {
 	const val = constants.PACKAGE_TYPE_OS === oPackageType ? redisKeyLicense : (state ? new Date(1) : new Date());
 	yield utils.promiseRedis(redisClient, redisClient.hset, redisKeyLicense, redisKeyLicense, val);
 }
-exports.buildVersion = buildVersion;
-exports.buildNumber = buildNumber;

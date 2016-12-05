@@ -52,7 +52,7 @@ FILE_CONVERTER_FILES += ../core/build/bin/$(TARGET)/x2t$(EXEC_EXT)
 
 HTML_FILE_INTERNAL := $(FILE_CONVERTER)/HtmlFileInternal
 HTML_FILE_INTERNAL_FILES += ../core/build/lib/$(TARGET)/HtmlFileInternal$(EXEC_EXT)
-HTML_FILE_INTERNAL_FILES += ../core/build/cef/$(TARGET)/**
+HTML_FILE_INTERNAL_FILES += ../core/Common/3dParty/cef/$(TARGET)/build/**
 
 SPELLCHECKER_DICTIONARIES := $(OUTPUT)/SpellChecker/dictionaries
 SPELLCHECKER_DICTIONARY_FILES += ../dictionaries/**
@@ -69,14 +69,19 @@ LICENSE_FILES = LICENSE.txt 3rd-Party.txt license/
 LICENSE = $(addsuffix $(OUTPUT)/, LICENSE_FILES)
 
 LICENSE_JS := $(OUTPUT)/Common/sources/license.js
+COMMON_DEFINES_JS := $(OUTPUT)/Common/sources/commondefines.js
+
+WELCOME_DIR = welcome
+WELCOME_FILES = $(WELCOME_DIR)/**
+WELCOME = $(OUTPUT)/$(WELCOME_DIR)/
 
 .PHONY: all clean install uninstall build-date htmlfileinternal
 
-all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE)
+all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE) $(WELCOME) build-date
 
 build-date: $(GRUNT_FILES)
-	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}';|" -i $(LICENSE_JS)
-	sed "s|const buildNumber = .*|const buildNumber = ${BUILD_NUMBER};|" -i $(LICENSE_JS)
+	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}';|" -i $(COMMON_DEFINES_JS)
+	sed "s|const buildNumber = .*|const buildNumber = ${BUILD_NUMBER};|" -i $(COMMON_DEFINES_JS)
 	sed "s|const buildDate = .*|const buildDate = '$$(date +%F)';|" -i $(LICENSE_JS)
 	
 htmlfileinternal: $(FILE_CONVERTER)
@@ -109,7 +114,11 @@ $(GRUNT_FILES):
 		npm install && \
 		$(GRUNT) $(GRUNT_FLAGS)
 	echo "Done" > $@
-	
+
+$(WELCOME):
+	mkdir -p $(WELCOME) && \
+		cp -r -t $(WELCOME) $(WELCOME_FILES)
+
 clean:
 	rm -rf $(OUTPUT) $(GRUNT_FILES)
 

@@ -32,7 +32,9 @@
 
 var multiparty = require('multiparty');
 var co = require('co');
+var jwt = require('jsonwebtoken');
 var taskResult = require('./taskresult');
+var docsCoServer = require('./DocsCoServer');
 var utils = require('./../../Common/sources/utils');
 var constants = require('./../../Common/sources/constants');
 var storageBase = require('./../../Common/sources/storage-base');
@@ -44,16 +46,41 @@ var configUtils = config.get('services.CoAuthoring.utils');
 
 var cfgImageSize = configServer.get('limits_image_size');
 var cfgTypesUpload = configUtils.get('limits_image_types_upload');
+var cfgTokenEnableBrowser = config.get('services.CoAuthoring.token.enable.browser');
+var cfgTokenEnableRequestInbox = config.get('services.CoAuthoring.token.enable.request.inbox');
 
 exports.uploadTempFile = function(req, res) {
   return co(function* () {
     var docId = 'null';
     try {
-      docId = req.query['key'];
-      var vkey = req.query['vkey'];
+      docId = req.query.key;
       logger.debug('Start uploadTempFile: docId = %s', docId);
+      if (cfgTokenEnableRequestInbox) {
+        var authError = constants.VKEY;
+        var checkJwtRes = docsCoServer.checkJwtHeader(docId, req);
+        if (checkJwtRes) {
+          if (checkJwtRes.decoded) {
+            authError = constants.NO_ERROR;
+            if (checkJwtRes.decoded.query && checkJwtRes.decoded.query.key) {
+              docId = checkJwtRes.decoded.query.key;
+            }
+            if (checkJwtRes.decoded.payloadhash &&
+              !docsCoServer.checkJwtPayloadHash(docId, checkJwtRes.decoded.payloadhash, req.body, checkJwtRes.token)) {
+              authError = constants.VKEY;
+            }
+          } else {
+            if (constants.JWT_EXPIRED_CODE == checkJwtRes.code) {
+              authError = constants.VKEY_KEY_EXPIRE;
+            }
+          }
+        }
+        if (authError !== constants.NO_ERROR) {
+          utils.fillXmlResponse(res, undefined, authError);
+          return;
+        }
+      }
+
       if (docId && req.body && Buffer.isBuffer(req.body)) {
-        //todo vkey
         var task = yield* taskResult.addRandomKeyTask(docId);
         var strPath = task.key + '/' + docId + '.tmp';
         yield storageBase.putObject(strPath, req.body, req.body.length);
@@ -70,15 +97,43 @@ exports.uploadTempFile = function(req, res) {
     }
   });
 };
+function checkJwtUpload(docId, errorName, token){
+  var res = {err: true, docId: null, userid: null};
+  var checkJwtRes = docsCoServer.checkJwt(docId, token, true);
+  if (checkJwtRes.decoded) {
+    var doc = checkJwtRes.decoded.document;
+    var edit = checkJwtRes.decoded.editorConfig;
+    if (!edit.ds_view && !edit.ds_isCloseCoAuthoring) {
+      res.err = false;
+      res.docId = doc.key;
+      if (edit.user) {
+        res.userid = edit.user.id;
+      }
+    } else {
+      logger.error('Error %s jwt: docId = %s\r\n%s', errorName, docId, 'access deny');
+    }
+  } else {
+    logger.error('Error %s jwt: docId = %s\r\n%s', errorName, docId, checkJwtRes.description);
+  }
+  return res;
+}
 exports.uploadImageFileOld = function(req, res) {
   var docId = req.params.docid;
   logger.debug('Start uploadImageFileOld: docId = %s', docId);
   var userid = req.params.userid;
-  var vkey = req.params.vkey;
+  if (cfgTokenEnableBrowser) {
+    var checkJwtRes = checkJwtUpload(docId, 'uploadImageFileOld', req.params.jwt);
+    if(!checkJwtRes.err){
+      docId = checkJwtRes.docId || docId;
+      userid = checkJwtRes.userid || userid;
+    } else {
+      res.sendStatus(400);
+      return;
+    }
+  }
   var index = parseInt(req.params.index);
   var listImages = [];
   //todo userid
-  //todo vkey
   if (docId && index) {
     var isError = false;
     var form = new multiparty.Form();
@@ -149,11 +204,22 @@ exports.uploadImageFile = function(req, res) {
     var docId = 'null';
     try {
       docId = req.params.docid;
-      logger.debug('Start uploadImageFile: docId = %s', docId);
       var userid = req.params.userid;
-      var vkey = req.params.vkey;
+      logger.debug('Start uploadImageFile: docId = %s', docId);
+
+      var isValidJwt = true;
+      if (cfgTokenEnableBrowser) {
+        var checkJwtRes = checkJwtUpload(docId, 'uploadImageFile', req.params.jwt);
+        if (!checkJwtRes.err) {
+          docId = checkJwtRes.docId || docId;
+          userid = checkJwtRes.userid || userid;
+        } else {
+          isValidJwt = false;
+        }
+      }
+
       var index = parseInt(req.params.index);
-      if (docId && req.body && Buffer.isBuffer(req.body)) {
+      if (isValidJwt && docId && req.body && Buffer.isBuffer(req.body)) {
         var buffer = req.body;
         var format = formatChecker.getImageFormat(buffer);
         var formatStr = formatChecker.getStringFromFormat(format);

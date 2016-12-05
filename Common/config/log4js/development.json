@@ -1,6 +1,10 @@
 {
 	"appenders": [{
-		"type": "console"
+		"type": "console",
+		"layout": {
+			"type": "pattern",
+			"pattern": "%[[%d] [%p] %c -%] %.10000m"
+		}
 	}],
 	"replaceConsole": "true",
 	"levels": {

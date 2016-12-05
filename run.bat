@@ -1,5 +1,7 @@
 ECHO OFF
 
+reg Query "HKLM\Hardware\Description\System\CentralProcessor\0" | find /i "x86" > NUL && set OS=32||set OS=64
+
 ECHO.
 ECHO ----------------------------------------
 ECHO copy file to converter
@@ -10,22 +12,23 @@ mkdir "%~dp0\FileConverter\bin"
 mkdir "%~dp0\FileConverter\bin\HtmlFileInternal"
 
 cd /D "%~dp0\FileConverter\bin" || goto ERROR
-copy "..\..\..\core\build\bin\windows\icudt.dll" "."
-copy "..\..\..\core\build\bin\icu\win_32\icudt55.dll" "."
-copy "..\..\..\core\build\bin\icu\win_32\icuuc55.dll" "."
-copy "..\..\..\core\build\lib\win_32\doctrenderer.dll" "."
-copy "..\..\..\core\build\lib\win_32\HtmlRenderer.dll" "."
-copy "..\..\..\core\build\lib\win_32\DjVuFile.dll" "."
-copy "..\..\..\core\build\lib\win_32\XpsFile.dll" "."
-copy "..\..\..\core\build\lib\win_32\PdfReader.dll" "."
-copy "..\..\..\core\build\lib\win_32\PdfWriter.dll" "."
-copy "..\..\..\core\build\lib\win_32\HtmlFile.dll" "."
-copy "..\..\..\core\build\lib\win_32\UnicodeConverter.dll" "."
-copy "..\..\..\core\build\lib\win_32\HtmlFileInternal.exe" ".\HtmlFileInternal"
-xcopy /s/h/e/k/c/y/q "..\..\..\core\build\cef\win_32" ".\HtmlFileInternal"
-copy "..\..\..\core\build\bin\windows\x2t32.exe" "."
+copy "..\..\..\core\build\bin\win_64\icudt.dll" "."
+copy "..\..\..\core\build\bin\icu\win_%OS%\icudt55.dll" "."
+copy "..\..\..\core\build\bin\icu\win_%OS%\icuuc55.dll" "."
+copy "..\..\..\core\build\lib\DoctRenderer.config" "."
+copy "..\..\..\core\build\lib\win_%OS%\doctrenderer.dll" "."
+copy "..\..\..\core\build\lib\win_%OS%\HtmlRenderer.dll" "."
+copy "..\..\..\core\build\lib\win_%OS%\DjVuFile.dll" "."
+copy "..\..\..\core\build\lib\win_%OS%\XpsFile.dll" "."
+copy "..\..\..\core\build\lib\win_%OS%\PdfReader.dll" "."
+copy "..\..\..\core\build\lib\win_%OS%\PdfWriter.dll" "."
+copy "..\..\..\core\build\lib\win_%OS%\HtmlFile.dll" "."
+copy "..\..\..\core\build\lib\win_%OS%\UnicodeConverter.dll" "."
+copy "..\..\..\core\build\lib\win_%OS%\HtmlFileInternal.exe" ".\HtmlFileInternal"
+xcopy /s/h/e/k/c/y/q "..\..\..\core\build\cef\win_%OS%" ".\HtmlFileInternal"
+copy "..\..\..\core\build\bin\win_%OS%\x2t.exe" "."
 
-"..\..\..\core\build\bin\AllFontsGen\win_32.exe" "%windir%\Fonts" "%~dp0\..\sdkjs\common\AllFonts.js" "%~dp0\..\sdkjs\common\Images" "%~dp0\FileConverter\bin\font_selection.bin"
+"..\..\..\core\build\bin\AllFontsGen\win_%OS%.exe" "%windir%\Fonts" "%~dp0\..\sdkjs\common\AllFonts.js" "%~dp0\..\sdkjs\common\Images" "%~dp0\FileConverter\bin\font_selection.bin"
 
 ECHO.
 ECHO ----------------------------------------
@@ -64,6 +67,9 @@ start /min /b node gc.js
 
 cd "%RUN_DIR%\FileConverter\sources"
 start /min /b node convertermaster.js
+
+rem cd "%RUN_DIR%\SpellChecker\sources"
+rem start /min /b node server.js
 
 :ERROR
 :SUCCESS

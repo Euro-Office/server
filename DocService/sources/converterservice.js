@@ -47,6 +47,7 @@ var statsDClient = require('./../../Common/sources/statsdclient');
 var cfgHealthCheckFilePath = config.get('services.CoAuthoring.server.healthcheckfilepath');
 var cfgVisibilityTimeout = config.get('queue.visibilityTimeout');
 var cfgQueueRetentionPeriod = config.get('queue.retentionPeriod');
+var cfgTokenEnableRequestInbox = config.get('services.CoAuthoring.token.enable.request.inbox');
 
 var CONVERT_TIMEOUT = 1.5 * (cfgVisibilityTimeout + cfgQueueRetentionPeriod) * 1000;
 var CONVERT_ASYNC_DELAY = 1000;
@@ -194,31 +195,88 @@ function* convertFromChanges(docId, baseUrl, lastSave, userdata) {
 
 function convertRequest(req, res) {
   return co(function* () {
-    var docId = 'null';
+    var docId = 'convertRequest';
     try {
+      var params;
+      if (req.body && Buffer.isBuffer(req.body)) {
+        params = JSON.parse(req.body.toString('utf8'));
+      } else {
+        params = req.query;
+      }
+      if (cfgTokenEnableRequestInbox) {
+        var authError = constants.VKEY;
+        var checkJwtRes = docsCoServer.checkJwtHeader(docId, req);
+        if (checkJwtRes) {
+          if (checkJwtRes.decoded) {
+            if (!utils.isEmptyObject(checkJwtRes.decoded.payload)) {
+              Object.assign(params, checkJwtRes.decoded.payload);
+              authError = constants.NO_ERROR;
+            } else if (checkJwtRes.decoded.payloadhash) {
+              if (docsCoServer.checkJwtPayloadHash(docId, checkJwtRes.decoded.payloadhash, req.body, checkJwtRes.token)) {
+                authError = constants.NO_ERROR;
+              }
+            } else if (!utils.isEmptyObject(checkJwtRes.decoded.query)) {
+              Object.assign(params, checkJwtRes.decoded.query);
+              authError = constants.NO_ERROR;
+            }
+          } else {
+            if (constants.JWT_EXPIRED_CODE == checkJwtRes.code) {
+              authError = constants.VKEY_KEY_EXPIRE;
+            }
+          }
+        }
+        if (authError !== constants.NO_ERROR) {
+          utils.fillXmlResponse(res, undefined, authError);
+          return;
+        }
+      }
+
       var cmd = new commonDefines.InputCommand();
       cmd.setCommand('conv');
-      cmd.setVKey(req.query['vkey']);
-      cmd.setUrl(req.query['url']);
-      cmd.setEmbeddedFonts(false);//req.query['embeddedfonts'];
-      cmd.setFormat(req.query['filetype']);
-      var outputtype = req.query['outputtype'] || '';
-      docId = 'conv_' + req.query['key'] + '_' + outputtype;
+      cmd.setUrl(params.url);
+      cmd.setEmbeddedFonts(false);//params.embeddedfonts'];
+      cmd.setFormat(params.filetype);
+      var outputtype = params.outputtype || '';
+      docId = 'conv_' + params.key + '_' + outputtype;
       cmd.setDocId(docId);
       cmd.setTitle(constants.OUTPUT_NAME + '.' + outputtype);
       cmd.setOutputFormat(formatChecker.getFormatFromString(outputtype));
-      cmd.setCodepage(commonDefines.c_oAscEncodingsMap[req.query['codePage']] || commonDefines.c_oAscCodePageUtf8);
-      cmd.setDelimiter(req.query['delimiter'] || commonDefines.c_oAscCsvDelimiter.Comma);
-      cmd.setDoctParams(req.query['doctparams']);
-      cmd.setPassword(req.query['password']);
-      var async = 'true' == req.query['async'];
+      cmd.setCodepage(commonDefines.c_oAscEncodingsMap[params.codePage] || commonDefines.c_oAscCodePageUtf8);
+      cmd.setDelimiter(params.delimiter || commonDefines.c_oAscCsvDelimiter.Comma);
+      cmd.setDoctParams(params.doctparams);
+      cmd.setPassword(params.password);
+      var thumbnail = params.thumbnail;
+      if (thumbnail) {
+        if(typeof thumbnail === 'string'){
+          thumbnail = JSON.parse(thumbnail);
+        }
+        var thumbnailData = new commonDefines.CThumbnailData(thumbnail);
+        //constants from CXIMAGE_FORMAT_
+        switch (cmd.getOutputFormat()) {
+          case constants.AVS_OFFICESTUDIO_FILE_IMAGE_JPG:
+            thumbnailData.setFormat(3);
+            break;
+          case constants.AVS_OFFICESTUDIO_FILE_IMAGE_PNG:
+            thumbnailData.setFormat(4);
+            break;
+          case constants.AVS_OFFICESTUDIO_FILE_IMAGE_GIF:
+            thumbnailData.setFormat(2);
+            break;
+          case constants.AVS_OFFICESTUDIO_FILE_IMAGE_BMP:
+            thumbnailData.setFormat(1);
+            break;
+        }
+        cmd.setThumbnail(thumbnailData);
+        cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_IMAGE);
+      }
+      var async = 'true' == params.async;
 
       if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== cmd.getOutputFormat()) {
         var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req));
         utils.fillXmlResponse(res, status.url, status.err);
       } else {
         var addresses = forwarded(req);
-        logger.error('Error convert unknown outputtype: query = %s from = %s docId = %s', JSON.stringify(req.query), addresses, docId);
+        logger.error('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
         utils.fillXmlResponse(res, undefined, constants.UNKNOWN);
       }
     }

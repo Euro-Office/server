@@ -29,6 +29,9 @@
  * terms at http://creativecommons.org/licenses/by-sa/4.0/legalcode
  *
  */
+
+'use strict';
+
 var config = require('config');
 var fs = require('fs');
 var path = require('path');
@@ -44,11 +47,22 @@ const dnscache = require('dnscache')({
                                      "ttl": configDnsCache.get('ttl'),
                                      "cachesize": configDnsCache.get('cachesize'),
                                    });
+const jwt = require('jsonwebtoken');
+const NodeCache = require( "node-cache" );
+const ms = require('ms');
 var constants = require('./constants');
 
 var configIpFilter = config.get('services.CoAuthoring.ipfilter');
 var cfgIpFilterRules = configIpFilter.get('rules');
 var cfgIpFilterErrorCode = configIpFilter.get('errorcode');
+var cfgExpPemStdTtl = config.get('services.CoAuthoring.expire.pemStdTTL');
+var cfgExpPemCheckPeriod = config.get('services.CoAuthoring.expire.pemCheckPeriod');
+var cfgTokenOutboxHeader = config.get('services.CoAuthoring.token.outbox.header');
+var cfgTokenOutboxPrefix = config.get('services.CoAuthoring.token.outbox.prefix');
+var cfgTokenOutboxAlgorithm = config.get('services.CoAuthoring.token.outbox.algorithm');
+var cfgTokenOutboxExpires = config.get('services.CoAuthoring.token.outbox.expires');
+var cfgSignatureSecretInbox = config.get('services.CoAuthoring.secret.inbox');
+var cfgSignatureSecretOutbox = config.get('services.CoAuthoring.secret.outbox');
 
 var ANDROID_SAFE_FILENAME = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-+,@£$€!½§~\'=()[]{}0123456789';
 
@@ -62,6 +76,8 @@ var g_oIpFilterRules = function() {
   }
   return res;
 }();
+var isEmptySecretTenants = isEmptyObject(cfgSignatureSecretInbox.tenants);
+const pemfileCache = new NodeCache({stdTTL: ms(cfgExpPemStdTtl) / 1000, checkperiod: ms(cfgExpPemCheckPeriod) / 1000, errorOnMissing: false, useClones: true});
 
 exports.addSeconds = function(date, sec) {
   date.setSeconds(date.getSeconds() + sec);
@@ -214,14 +230,17 @@ function getContentDispositionS3 (opt_filename, opt_useragent, opt_type) {
 }
 exports.getContentDisposition = getContentDisposition;
 exports.getContentDispositionS3 = getContentDispositionS3;
-function downloadUrlPromise(uri, optTimeout, optLimit) {
+function downloadUrlPromise(uri, optTimeout, optLimit, opt_Authorization) {
   return new Promise(function (resolve, reject) {
     //IRI to URI
     uri = URI.serialize(URI.parse(uri));
     var urlParsed = url.parse(uri);
     //if you expect binary data, you should set encoding: null
     var options = {uri: urlParsed, encoding: null, timeout: optTimeout};
-
+    if (opt_Authorization) {
+      options.headers = {};
+      options.headers[cfgTokenOutboxHeader] = cfgTokenOutboxPrefix + opt_Authorization;
+    }
     //TODO: Check how to correct handle a ssl link
     urlParsed.rejectUnauthorized = false;
     options.rejectUnauthorized = false;
@@ -246,12 +265,16 @@ function downloadUrlPromise(uri, optTimeout, optLimit) {
     })
   });
 }
-function postRequestPromise(uri, postData, optTimeout) {
+function postRequestPromise(uri, postData, optTimeout, opt_Authorization) {
   return new Promise(function(resolve, reject) {
     //IRI to URI
     uri = URI.serialize(URI.parse(uri));
     var urlParsed = url.parse(uri);
-    var options = {uri: urlParsed, body: postData, encoding: 'utf8', headers: {'Content-Type': 'application/json'}, timeout: optTimeout};
+    var headers = {'Content-Type': 'application/json'};
+    if (opt_Authorization) {
+      headers[cfgTokenOutboxHeader] = cfgTokenOutboxPrefix + opt_Authorization;
+    }
+    var options = {uri: urlParsed, body: postData, encoding: 'utf8', headers: headers, timeout: optTimeout};
 
     //TODO: Check how to correct handle a ssl link
     urlParsed.rejectUnauthorized = false;
@@ -534,7 +557,7 @@ function checkIpFilter(ipString, opt_hostname) {
       ip6 = ip.toIPv4MappedAddress().toNormalizedString();
     }
   }
-  for (i = 0; i < g_oIpFilterRules.length; ++i) {
+  for (var i = 0; i < g_oIpFilterRules.length; ++i) {
     var rule = g_oIpFilterRules[i];
     if ((opt_hostname && rule.exp.test(opt_hostname)) || (ip4 && rule.exp.test(ip4)) || (ip6 && rule.exp.test(ip6))) {
       if (!rule.allow) {
@@ -558,3 +581,57 @@ function dnsLookup(hostname, options) {
   });
 }
 exports.dnsLookup = dnsLookup;
+function isEmptyObject(val) {
+  return !(val && Object.keys(val).length);
+}
+exports.isEmptyObject = isEmptyObject;
+function getSecretByElem(secretElem) {
+  let secret;
+  if (secretElem) {
+    if (secretElem.string) {
+      secret = secretElem.string;
+    } else if (secretElem.file) {
+      secret = pemfileCache.get(secretElem.file);
+      if (!secret) {
+        secret = fs.readFileSync(secretElem.file);
+        pemfileCache.set(secretElem.file, secret);
+      }
+    }
+  }
+  return secret;
+}
+exports.getSecretByElem = getSecretByElem;
+function getSecret(docId, opt_iss, opt_token) {
+  var secretElem = cfgSignatureSecretInbox;
+  if (!isEmptySecretTenants) {
+    var iss;
+    if (opt_token) {
+      //look for issuer
+      var decodedTemp = jwt.decode(opt_token);
+      if (decodedTemp && decodedTemp.iss) {
+        iss = decodedTemp.iss;
+      }
+    } else {
+      iss = opt_iss;
+    }
+    if (iss) {
+      secretElem = cfgSignatureSecretInbox.tenants[iss];
+      if (!secretElem) {
+        logger.error('getSecret unknown issuer: docId = %s iss = %s', docId, iss);
+      }
+    }
+  }
+  return getSecretByElem(secretElem);
+}
+exports.getSecret = getSecret;
+function fillJwtForRequest(opt_payload) {
+  let data = {};
+  if(opt_payload){
+    data.payload = opt_payload;
+  }
+
+  let options = {algorithm: cfgTokenOutboxAlgorithm, expiresIn: cfgTokenOutboxExpires};
+  let secret = getSecretByElem(cfgSignatureSecretOutbox);
+  return jwt.sign(data, secret, options);
+}
+exports.fillJwtForRequest = fillJwtForRequest;

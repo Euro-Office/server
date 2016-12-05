@@ -21,7 +21,13 @@ NpmInstall() {
 }
 
 RunCommand() {
-    osascript -e 'tell application "terminal"' -e "do script \"$1\"" -e 'end tell'
+    TAB_NAME=$1
+    COMMAND=$2
+    osascript \
+        -e "tell application \"Terminal\"" \
+        -e "tell application \"System Events\" to keystroke \"t\" using {command down}" \
+        -e "do script \"printf '\\\e]1;$TAB_NAME\\\a'; $COMMAND\" in front window" \
+        -e "end tell" > /dev/null
 }
 
 CreateDir "$BASEDIR/App_Data"
@@ -73,11 +79,11 @@ echo "Run services"
 echo "----------------------------------------"
 
 mysql.server restart
-RunCommand "/usr/local/sbin/rabbitmq-server"
-RunCommand "redis-server /usr/local/etc/redis.conf"
+RunCommand "RabbitMQ Server" "/usr/local/sbin/rabbitmq-server"
+RunCommand "Redis" "redis-server /usr/local/etc/redis.conf"
 
-RunCommand "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && cd $BASEDIR/DocService/sources && node server.js"
-RunCommand "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && cd $BASEDIR/DocService/sources && node gc.js"
-RunCommand "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && export DYLD_LIBRARY_PATH=../../FileConverter/bin/ && cd $BASEDIR/FileConverter/sources && node convertermaster.js"
+RunCommand "Server" "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && cd $BASEDIR/DocService/sources && node server.js"
+RunCommand "GC" "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && cd $BASEDIR/DocService/sources && node gc.js"
+RunCommand "Converter" "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && export DYLD_LIBRARY_PATH=../../FileConverter/bin/ && cd $BASEDIR/FileConverter/sources && node convertermaster.js"
 
 

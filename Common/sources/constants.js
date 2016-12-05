@@ -36,6 +36,14 @@ exports.OUTPUT_NAME = 'output';
 exports.ONLY_OFFICE_URL_PARAM = 'ooname';
 exports.DISPLAY_PREFIX = 'display';
 
+exports.RIGHTS = {
+  None    : 0,
+  Edit    : 1,
+  Review  : 2,
+  Comment : 3,
+  View    : 4
+};
+
 exports.LICENSE_RESULT = {
   Error       : 1,
   Expired     : 2,
@@ -177,6 +185,18 @@ exports.REDIS_KEY_LICENSE_T = 'licenseT';
 
 exports.SHUTDOWN_CODE = 4001;
 exports.SHUTDOWN_REASON = 'server shutdown';
+exports.SESSION_IDLE_CODE = 4002;
+exports.SESSION_IDLE_REASON = 'idle session expires';
+exports.SESSION_ABSOLUTE_CODE = 4003;
+exports.SESSION_ABSOLUTE_REASON = 'absolute session expires';
+exports.ACCESS_DENIED_CODE = 4004;
+exports.ACCESS_DENIED_REASON = 'access deny';
+exports.JWT_EXPIRED_CODE = 4005;
+exports.JWT_EXPIRED_REASON = 'token:';
+exports.JWT_ERROR_CODE = 4006;
+exports.JWT_ERROR_REASON = 'token:';
 
 exports.CONTENT_DISPOSITION_INLINE = 'inline';
 exports.CONTENT_DISPOSITION_ATTACHMENT = 'attachment';
+
+exports.CONN_CLOSED = 3;

@@ -126,7 +126,7 @@ if (cluster.isMaster) {
     var staticContent = config.get('server.static_content');
     for (var i = 0; i < staticContent.length; ++i) {
       var staticContentElem = staticContent[i];
-      app.use(staticContentElem['name'], express.static(staticContentElem['path']));
+      app.use(staticContentElem['name'], express.static(staticContentElem['path'], staticContentElem['options']));
     }
   }
 
@@ -185,9 +185,10 @@ if (cluster.isMaster) {
     app.get('/index.html', (req, res) => {
       res.send('Server is functioning normally. Version: ' + docsCoServer.version);
     });
+    var rawFileParser = bodyParser.raw({ inflate: true, limit: config.get('server.limits_tempfile_upload'), type: '*/*' });
 
-    app.get('/coauthoring/CommandService.ashx', checkClientIp, docsCoServer.commandFromServer);
-    app.post('/coauthoring/CommandService.ashx', checkClientIp, docsCoServer.commandFromServer);
+    app.get('/coauthoring/CommandService.ashx', checkClientIp, rawFileParser, docsCoServer.commandFromServer);
+    app.post('/coauthoring/CommandService.ashx', checkClientIp, rawFileParser, docsCoServer.commandFromServer);
 
     if (config.has('server.fonts_route')) {
       var fontsRoute = config.get('server.fonts_route');
@@ -196,10 +197,10 @@ if (cluster.isMaster) {
       app.get('/' + fontsRoute + 'odttf/:fontname', fontService.getFont);
     }
 
-    app.get('/ConvertService.ashx', checkClientIp, converterService.convert);
-    app.post('/ConvertService.ashx', checkClientIp, converterService.convert);
+    app.get('/ConvertService.ashx', checkClientIp, rawFileParser, converterService.convert);
+    app.post('/ConvertService.ashx', checkClientIp, rawFileParser, converterService.convert);
 
-    var rawFileParser = bodyParser.raw({ inflate: true, limit: config.get('server.limits_tempfile_upload'), type: '*/*' });
+
     app.get('/FileUploader.ashx', checkClientIp, rawFileParser, fileUploaderService.uploadTempFile);
     app.post('/FileUploader.ashx', checkClientIp, rawFileParser, fileUploaderService.uploadTempFile);
 
@@ -218,8 +219,8 @@ if (cluster.isMaster) {
         res.sendStatus(403);
       }
     });
-    app.post('/uploadold/:docid/:userid/:index/:vkey?', fileUploaderService.uploadImageFileOld);
-    app.post('/upload/:docid/:userid/:index/:vkey?', rawFileParser, fileUploaderService.uploadImageFile);
+    app.post('/uploadold/:docid/:userid/:index/:jwt?', fileUploaderService.uploadImageFileOld);
+    app.post('/upload/:docid/:userid/:index/:jwt?', rawFileParser, fileUploaderService.uploadImageFile);
 
     app.post('/downloadas/:docid', rawFileParser, canvasService.downloadAs);
     app.get('/healthcheck', checkClientIp, converterService.convertHealthCheck);

@@ -30,7 +30,7 @@
  *
  */
 
-'use strict'
+'use strict';
 var os = require('os');
 var path = require('path');
 var fs = require('fs');
@@ -58,6 +58,7 @@ var cfgPresentationThemesDir = configConverter.get('presentationThemesDir');
 var cfgFilePath = configConverter.get('filePath');
 var cfgArgs = configConverter.get('args');
 var cfgErrorFiles = configConverter.get('errorfiles');
+var cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
 
 //windows limit 512(2048) https://msdn.microsoft.com/en-us/library/6e3b887c.aspx
 //Ubuntu 14.04 limit 4096 http://underyx.me/2015/05/18/raising-the-maximum-number-of-file-descriptors.html
@@ -84,9 +85,14 @@ function TaskQueueDataConvert(task) {
   this.embeddedFonts = cmd.embeddedfonts;
   this.fromChanges = task.getFromChanges();
   //todo
-  this.fontDir = path.resolve(cfgFontDir);
+  if (cfgFontDir) {
+    this.fontDir = path.resolve(cfgFontDir);
+  } else {
+    this.fontDir = cfgFontDir;
+  }
   this.themeDir = path.resolve(cfgPresentationThemesDir);
   this.mailMergeSend = cmd.mailmergesend;
+  this.thumbnail = cmd.thumbnail;
   this.doctParams = cmd.getDoctParams();
   this.password = cmd.getPassword();
   this.timestamp = new Date();
@@ -110,6 +116,9 @@ TaskQueueDataConvert.prototype = {
     if (this.mailMergeSend) {
       xml += this.serializeMailMerge(this.mailMergeSend);
     }
+    if (this.thumbnail) {
+      xml += this.serializeThumbnail(this.thumbnail);
+    }
     xml += this.serializeXmlProp('m_nDoctParams', this.doctParams);
     xml += this.serializeXmlProp('m_sPassword', this.password);
     xml += this.serializeXmlProp('m_oTimestamp', this.timestamp.toISOString());
@@ -130,6 +139,16 @@ TaskQueueDataConvert.prototype = {
     xml += this.serializeXmlProp('userid', data.getUserId());
     xml += this.serializeXmlProp('url', data.getUrl());
     xml += '</m_oMailMergeSend>';
+    return xml;
+  },
+  serializeThumbnail: function(data) {
+    var xml = '<m_oThumbnail>';
+    xml += this.serializeXmlProp('format', data.getFormat());
+    xml += this.serializeXmlProp('aspect', data.getAspect());
+    xml += this.serializeXmlProp('first', data.getFirst());
+    xml += this.serializeXmlProp('width', data.getWidth());
+    xml += this.serializeXmlProp('height', data.getHeight());
+    xml += '</m_oThumbnail>';
     return xml;
   },
   serializeXmlProp: function(name, value) {
@@ -172,7 +191,11 @@ function* downloadFile(docId, uri, fileFrom) {
   if (0 == filterStatus) {
     while (!res && downloadAttemptCount++ < cfgDownloadAttemptMaxCount) {
       try {
-        data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout * 1000, cfgDownloadMaxBytes);
+        let authorization;
+        if (cfgTokenEnableRequestOutbox) {
+          authorization = utils.fillJwtForRequest();
+        }
+        data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout * 1000, cfgDownloadMaxBytes, authorization);
         res = true;
       } catch (err) {
         res = false;
@@ -288,7 +311,10 @@ function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
     fs.mkdirSync(changesDir);
     var indexFile = 0;
     var changesAuthor = null;
-    var changesHistoryData = [];
+    var changesHistory = {
+      serverVersion: commonDefines.buildVersion,
+      changes: []
+    };
     //todo writeable stream
     let changesBuffers = null;
     let changes = yield promiseGetChanges(cmd.getDocId());
@@ -305,7 +331,11 @@ function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
         }
         changesAuthor = change.user_id_original;
         var strDate = baseConnector.getDateTime(change.change_date);
-        changesHistoryData.push({'userid': changesAuthor, 'username': change.user_name, 'date': strDate});
+        changesHistory.changes.push({
+          'created': strDate, 'user': {
+            'id': changesAuthor, 'name': change.user_name
+          }
+        });
         changesBuffers = [];
         changesBuffers.push(new Buffer('[', 'utf8'));
       } else {
@@ -322,7 +352,7 @@ function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
       fs.writeFileSync(filePath, dataZipFile);
     }
     cmd.setUserId(changesAuthor);
-    fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistoryData), 'utf8');
+    fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
   }
 }
 function* processUploadToStorage(dir, storagePath) {

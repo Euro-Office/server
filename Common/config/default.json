@@ -58,7 +58,8 @@
 				"editor_settings_spellchecker_url": "/spellchecker",
 				"callbackRequestTimeout": 120,
 				"healthcheckfilepath": "../public/healthcheck.docx",
-				"savetimeoutdelay": 5000
+				"savetimeoutdelay": 5000,
+				"edit_singleton": false
 			},
 			"utils": {
 				"utils_common_fontdir": "null",
@@ -104,12 +105,45 @@
 				"documentsCron": "0 */2 * * * *",
 				"files": 86400,
 				"filesCron": "00 00 */1 * * *",
-				"filesremovedatonce": 100
+				"filesremovedatonce": 100,
+				"sessionidle": "0",
+				"sessionabsolute": "0",
+				"sessionclosecommand": "2m",
+				"pemStdTTL": "1h",
+				"pemCheckPeriod": "10m"
 			},
 			"ipfilter": {
 				"rules": [{"address": "*", "allowed": true}],
 				"useforrequest": false,
 				"errorcode": 401
+			},
+			"secret": {
+				"inbox": {"string": "secret", "file": "", "tenants": {}},
+				"outbox": {"string": "secret", "file": ""},
+				"session": {"string": "secret", "file": ""}
+			},
+			"token": {
+				"enable": {
+					"browser": false,
+					"request": {
+						"inbox": false,
+						"outbox": false
+					}
+				},
+				"inbox": {
+					"header": "Authorization",
+					"prefix": "Bearer "
+				},
+				"outbox": {
+					"header": "Authorization",
+					"prefix": "Bearer ",
+					"algorithm": "HS256",
+					"expires": "5m"
+				},
+				"session": {
+					"algorithm": "HS256",
+					"expires": "5m"
+				}
 			}
 		}
 	},
