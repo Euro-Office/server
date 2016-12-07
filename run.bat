@@ -30,6 +30,10 @@ copy "..\..\..\core\build\bin\win_%OS%\x2t.exe" "."
 
 "..\..\..\core\build\bin\AllFontsGen\win_%OS%.exe" "%windir%\Fonts" "%~dp0\..\sdkjs\common\AllFonts.js" "%~dp0\..\sdkjs\common\Images" "%~dp0\FileConverter\bin\font_selection.bin"
 
+rem mkdir "%~dp0\SpellChecker\dictionaries"
+rem cd /D "%~dp0\SpellChecker" || goto ERROR
+rem xcopy /s/e/k/c/y/q "..\..\dictionaries" ".\dictionaries"
+
 ECHO.
 ECHO ----------------------------------------
 ECHO Start build skd-all.js
