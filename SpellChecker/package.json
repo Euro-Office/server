@@ -6,7 +6,7 @@
   "dependencies": {
 	"express"	: "^4.14.0",
 	"sockjs"	: "^0.3.17",
-	"nodehun"	: "^2.0.10",
+	"nodehun"	: "git+https://git@github.com/ONLYOFFICE/nodehun.git",
 	"config"	: "^1.21.0"
     }
 }

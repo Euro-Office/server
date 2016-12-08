@@ -46,7 +46,7 @@ var arrDictionaries = {};
 		oDictTmp = arrDictionariesConfig[indexDict];
 		oDictName = oDictTmp.name;
 		pathTmp = __dirname + '/../dictionaries/' + oDictName + '/' + oDictName + '.';
-		arrDictionaries[oDictTmp.id] = new nodehun(fs.readFileSync(pathTmp + 'aff'), fs.readFileSync(pathTmp + 'dic'));
+		arrDictionaries[oDictTmp.id] = new nodehun(pathTmp + 'aff', pathTmp + 'dic');
 	}
 })();
 
