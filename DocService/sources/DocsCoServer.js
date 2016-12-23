@@ -2183,7 +2183,7 @@ exports.install = function(server, callbackFunction) {
         const c_LR = constants.LICENSE_RESULT;
         var licenseType = licenseInfo.type;
         if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
-          licenseType = c_LR.Success;
+          licenseType = c_LR.SuccessLimit;
 
           var count = constants.LICENSE_CONNECTIONS;
           var cursor = '0', sum = 0, scanRes, tmp, length, i, users;
