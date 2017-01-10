@@ -273,6 +273,9 @@ function convertRequest(req, res) {
         }
         cmd.setThumbnail(thumbnailData);
         cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_IMAGE);
+        if (false == thumbnailData.getFirst()) {
+          cmd.setTitle(constants.OUTPUT_NAME + '.zip');
+        }
       }
       var async = 'true' == params.async;
 
