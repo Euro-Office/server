@@ -5,7 +5,7 @@
   "storage": {
     "name": "storage-fs",
     "fs": {
-      "folderPath": "../../App_Data",
+      "folderPath": "../../App_Data/cache/files",
       "secretString": "onlyoffice"
     }
   },
