@@ -54,14 +54,14 @@ var CONVERT_ASYNC_DELAY = 1000;
 
 var clientStatsD = statsDClient.getClient();
 
-function* getConvertStatus(cmd, selectRes, baseUrl) {
+function* getConvertStatus(cmd, selectRes, baseUrl, fileTo) {
   var status = {url: undefined, err: constants.NO_ERROR};
   if (selectRes.length > 0) {
     var docId = cmd.getDocId();
     var row = selectRes[0];
     switch (row.status) {
       case taskResult.FileStatus.Ok:
-        status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + cmd.getTitle());
+        status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + fileTo);
         break;
       case taskResult.FileStatus.Err:
       case taskResult.FileStatus.ErrToReload:
@@ -87,7 +87,7 @@ function* getConvertStatus(cmd, selectRes, baseUrl) {
   return status;
 }
 
-function* convertByCmd(cmd, async, baseUrl, opt_healthcheck) {
+function* convertByCmd(cmd, async, baseUrl, fileTo, opt_healthcheck) {
   var docId = cmd.getDocId();
   var startDate = null;
   if (clientStatsD) {
@@ -99,7 +99,6 @@ function* convertByCmd(cmd, async, baseUrl, opt_healthcheck) {
   task.key = docId;
   task.status = taskResult.FileStatus.WaitQueue;
   task.statusInfo = constants.NO_ERROR;
-  task.title = cmd.getTitle();
 
   var upsertRes = yield taskResult.upsert(task);
   //if CLIENT_FOUND_ROWS don't specify 1 row is inserted , 2 row is updated, and 0 row is set to its current values
@@ -109,11 +108,11 @@ function* convertByCmd(cmd, async, baseUrl, opt_healthcheck) {
   var status;
   if (!bCreate && !opt_healthcheck) {
     selectRes = yield taskResult.select(docId);
-    status = yield* getConvertStatus(cmd, selectRes, baseUrl);
+    status = yield* getConvertStatus(cmd, selectRes, baseUrl, fileTo);
   } else {
     var queueData = new commonDefines.TaskQueueData();
     queueData.setCmd(cmd);
-    queueData.setToFile(cmd.getTitle());
+    queueData.setToFile(fileTo);
     if (opt_healthcheck) {
       queueData.setFromOrigin(true);
     }
@@ -129,7 +128,7 @@ function* convertByCmd(cmd, async, baseUrl, opt_healthcheck) {
       }
       yield utils.sleep(CONVERT_ASYNC_DELAY);
       selectRes = yield taskResult.select(docId);
-      status = yield* getConvertStatus(cmd, selectRes, baseUrl);
+      status = yield* getConvertStatus(cmd, selectRes, baseUrl, fileTo);
       waitTime += CONVERT_ASYNC_DELAY;
       if (waitTime > CONVERT_TIMEOUT) {
         status.err = constants.CONVERT_TIMEOUT;
@@ -160,10 +159,9 @@ function convertHealthCheck(req, res) {
       cmd.setSaveKey(docId);
       cmd.setFormat(format);
       cmd.setDocId(docId);
-      cmd.setTitle('Editor.bin');
       cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
 
-      var status = yield* convertByCmd(cmd, false, utils.getBaseUrlByRequest(req), true);
+      var status = yield* convertByCmd(cmd, false, utils.getBaseUrlByRequest(req), 'Editor.bin', true);
       if (status && constants.NO_ERROR == status.err) {
         output = true;
       }
@@ -195,7 +193,7 @@ function* convertFromChanges(docId, baseUrl, forceSave, opt_userdata, opt_userCo
   }
 
   yield* canvasService.commandSfctByCmd(cmd);
-  return yield* convertByCmd(cmd, true, baseUrl);
+  return yield* convertByCmd(cmd, true, baseUrl, constants.OUTPUT_NAME);
 }
 
 function convertRequest(req, res) {
@@ -244,7 +242,7 @@ function convertRequest(req, res) {
       var outputtype = params.outputtype || '';
       docId = 'conv_' + params.key + '_' + outputtype;
       cmd.setDocId(docId);
-      cmd.setTitle(constants.OUTPUT_NAME + '.' + outputtype);
+      var fileTo = constants.OUTPUT_NAME + '.' + outputtype;
       cmd.setOutputFormat(formatChecker.getFormatFromString(outputtype));
       cmd.setCodepage(commonDefines.c_oAscEncodingsMap[params.codePage] || commonDefines.c_oAscCodePageUtf8);
       cmd.setDelimiter(params.delimiter || commonDefines.c_oAscCsvDelimiter.Comma);
@@ -280,7 +278,7 @@ function convertRequest(req, res) {
       var async = 'true' == params.async;
 
       if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== cmd.getOutputFormat()) {
-        var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req));
+        var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req), fileTo);
         utils.fillResponse(req, res, status.url, status.err);
       } else {
         var addresses = utils.forwarded(req);

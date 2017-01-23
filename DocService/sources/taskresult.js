@@ -55,7 +55,6 @@ function TaskResultData() {
   this.status = null;
   this.statusInfo = null;
   this.lastOpenDate = null;
-  this.title = null;
   this.userIndex = null;
   this.changeId = null;
 }
@@ -71,9 +70,6 @@ TaskResultData.prototype.completeDefaults = function() {
   }
   if (!this.lastOpenDate) {
     this.lastOpenDate = new Date();
-  }
-  if (!this.title) {
-    this.title = '';
   }
   if (!this.userIndex) {
     this.userIndex = 1;
@@ -113,9 +109,6 @@ function toUpdateArray(task, updateTime) {
   }
   if (updateTime) {
     res.push('last_open_date=' + sqlBase.baseConnector.sqlEscape(sqlBase.getDateTime(new Date())));
-  }
-  if (null != task.title) {
-    res.push('title=' + sqlBase.baseConnector.sqlEscape(task.title));
   }
   if (null != task.indexUser) {
     res.push('user_index=' + sqlBase.baseConnector.sqlEscape(task.indexUser));
@@ -167,11 +160,11 @@ function updateIf(task, mask) {
 function getInsertString(task) {
   var dateNow = sqlBase.getDateTime(new Date());
   task.completeDefaults();
-  var commandArg = [task.key, task.status, task.statusInfo, dateNow, task.title, task.userIndex, task.changeId];
+  var commandArg = [task.key, task.status, task.statusInfo, dateNow, task.userIndex, task.changeId];
   var commandArgEsc = commandArg.map(function(curVal) {
     return sqlBase.baseConnector.sqlEscape(curVal)
   });
-  return 'INSERT INTO task_result ( id, status, status_info, last_open_date, title, user_index, change_id) VALUES (' +
+  return 'INSERT INTO task_result ( id, status, status_info, last_open_date, user_index, change_id) VALUES (' +
     commandArgEsc.join(', ') + ');';
 }
 function addRandomKey(task) {

@@ -77,7 +77,6 @@ CREATE TABLE IF NOT EXISTS `task_result` (
   `status` tinyint(3) NOT NULL,
   `status_info` int(10) NOT NULL,
   `last_open_date` datetime NOT NULL,
-  `title` varchar(255) NOT NULL,
   `user_index` int(10) unsigned NOT NULL DEFAULT 1,
   `change_id` int(10) unsigned NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`)
