@@ -283,7 +283,7 @@ function convertRequest(req, res) {
         var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req));
         utils.fillResponse(req, res, status.url, status.err);
       } else {
-        var addresses = forwarded(req);
+        var addresses = utils.forwarded(req);
         logger.error('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
         utils.fillResponse(req, res, undefined, constants.UNKNOWN);
       }

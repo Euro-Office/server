@@ -138,6 +138,10 @@
 					"algorithm": "HS256",
 					"expires": "5m"
 				}
+			},
+			"plugins": {
+				"path": "../../../sdkjs-plugins",
+				"url": "../../../../sdkjs-plugins"
 			}
 		}
 	},

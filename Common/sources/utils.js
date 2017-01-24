@@ -50,11 +50,13 @@ const dnscache = require('dnscache')({
 const jwt = require('jsonwebtoken');
 const NodeCache = require( "node-cache" );
 const ms = require('ms');
-var constants = require('./constants');
+const constants = require('./constants');
+const forwarded = require('forwarded');
 
 var configIpFilter = config.get('services.CoAuthoring.ipfilter');
 var cfgIpFilterRules = configIpFilter.get('rules');
 var cfgIpFilterErrorCode = configIpFilter.get('errorcode');
+const cfgIpFilterEseForRequest = configIpFilter.get('useforrequest');
 var cfgExpPemStdTtl = config.get('services.CoAuthoring.expire.pemStdTTL');
 var cfgExpPemCheckPeriod = config.get('services.CoAuthoring.expire.pemCheckPeriod');
 var cfgTokenOutboxHeader = config.get('services.CoAuthoring.token.outbox.header');
@@ -103,6 +105,7 @@ function fsStat(fsPath) {
     });
   });
 }
+exports.fsStat = fsStat;
 function fsReadDir(fsPath) {
   return new Promise(function(resolve, reject) {
     fs.readdir(fsPath, function(err, list) {
@@ -114,27 +117,40 @@ function fsReadDir(fsPath) {
     });
   });
 }
-function* walkDir(fsPath, results, optNoSubDir) {
-  var list = yield fsReadDir(fsPath);
-  for (var i = 0; i < list.length; ++i) {
-    var fileName = list[i];
-    var file = path.join(fsPath, fileName);
-    var stats = yield fsStat(file);
+function* walkDir(fsPath, results, optNoSubDir, optOnlyFolders) {
+  const list = yield fsReadDir(fsPath);
+  for (let i = 0; i < list.length; ++i) {
+    const file = path.join(fsPath, list[i]);
+    const stats = yield fsStat(file);
     if (stats.isDirectory()) {
       if (optNoSubDir) {
-        continue;
+        optOnlyFolders && results.push(file);
       } else {
-        yield* walkDir(file, results);
+        yield* walkDir(file, results, optNoSubDir, optOnlyFolders);
       }
     } else {
-      results.push(file);
+      !optOnlyFolders && results.push(file);
     }
   }
 }
+exports.listFolders = function(fsPath, optNoSubDir) {
+  return co(function* () {
+    let stats, list = [];
+    try {
+      stats = yield fsStat(fsPath);
+    } catch (e) {
+      //exception if fsPath not exist
+      stats = null;
+    }
+    if (stats && stats.isDirectory()) {
+        yield* walkDir(fsPath, list, optNoSubDir, true);
+    }
+    return list;
+  });
+};
 exports.listObjects = function(fsPath, optNoSubDir) {
   return co(function* () {
-    var list;
-    var stats;
+    let stats, list = [];
     try {
       stats = yield fsStat(fsPath);
     } catch (e) {
@@ -143,13 +159,10 @@ exports.listObjects = function(fsPath, optNoSubDir) {
     }
     if (stats) {
       if (stats.isDirectory()) {
-        list = [];
-        yield* walkDir(fsPath, list, optNoSubDir);
+        yield* walkDir(fsPath, list, optNoSubDir, false);
       } else {
-        list = [fsPath];
+        list.push(fsPath);
       }
-    } else {
-      list = [];
     }
     return list;
   });
@@ -162,17 +175,6 @@ exports.sleep = function(ms) {
 exports.readFile = function(file) {
   return new Promise(function(resolve, reject) {
     fs.readFile(file, function(err, data) {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(data);
-      }
-    });
-  });
-};
-exports.fsStat = function(file) {
-  return new Promise(function(resolve, reject) {
-    fs.stat(file, function(err, data) {
       if (err) {
         reject(err);
       } else {
@@ -589,6 +591,20 @@ function checkIpFilter(ipString, opt_hostname) {
   return status;
 }
 exports.checkIpFilter = checkIpFilter;
+function checkClientIp(req, res, next) {
+	let status = 0;
+	if (cfgIpFilterEseForRequest) {
+		const addresses = forwarded(req);
+		const ipString = addresses[addresses.length - 1];
+		status = checkIpFilter(ipString);
+	}
+	if (status > 0) {
+		res.sendStatus(status);
+	} else {
+		next();
+	}
+}
+exports.checkClientIp = checkClientIp;
 function dnsLookup(hostname, options) {
   return new Promise(function(resolve, reject) {
     dnscache.lookup(hostname, options, function(err, addresses){
@@ -655,3 +671,4 @@ function fillJwtForRequest(opt_payload) {
   return jwt.sign(data, secret, options);
 }
 exports.fillJwtForRequest = fillJwtForRequest;
+exports.forwarded = forwarded;
