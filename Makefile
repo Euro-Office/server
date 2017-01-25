@@ -6,6 +6,9 @@ GRUNT_FLAGS = --no-color -v
 
 GRUNT_FILES = Gruntfile.js.out
 
+PRODUCT_VERSION ?= 0.0.0
+BUILD_NUMBER ?= 0
+
 ifeq ($(OS),Windows_NT)
     PLATFORM := win
     EXEC_EXT := .exe
