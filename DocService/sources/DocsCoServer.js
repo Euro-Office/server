@@ -782,13 +782,9 @@ function* onReplySendStatusDocument(docId, replyData) {
     yield* publish({type: commonDefines.c_oPublishType.warning, docId: docId, description: 'Error on save server subscription!'});
   }
 }
-function* dropUsersFromDocument(docId, replyData) {
-  var oData = parseReplyData(docId, replyData);
-  if (oData) {
-    var users = Array.isArray(oData) ? oData : oData.users;
-    if (Array.isArray(users)) {
-      yield* publish({type: commonDefines.c_oPublishType.drop, docId: docId, users: users, description: ''});
-    }
+function* dropUsersFromDocument(docId, users) {
+  if (Array.isArray(users)) {
+    yield* publish({type: commonDefines.c_oPublishType.drop, docId: docId, users: users, description: ''});
   }
 }
 
@@ -2607,9 +2603,9 @@ exports.commandFromServer = function (req, res) {
           case 'drop':
             if (params.userid) {
               yield* publish({type: commonDefines.c_oPublishType.drop, docId: docId, users: [params.userid], description: params.description});
-            }
-            else if (params.users) {
-              yield* dropUsersFromDocument(docId, params.users);
+            } else if (params.users) {
+              var users = (typeof params.users === 'string') ? JSON.parse(params.users) : params.users;
+              yield* dropUsersFromDocument(docId, users);
             }
             break;
           case 'saved':

@@ -195,6 +195,9 @@ function* convertFromChanges(docId, baseUrl, forceSave, opt_userdata, opt_userCo
   yield* canvasService.commandSfctByCmd(cmd);
   return yield* convertByCmd(cmd, true, baseUrl, constants.OUTPUT_NAME);
 }
+function parseIntParam(val){
+  return (typeof val === 'string') ? parseInt(val) : val;
+}
 
 function convertRequest(req, res) {
   return co(function* () {
@@ -245,12 +248,12 @@ function convertRequest(req, res) {
       var fileTo = constants.OUTPUT_NAME + '.' + outputtype;
       cmd.setOutputFormat(formatChecker.getFormatFromString(outputtype));
       cmd.setCodepage(commonDefines.c_oAscEncodingsMap[params.codePage] || commonDefines.c_oAscCodePageUtf8);
-      cmd.setDelimiter(params.delimiter || commonDefines.c_oAscCsvDelimiter.Comma);
-      cmd.setDoctParams(params.doctparams);
+      cmd.setDelimiter(parseIntParam(params.delimiter) || commonDefines.c_oAscCsvDelimiter.Comma);
+      cmd.setDoctParams(parseIntParam(params.doctparams));
       cmd.setPassword(params.password);
       var thumbnail = params.thumbnail;
       if (thumbnail) {
-        if(typeof thumbnail === 'string'){
+        if (typeof thumbnail === 'string') {
           thumbnail = JSON.parse(thumbnail);
         }
         var thumbnailData = new commonDefines.CThumbnailData(thumbnail);
@@ -275,7 +278,7 @@ function convertRequest(req, res) {
           cmd.setTitle(constants.OUTPUT_NAME + '.zip');
         }
       }
-      var async = 'true' == params.async;
+      var async = (typeof params.async === 'string') ? 'true' == params.async : params.async;
 
       if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== cmd.getOutputFormat()) {
         var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req), fileTo);
