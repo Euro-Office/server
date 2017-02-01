@@ -6,6 +6,9 @@ GRUNT_FLAGS = --no-color -v
 
 GRUNT_FILES = Gruntfile.js.out
 
+PRODUCT_VERSION ?= 0.0.0
+BUILD_NUMBER ?= 0
+
 ifeq ($(OS),Windows_NT)
     PLATFORM := win
     EXEC_EXT := .exe
@@ -80,9 +83,9 @@ WELCOME = $(OUTPUT)/$(WELCOME_DIR)/
 all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE) $(WELCOME) build-date
 
 build-date: $(GRUNT_FILES)
-	sed "s|const buildVersion = .*|const buildVersion = '${PRODUCT_VERSION}';|" -i $(COMMON_DEFINES_JS)
-	sed "s|const buildNumber = .*|const buildNumber = ${BUILD_NUMBER};|" -i $(COMMON_DEFINES_JS)
-	sed "s|const buildDate = .*|const buildDate = '$$(date +%F)';|" -i $(LICENSE_JS)
+	sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i $(COMMON_DEFINES_JS)
+	sed "s|\(const buildNumber = \).*|\1${BUILD_NUMBER};|" -i $(COMMON_DEFINES_JS)
+	sed "s|\(const buildDate = \).*|\1'$$(date +%F)';|" -i $(LICENSE_JS)
 	
 htmlfileinternal: $(FILE_CONVERTER)
 	mkdir -p $(HTML_FILE_INTERNAL) && \
