@@ -1,3 +1,4 @@
+USE onlyoffice;
 --
 -- Drop tables
 --
