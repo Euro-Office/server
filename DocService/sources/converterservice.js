@@ -272,7 +272,7 @@ function convertRequest(req, res) {
           cmd.setTitle(constants.OUTPUT_NAME + '.zip');
         }
       }
-      var async = 'true' == params.async;
+      var async = (typeof params.async === 'string') ? 'true' == params.async : params.async;
 
       if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== cmd.getOutputFormat()) {
         var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req));
