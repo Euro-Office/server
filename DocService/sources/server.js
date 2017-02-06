@@ -164,7 +164,7 @@ if (cluster.isMaster) {
 				res.sendFile(realUrl, sendFileOptions, (err) => {
 					if (err) {
 						logger.error(err);
-						res.status(err.status).end();
+						res.status(400).end();
 					}
 				});
 			} else {
