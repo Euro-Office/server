@@ -6,6 +6,7 @@
     "name": "storage-fs",
     "fs": {
       "folderPath": "../../App_Data/cache/files",
+      "urlExpires": 2592000,
       "secretString": "onlyoffice"
     }
   },

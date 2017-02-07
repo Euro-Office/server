@@ -43,6 +43,7 @@ var cfgStorageExternalHost = configStorage.get('externalHost');
 var configFs = configStorage.get('fs');
 var cfgStorageFolderPath = configFs.get('folderPath');
 var cfgStorageSecretString = configFs.get('secretString');
+var cfgStorageUrlExpires = configFs.get('urlExpires');
 
 function getFilePath(strPath) {
   return path.join(cfgStorageFolderPath, strPath);
@@ -146,7 +147,7 @@ exports.getSignedUrl = function(baseUrl, strPath, optUrlExpires, optFilename, op
     var url = (cfgStorageExternalHost ? cfgStorageExternalHost : baseUrl) + uri;
 
     var date = new Date();
-    var expires = Math.ceil(date.getTime() / 1000) + (optUrlExpires || 2592000);
+    var expires = Math.ceil(date.getTime() / 1000) + (optUrlExpires || cfgStorageUrlExpires || 2592000);
 
     var md5 = crypto.createHash('md5').update(expires + decodeURIComponent(uri) + cfgStorageSecretString).digest("base64");
     md5 = md5.replace(/\+/g, "-");
