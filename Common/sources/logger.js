@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var config = require('config');
 
 var log4js = require('log4js');

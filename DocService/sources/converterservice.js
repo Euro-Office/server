@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var config = require('config');
 var co = require('co');
 var taskResult = require('./taskresult');

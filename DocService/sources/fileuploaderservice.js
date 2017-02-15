@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var multiparty = require('multiparty');
 var co = require('co');
 var jwt = require('jsonwebtoken');

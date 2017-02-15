@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var sockjs = require('sockjs'),
 	nodehun = require('nodehun'),
     config = require('config').get('SpellChecker'),

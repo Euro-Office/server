@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var statsD = require('node-statsd');
 var configStatsD = require('config').get('statsd');
 

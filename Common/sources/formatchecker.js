@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var path = require('path');
 var constants = require('./constants');
 var logger = require('./logger');

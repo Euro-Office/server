@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 const cluster = require('cluster');
 const logger = require('./../../Common/sources/logger');
 

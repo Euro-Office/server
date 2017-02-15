@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var mongoDB = require('mongodb');
 var config = require('./config.json');
 var _errorConnection = true;

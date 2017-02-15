@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var sqlDataBaseType = {
 	mySql		: 'mysql',
 	postgreSql	: 'postgres'

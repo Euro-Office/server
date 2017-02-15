@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var cluster = require('cluster');
 var config = require('config').get('SpellChecker');
 

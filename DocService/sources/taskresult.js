@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var sqlBase = require('./baseConnector');
 var logger = require('./../../Common/sources/logger');
 var utils = require('./../../Common/sources/utils');

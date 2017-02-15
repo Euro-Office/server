@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 const crypto = require('crypto');
 const fs = require('fs');
 const config = require('config');

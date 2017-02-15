@@ -30,6 +30,8 @@
  *
  */
 
+'use strict';
+
 var constants = require('./constants');
 
 function InputCommand(data) {
