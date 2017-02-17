@@ -32,7 +32,7 @@
 
 'use strict';
 
-var constants = require('./constants');
+const constants = require('./constants');
 
 function InputCommand(data) {
   if (data) {
@@ -634,7 +634,7 @@ function OutputMailMerge(mailMergeSendData) {
     this['message'] = mailMergeSendData.getMessage();
     this['subject'] = mailMergeSendData.getSubject();
     this['title'] = mailMergeSendData.getFileName();
-    var mailFormat = mailMergeSendData.getMailFormat();
+    const mailFormat = mailMergeSendData.getMailFormat();
     switch (mailFormat) {
       case constants.AVS_OFFICESTUDIO_FILE_OTHER_HTMLZIP :
         this['type'] = 0;
@@ -687,7 +687,7 @@ function OutputAction(type, userid) {
   this['type'] = type;
   this['userid'] = userid;
 }
-var c_oPublishType = {
+const c_oPublishType = {
   drop : 0,
   releaseLock : 1,
   participantsState : 2,
@@ -702,7 +702,7 @@ var c_oPublishType = {
   meta: 11,
   forceSave: 12
 };
-var c_oAscCsvDelimiter = {
+const c_oAscCsvDelimiter = {
   None: 0,
   Tab: 1,
   Semicolon: 2,
@@ -710,7 +710,7 @@ var c_oAscCsvDelimiter = {
   Comma: 4,
   Space: 5
 };
-var c_oAscEncodings = [
+const c_oAscEncodings = [
   [ 0,    28596, "ISO-8859-6",       "Arabic (ISO 8859-6)" ],
   [ 1,    720,   "DOS-720",          "Arabic (OEM 720)" ],
   [ 2,    1256,  "windows-1256",     "Arabic (Windows)" ],
@@ -782,13 +782,13 @@ var c_oAscEncodings = [
   [ 50,   12000, "UTF-32",           "Unicode (UTF-32)" ],
   [ 51,   12001, "UTF-32BE",         "Unicode (UTF-32 Big Endian)" ]
 ];
-var c_oAscEncodingsMap = {"437": 43, "720": 1, "737": 21, "775": 5, "850": 39, "852": 15, "855": 12, "857": 35, "858": 40, "860": 41, "861": 30, "862": 25, "863": 42, "865": 31, "866": 13, "869": 22, "874": 32, "932": 27, "936": 18, "949": 28, "950": 17, "1200": 48, "1201": 49, "1250": 16, "1251": 14, "1252": 44, "1253": 23, "1254": 36, "1255": 26, "1256": 2, "1257": 6, "1258": 45, "10007": 11, "12000": 50, "12001": 51, "20866": 9, "21866": 10, "28591": 37, "28592": 19, "28593": 33, "28594": 3, "28595": 8, "28596": 0, "28597": 20, "28598": 24, "28599": 34, "28603": 4, "28604": 7, "28605": 38, "51949": 29, "65000": 47, "65001": 46}
-var c_oAscCodePageUtf8 = 46;//65001
-var c_oAscUserAction = {
+const c_oAscEncodingsMap = {"437": 43, "720": 1, "737": 21, "775": 5, "850": 39, "852": 15, "855": 12, "857": 35, "858": 40, "860": 41, "861": 30, "862": 25, "863": 42, "865": 31, "866": 13, "869": 22, "874": 32, "932": 27, "936": 18, "949": 28, "950": 17, "1200": 48, "1201": 49, "1250": 16, "1251": 14, "1252": 44, "1253": 23, "1254": 36, "1255": 26, "1256": 2, "1257": 6, "1258": 45, "10007": 11, "12000": 50, "12001": 51, "20866": 9, "21866": 10, "28591": 37, "28592": 19, "28593": 33, "28594": 3, "28595": 8, "28596": 0, "28597": 20, "28598": 24, "28599": 34, "28603": 4, "28604": 7, "28605": 38, "51949": 29, "65000": 47, "65001": 46}
+const c_oAscCodePageUtf8 = 46;//65001
+const c_oAscUserAction = {
   Out: 0,
   In: 1
 };
-var c_oAscServerCommandErrors = {
+const c_oAscServerCommandErrors = {
   NoError: 0,
   DocumentIdError: 1,
   ParseError: 2,
@@ -798,7 +798,7 @@ var c_oAscServerCommandErrors = {
   Token: 6,
   TokenExpire: 7
 };
-var c_oAscForceSaveTypes = {
+const c_oAscForceSaveTypes = {
   Command: 0,
   Button: 1,
   Timeout: 2

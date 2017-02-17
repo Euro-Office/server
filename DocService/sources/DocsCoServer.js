@@ -72,96 +72,94 @@
 
 'use strict';
 
-var sockjs = require('sockjs');
-var _ = require('underscore');
-var https = require('https');
-var http = require('http');
-var url = require('url');
+const sockjs = require('sockjs');
+const _ = require('underscore');
+const https = require('https');
+const http = require('http');
+const url = require('url');
 const fs = require('fs');
-var cron = require('cron');
-var co = require('co');
+const cron = require('cron');
+const co = require('co');
 const jwt = require('jsonwebtoken');
 const jwa = require('jwa');
 const ms = require('ms');
-var storage = require('./../../Common/sources/storage-base');
-var logger = require('./../../Common/sources/logger');
+const storage = require('./../../Common/sources/storage-base');
+const logger = require('./../../Common/sources/logger');
 const constants = require('./../../Common/sources/constants');
-var utils = require('./../../Common/sources/utils');
-var commonDefines = require('./../../Common/sources/commondefines');
-var statsDClient = require('./../../Common/sources/statsdclient');
+const utils = require('./../../Common/sources/utils');
+const commonDefines = require('./../../Common/sources/commondefines');
+const statsDClient = require('./../../Common/sources/statsdclient');
 const configCommon = require('config');
 const config = configCommon.get('services.CoAuthoring');
-var sqlBase = require('./baseConnector');
-var canvasService = require('./canvasservice');
-var converterService = require('./converterservice');
-var taskResult = require('./taskresult');
-var redis = require(config.get('redis.name'));
-var pubsubRedis = require('./pubsubRedis');
-var pubsubService = require('./' + config.get('pubsub.name'));
-var queueService = require('./../../Common/sources/taskqueueRabbitMQ');
-var cfgSpellcheckerUrl = config.get('server.editor_settings_spellchecker_url');
-var cfgCallbackRequestTimeout = config.get('server.callbackRequestTimeout');
+const sqlBase = require('./baseConnector');
+const canvasService = require('./canvasservice');
+const converterService = require('./converterservice');
+const taskResult = require('./taskresult');
+const redis = require(config.get('redis.name'));
+const pubsubRedis = require('./pubsubRedis');
+const pubsubService = require('./' + config.get('pubsub.name'));
+const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
+const cfgSpellcheckerUrl = config.get('server.editor_settings_spellchecker_url');
+const cfgCallbackRequestTimeout = config.get('server.callbackRequestTimeout');
 //The waiting time to document assembly when all out(not 0 in case of F5 in the browser)
-var cfgAscSaveTimeOutDelay = config.get('server.savetimeoutdelay');
+const cfgAscSaveTimeOutDelay = config.get('server.savetimeoutdelay');
 
-var cfgPubSubMaxChanges = config.get('pubsub.maxChanges');
+const cfgPubSubMaxChanges = config.get('pubsub.maxChanges');
 
-var cfgRedisPrefix = config.get('redis.prefix');
-var cfgExpSaveLock = config.get('expire.saveLock');
-var cfgExpPresence = config.get('expire.presence');
-var cfgExpLocks = config.get('expire.locks');
-var cfgExpChangeIndex = config.get('expire.changeindex');
-var cfgExpLockDoc = config.get('expire.lockDoc');
-var cfgExpMessage = config.get('expire.message');
-var cfgExpLastSave = config.get('expire.lastsave');
-var cfgExpForceSave = config.get('expire.forcesave');
-var cfgExpSaved = config.get('expire.saved');
-var cfgExpDocumentsCron = config.get('expire.documentsCron');
-var cfgExpSessionIdle = ms(config.get('expire.sessionidle'));
-var cfgExpSessionAbsolute = ms(config.get('expire.sessionabsolute'));
-var cfgExpSessionCloseCommand = ms(config.get('expire.sessionclosecommand'));
-var cfgSockjsUrl = config.get('server.sockjsUrl');
-var cfgTokenEnableBrowser = config.get('token.enable.browser');
-var cfgTokenEnableRequestInbox = config.get('token.enable.request.inbox');
-var cfgTokenEnableRequestOutbox = config.get('token.enable.request.outbox');
-var cfgTokenSessionAlgorithm = config.get('token.session.algorithm');
-var cfgTokenSessionExpires = ms(config.get('token.session.expires'));
-var cfgTokenInboxHeader = config.get('token.inbox.header');
-var cfgTokenInboxPrefix = config.get('token.inbox.prefix');
-var cfgSecretSession = config.get('secret.session');
-var cfgForceSaveTimeout = ms(config.get('forcesave.timeout'));
-var cfgForceSaveMinExpiration = ms(config.get('forcesave.minRetentionPeriod'));
-var cfgQueueRetentionPeriod = configCommon.get('queue.retentionPeriod');
+const cfgRedisPrefix = config.get('redis.prefix');
+const cfgExpSaveLock = config.get('expire.saveLock');
+const cfgExpPresence = config.get('expire.presence');
+const cfgExpLocks = config.get('expire.locks');
+const cfgExpChangeIndex = config.get('expire.changeindex');
+const cfgExpLockDoc = config.get('expire.lockDoc');
+const cfgExpMessage = config.get('expire.message');
+const cfgExpLastSave = config.get('expire.lastsave');
+const cfgExpForceSave = config.get('expire.forcesave');
+const cfgExpSaved = config.get('expire.saved');
+const cfgExpDocumentsCron = config.get('expire.documentsCron');
+const cfgExpSessionIdle = ms(config.get('expire.sessionidle'));
+const cfgExpSessionAbsolute = ms(config.get('expire.sessionabsolute'));
+const cfgExpSessionCloseCommand = ms(config.get('expire.sessionclosecommand'));
+const cfgSockjsUrl = config.get('server.sockjsUrl');
+const cfgTokenEnableBrowser = config.get('token.enable.browser');
+const cfgTokenEnableRequestInbox = config.get('token.enable.request.inbox');
+const cfgTokenEnableRequestOutbox = config.get('token.enable.request.outbox');
+const cfgTokenSessionAlgorithm = config.get('token.session.algorithm');
+const cfgTokenSessionExpires = ms(config.get('token.session.expires'));
+const cfgTokenInboxHeader = config.get('token.inbox.header');
+const cfgTokenInboxPrefix = config.get('token.inbox.prefix');
+const cfgSecretSession = config.get('secret.session');
+const cfgForceSaveTimeout = ms(config.get('forcesave.timeout'));
+const cfgForceSaveMinExpiration = ms(config.get('forcesave.minRetentionPeriod'));
+const cfgQueueRetentionPeriod = configCommon.get('queue.retentionPeriod');
 
-var redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
-var redisKeyPresenceHash = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_HASH;
-var redisKeyPresenceSet = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_SET;
-var redisKeyLocks = cfgRedisPrefix + constants.REDIS_KEY_LOCKS;
-var redisKeyChangeIndex = cfgRedisPrefix + constants.REDIS_KEY_CHANGES_INDEX;
-var redisKeyLockDoc = cfgRedisPrefix + constants.REDIS_KEY_LOCK_DOCUMENT;
-var redisKeyMessage = cfgRedisPrefix + constants.REDIS_KEY_MESSAGE;
-var redisKeyDocuments = cfgRedisPrefix + constants.REDIS_KEY_DOCUMENTS;
-var redisKeyLastSave = cfgRedisPrefix + constants.REDIS_KEY_LAST_SAVE;
-var redisKeyForceSave = cfgRedisPrefix + constants.REDIS_KEY_FORCE_SAVE;
-var redisKeyForceSaveTimeout = cfgRedisPrefix + constants.REDIS_KEY_FORCE_SAVE_TIMEOUT;
-var redisKeySaved = cfgRedisPrefix + constants.REDIS_KEY_SAVED;
+const redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
+const redisKeyPresenceHash = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_HASH;
+const redisKeyPresenceSet = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_SET;
+const redisKeyLocks = cfgRedisPrefix + constants.REDIS_KEY_LOCKS;
+const redisKeyChangeIndex = cfgRedisPrefix + constants.REDIS_KEY_CHANGES_INDEX;
+const redisKeyLockDoc = cfgRedisPrefix + constants.REDIS_KEY_LOCK_DOCUMENT;
+const redisKeyMessage = cfgRedisPrefix + constants.REDIS_KEY_MESSAGE;
+const redisKeyDocuments = cfgRedisPrefix + constants.REDIS_KEY_DOCUMENTS;
+const redisKeyLastSave = cfgRedisPrefix + constants.REDIS_KEY_LAST_SAVE;
+const redisKeyForceSave = cfgRedisPrefix + constants.REDIS_KEY_FORCE_SAVE;
+const redisKeyForceSaveTimeout = cfgRedisPrefix + constants.REDIS_KEY_FORCE_SAVE_TIMEOUT;
+const redisKeySaved = cfgRedisPrefix + constants.REDIS_KEY_SAVED;
 
-var EditorTypes = {
+const EditorTypes = {
   document : 0,
   spreadsheet : 1,
   presentation : 2
 };
 
-var defaultHttpPort = 80, defaultHttpsPort = 443;	// Порты по умолчанию (для http и https)
-var connections = []; // Активные соединения
-var redisClient = pubsubRedis.getClientRedis();
-var pubsub;
-var queue;
-var clientStatsD = statsDClient.getClient();
-var licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false, branding: false};
-var shutdownFlag = false;
-
-var asc_coAuthV = '4.3.0';				// Версия сервера совместного редактирования
+const defaultHttpPort = 80, defaultHttpsPort = 443;	// Порты по умолчанию (для http и https)
+const redisClient = pubsubRedis.getClientRedis();
+const clientStatsD = statsDClient.getClient();
+let connections = []; // Активные соединения
+let pubsub;
+let queue;
+let licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false, branding: false};
+let shutdownFlag = false;
 
 const FORCE_SAVE_EXPIRATION = Math.min(Math.max(cfgForceSaveTimeout, cfgForceSaveMinExpiration),
                                        cfgQueueRetentionPeriod * 1000);
@@ -192,7 +190,7 @@ DocumentChanges.prototype.concat = function(item) {
   this.arrChanges = this.arrChanges.concat(item);
 };
 
-var c_oAscServerStatus = {
+const c_oAscServerStatus = {
   NotFound: 0,
   Editing: 1,
   MustSave: 2,
@@ -203,15 +201,15 @@ var c_oAscServerStatus = {
   CorruptedForce: 7
 };
 
-var c_oAscChangeBase = {
+const c_oAscChangeBase = {
   No: 0,
   Delete: 1,
   All: 2
 };
 
-var c_oAscLockTimeOutDelay = 500;	// Время ожидания для сохранения, когда зажата база данных
+const c_oAscLockTimeOutDelay = 500;	// Время ожидания для сохранения, когда зажата база данных
 
-var c_oAscRecalcIndexTypes = {
+const c_oAscRecalcIndexTypes = {
   RecalcIndexAdd: 1,
   RecalcIndexRemove: 2
 };
@@ -220,7 +218,7 @@ var c_oAscRecalcIndexTypes = {
  * lock types
  * @const
  */
-var c_oAscLockTypes = {
+const c_oAscLockTypes = {
   kLockTypeNone: 1, // никто не залочил данный объект
   kLockTypeMine: 2, // данный объект залочен текущим пользователем
   kLockTypeOther: 3, // данный объект залочен другим(не текущим) пользователем
@@ -228,12 +226,12 @@ var c_oAscLockTypes = {
   kLockTypeOther3: 5  // данный объект был залочен (обновления пришли) и снова стал залочен
 };
 
-var c_oAscLockTypeElem = {
+const c_oAscLockTypeElem = {
   Range: 1,
   Object: 2,
   Sheet: 3
 };
-var c_oAscLockTypeElemSubType = {
+const c_oAscLockTypeElemSubType = {
   DeleteColumns: 1,
   InsertColumns: 2,
   DeleteRows: 3,
@@ -241,7 +239,7 @@ var c_oAscLockTypeElemSubType = {
   ChangeProperties: 5
 };
 
-var c_oAscLockTypeElemPresentation = {
+const c_oAscLockTypeElemPresentation = {
   Object: 1,
   Slide: 2,
   Presentation: 3
@@ -1001,7 +999,6 @@ function checkJwtPayloadHash(docId, hash, body, token) {
   return res;
 }
 
-exports.version = asc_coAuthV;
 exports.c_oAscServerStatus = c_oAscServerStatus;
 exports.sendData = sendData;
 exports.parseUrl = parseUrl;
@@ -1682,12 +1679,6 @@ exports.install = function(server, callbackFunction) {
   }
 
   function* auth(conn, data) {
-    // Проверка версий
-    if (data.version !== asc_coAuthV) {
-      sendFileError(conn, 'Old Version Sdk');
-      return;
-    }
-
     //TODO: Do authorization etc. check md5 or query db
     if (data.token && data.user) {
       var docId = data.docid;
@@ -1913,20 +1904,21 @@ exports.install = function(server, callbackFunction) {
   }
 
   function* sendAuthInfo(objChangesDocument, changesIndex, conn, participantsMap) {
-    var docId = conn.docId;
-    var docLock;
+    const docId = conn.docId;
+    let docLock;
     if(EditorTypes.document == conn.editorType){
       docLock = {};
-      var allLocks = yield* getAllLocks(docId);
-      for(var i = 0 ; i < allLocks.length; ++i) {
-        var elem = allLocks[i];
-        docLock[elem.block] =elem;
+      let elem;
+      const allLocks = yield* getAllLocks(docId);
+      for(let i = 0 ; i < allLocks.length; ++i) {
+        elem = allLocks[i];
+        docLock[elem.block] = elem;
       }
     } else {
       docLock = yield* getAllLocks(docId);
     }
-    var allMessages = yield utils.promiseRedis(redisClient, redisClient.lrange, redisKeyMessage + docId, 0, -1);
-    var allMessagesParsed = undefined;
+    const allMessages = yield utils.promiseRedis(redisClient, redisClient.lrange, redisKeyMessage + docId, 0, -1);
+    let allMessagesParsed = undefined;
     if(allMessages && allMessages.length > 0) {
       allMessagesParsed = allMessages.map(function (val) {
         return JSON.parse(val);
@@ -1944,7 +1936,7 @@ exports.install = function(server, callbackFunction) {
         }
       }
     }
-    var sendObject = {
+    const sendObject = {
       type: 'auth',
       result: 1,
       sessionId: conn.sessionId,
@@ -1957,7 +1949,9 @@ exports.install = function(server, callbackFunction) {
       indexUser: conn.user.indexUser,
       jwt: cfgTokenEnableBrowser ? {token: fillJwtByConnection(conn), expires: cfgTokenSessionExpires} : undefined,
       g_cAscSpellCheckUrl: cfgSpellcheckerUrl,
-      lastForceSaveTime: lastForceSaveTime
+      lastForceSaveTime: lastForceSaveTime,
+      buildVersion: commonDefines.buildVersion,
+      buildNumber: commonDefines.buildNumber
     };
     sendData(conn, sendObject);//Or 0 if fails
   }
@@ -2360,12 +2354,12 @@ exports.install = function(server, callbackFunction) {
     return co(function* () {
       try {
         const c_LR = constants.LICENSE_RESULT;
-        var licenseType = licenseInfo.type;
+        let licenseType = licenseInfo.type;
         if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
           licenseType = c_LR.SuccessLimit;
 
-          var count = constants.LICENSE_CONNECTIONS;
-          var cursor = '0', sum = 0, scanRes, tmp, length, i, users;
+          const count = constants.LICENSE_CONNECTIONS;
+          let cursor = '0', sum = 0, scanRes, tmp, length, i, users;
           while (true) {
             scanRes = yield utils.promiseRedis(redisClient, redisClient.scan, cursor, 'MATCH', redisKeyPresenceHash + '*');
             tmp = scanRes[1];
@@ -2393,10 +2387,10 @@ exports.install = function(server, callbackFunction) {
           }
         }
 
-        var rights = constants.RIGHTS.Edit;
+        let rights = constants.RIGHTS.Edit;
         if (config.get('server.edit_singleton')) {
           // ToDo docId from url ?
-          var docIdParsed = urlParse.exec(conn.url);
+          const docIdParsed = urlParse.exec(conn.url);
           if (docIdParsed && 1 < docIdParsed.length) {
             const participantsMap = yield* getParticipantMap(docIdParsed[1]);
             for (let i = 0; i < participantsMap.length; ++i) {
@@ -2417,6 +2411,7 @@ exports.install = function(server, callbackFunction) {
             trial: constants.PACKAGE_TYPE_OS === licenseInfo.packageType ? false : licenseInfo.trial,
             rights: rights,
             buildVersion: commonDefines.buildVersion,
+            buildNumber: commonDefines.buildNumber,
             branding: licenseInfo.branding
           }
         });
@@ -2673,11 +2668,11 @@ exports.setLicenseInfo = function(data) {
 // Команда с сервера (в частности teamlab)
 exports.commandFromServer = function (req, res) {
   return co(function* () {
-    var result = commonDefines.c_oAscServerCommandErrors.NoError;
-    var docId = 'commandFromServer';
+    let result = commonDefines.c_oAscServerCommandErrors.NoError;
+    let docId = 'commandFromServer';
+    let version = undefined;
     try {
-      var version = undefined;
-      var params;
+      let params;
       if (req.body && Buffer.isBuffer(req.body)) {
         params = JSON.parse(req.body.toString('utf8'));
       } else {
@@ -2685,7 +2680,7 @@ exports.commandFromServer = function (req, res) {
       }
       if (cfgTokenEnableRequestInbox) {
         result = commonDefines.c_oAscServerCommandErrors.Token;
-        var checkJwtRes = checkJwtHeader(docId, req);
+        const checkJwtRes = checkJwtHeader(docId, req);
         if (checkJwtRes) {
           if (checkJwtRes.decoded) {
             if (!utils.isEmptyObject(checkJwtRes.decoded.payload)) {
@@ -2715,7 +2710,7 @@ exports.commandFromServer = function (req, res) {
         switch (params.c) {
           case 'info':
             //If no files in the database means they have not been edited.
-            var selectRes = yield taskResult.select(docId);
+            const selectRes = yield taskResult.select(docId);
             if (selectRes.length > 0) {
               result = yield* bindEvents(docId, params.callback, utils.getBaseUrlByRequest(req), undefined, params.userdata);
             } else {
@@ -2726,7 +2721,7 @@ exports.commandFromServer = function (req, res) {
             if (params.userid) {
               yield* publish({type: commonDefines.c_oPublishType.drop, docId: docId, users: [params.userid], description: params.description});
             } else if (params.users) {
-              var users = (typeof params.users === 'string') ? JSON.parse(params.users) : params.users;
+              const users = (typeof params.users === 'string') ? JSON.parse(params.users) : params.users;
               yield* dropUsersFromDocument(docId, users);
             } else {
               result = commonDefines.c_oAscServerCommandErrors.UnknownCommand;
@@ -2766,9 +2761,9 @@ exports.commandFromServer = function (req, res) {
       logger.error('Error commandFromServer: docId = %s\r\n%s', docId, err.stack);
     } finally {
       //undefined value are excluded in JSON.stringify
-      var output = JSON.stringify({'key': docId, 'error': result, 'version': version});
+      const output = JSON.stringify({'key': docId, 'error': result, 'version': version});
       logger.debug('End commandFromServer: docId = %s %s', docId, output);
-      var outputBuffer = new Buffer(output, 'utf8');
+      const outputBuffer = new Buffer(output, 'utf8');
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Length', outputBuffer.length);
       res.send(outputBuffer);

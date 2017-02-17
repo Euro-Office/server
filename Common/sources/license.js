@@ -53,12 +53,12 @@ const redisKeyLicense = cfgRedisPrefix + ((constants.PACKAGE_TYPE_OS === oPackag
 exports.readLicense = function*() {
 	const c_LR = constants.LICENSE_RESULT;
 	const resMax = {count: 999999, type: c_LR.Success};
-	var res = {count: 1, type: c_LR.Error, light: false, packageType: oPackageType, trial: false, branding: false};
-	var checkFile = false;
+	const res = {count: 1, type: c_LR.Error, light: false, packageType: oPackageType, trial: false, branding: false};
+	let checkFile = false;
 	try {
-		var oFile = fs.readFileSync(configL.get('license_file')).toString();
+		const oFile = fs.readFileSync(configL.get('license_file')).toString();
 		checkFile = true;
-		var oLicense = JSON.parse(oFile);
+		const oLicense = JSON.parse(oFile);
 		const sign = oLicense['signature'];
 		delete oLicense['signature'];
 
@@ -125,7 +125,7 @@ function* _getFileState() {
 		return true;
 	}
 
-	var now = new Date();
+	let now = new Date();
 	now.setMonth(now.getMonth() - 1);
 	return (0 >= (now - new Date(val)));
 }

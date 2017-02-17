@@ -129,6 +129,7 @@ if (cluster.isMaster) {
 	const fileUploaderService = require('./fileuploaderservice');
 	const constants = require('./../../Common/sources/constants');
 	const utils = require('./../../Common/sources/utils');
+	const commonDefines = require('./../../Common/sources/commondefines');
 	const configStorage = configCommon.get('storage');
 	const app = express();
 	const server = http.createServer(app);
@@ -182,7 +183,8 @@ if (cluster.isMaster) {
 		});
 
 		app.get('/index.html', (req, res) => {
-			res.send('Server is functioning normally. Version: ' + docsCoServer.version);
+			res.send('Server is functioning normally. Version: ' + commonDefines.buildVersion + '. Build: ' +
+				commonDefines.buildNumber);
 		});
 		const rawFileParser = bodyParser.raw(
 			{inflate: true, limit: config.get('server.limits_tempfile_upload'), type: '*/*'});
