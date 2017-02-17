@@ -1268,6 +1268,17 @@ exports.install = function(server, callbackFunction) {
   function* versionHistory(conn, cmd) {
     var docIdOld = conn.docId;
     var docIdNew = cmd.getDocId();
+    //check jwt
+    if (cfgTokenEnableBrowser) {
+      var checkJwtRes = checkJwt(docIdNew, cmd.getJwt(), false);
+      if (checkJwtRes.decoded) {
+        fillVersionHistoryFromJwt(checkJwtRes.decoded, cmd);
+        docIdNew = cmd.getDocId();
+      } else {
+        conn.close(checkJwtRes.code, checkJwtRes.description);
+        return;
+      }
+    }
     if (docIdOld !== docIdNew) {
       var tmpUser = conn.user;
       //remove presence(other data was removed before in closeDocument)
@@ -1653,6 +1664,23 @@ exports.install = function(server, callbackFunction) {
     //issuer for secret
     if (decoded.iss) {
       data.iss = decoded.iss;
+    }
+  }
+  function fillVersionHistoryFromJwt(decoded, cmd) {
+    if (decoded.changesUrl && decoded.previous) {
+      if (decoded.previous.url) {
+        cmd.setUrl(decoded.previous.url);
+      }
+      if (decoded.previous.key) {
+        cmd.setDocId(decoded.previous.key);
+      }
+    } else {
+      if (decoded.url) {
+        cmd.setUrl(decoded.url);
+      }
+      if (decoded.key) {
+        cmd.setDocId(decoded.key);
+      }
     }
   }
   function fillJwtByConnection(conn) {
