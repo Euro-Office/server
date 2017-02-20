@@ -240,21 +240,23 @@ if (cluster.isMaster) {
 			let pluginsPath = config.get('plugins.path');
 			utils.listFolders(pluginsPath, true).then((values) => {
 				return co(function*() {
+					const baseUrl = config.get('plugins.url');
+					const configFile = 'config.json';
 					let stats = null;
 					let result = [];
 					for (let i = 0; i < values.length; ++i) {
 						try {
-							stats = yield utils.fsStat(path.join(values[i], 'config.json'));
+							stats = yield utils.fsStat(path.join(values[i], configFile));
 						} catch (err) {
 							stats = null;
 						}
 
 						if (stats && stats.isFile) {
-							result.push(path.basename(values[i]) + '/config.json');
+							result.push(baseUrl + '/' + path.basename(values[i]) + '/' + configFile);
 						}
 					}
 
-					userPlugins = {'url': config.get('plugins.url'), 'pluginsData': result};
+					userPlugins = {'url': '', 'pluginsData': result};
 					sendUserPlugins(res, userPlugins);
 				});
 			});
