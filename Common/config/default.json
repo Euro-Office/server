@@ -146,7 +146,7 @@
 				}
 			},
 			"plugins": {
-				"path": "../../../sdkjs-plugins",
+				"path": "",
 				"url": "../../../../sdkjs-plugins"
 			}
 		}

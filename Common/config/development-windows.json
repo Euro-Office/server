@@ -39,6 +39,9 @@
         "dbPort": 3306,
         "dbUser": "root",
         "dbPass": "onlyoffice"
+      },
+      "plugins": {
+          "path": "../../../sdkjs-plugins"
       }
     }
   },
