@@ -236,10 +236,24 @@ if (cluster.isMaster) {
 				sendUserPlugins(res, userPlugins);
 				return;
 			}
-			let pluginsPath = config.get('plugins.path');
+
+			if (!config.has('server.static_content') || 
+					!config.has('plugins.uri')) {
+				res.sendStatus(404);
+				return;
+			}
+
+			let staticContent = config.get('server.static_content');
+			let pluginsUri = config.get('plugins.uri');
+			let pluginsPath = undefined;
+
+			if (staticContent[pluginsUri]) {
+				pluginsPath = staticContent[pluginsUri].path;
+			}
+
+			let baseUrl = utils.getBaseUrlByRequest(req);
 			utils.listFolders(pluginsPath, true).then((values) => {
 				return co(function*() {
-					const baseUrl = config.get('plugins.url');
 					const configFile = 'config.json';
 					let stats = null;
 					let result = [];
@@ -251,7 +265,7 @@ if (cluster.isMaster) {
 						}
 
 						if (stats && stats.isFile) {
-							result.push(baseUrl + '/' + path.basename(values[i]) + '/' + configFile);
+							result.push( baseUrl + pluginsUri + '/' + path.basename(values[i]) + '/' + configFile);
 						}
 					}
 

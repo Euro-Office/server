@@ -35,9 +35,6 @@
       },
       "utils": {
         "utils_common_fontdir": "/usr/share/fonts"
-      },
-      "plugins": {
-          "path": "/var/www/onlyoffice/documentserver/sdkjs-plugins"
       }
     }
   },
