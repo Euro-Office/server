@@ -129,8 +129,9 @@ const cfgTokenSessionExpires = ms(config.get('token.session.expires'));
 const cfgTokenInboxHeader = config.get('token.inbox.header');
 const cfgTokenInboxPrefix = config.get('token.inbox.prefix');
 const cfgSecretSession = config.get('secret.session');
-const cfgForceSaveTimeout = ms(config.get('forcesave.timeout'));
-const cfgForceSaveMinExpiration = ms(config.get('forcesave.minRetentionPeriod'));
+const cfgForceSaveEnable = config.get('autoAssembly.enable');
+const cfgForceSaveTimeout = ms(config.get('autoAssembly.intervalWithoutChanges'));
+const cfgForceSaveMinExpiration = ms(config.get('autoAssembly.minRetentionPeriod'));
 const cfgQueueRetentionPeriod = configCommon.get('queue.retentionPeriod');
 
 const redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
@@ -532,7 +533,7 @@ function* isUserReconnect(docId, userId, connectionId) {
   }
   return false;
 }
-function* publish(data, optDocId, optUserId) {
+function* publish(data, optDocId, optUserId, opt_pubsub) {
   var needPublish = true;
   if(optDocId && optUserId) {
     needPublish = false;
@@ -547,7 +548,8 @@ function* publish(data, optDocId, optUserId) {
   }
   if(needPublish) {
     var msg = JSON.stringify(data);
-    pubsub.publish(msg);
+    var realPubsub = opt_pubsub ? opt_pubsub : pubsub;
+    realPubsub.publish(msg);
   }
 }
 function* addTask(data, priority, opt_queue, opt_expiration) {
@@ -663,17 +665,14 @@ function* setForceSave(docId, forceSave, cmd, success) {
   let forceSaveIndex = getForceSaveIndex(forceSave.getTime(), forceSave.getIndex());
   if (success) {
     yield utils.promiseRedis(redisClient, redisClient.hset, redisKeyForceSave + docId, forceSaveIndex, true);
-
-    let forceSaveType = forceSave.getType();
-    if (cfgForceSaveTimeout > 0 || commonDefines.c_oAscForceSaveTypes.Button === forceSaveType) {
-      yield* publish({
-                       type: commonDefines.c_oPublishType.forceSave, docId: docId,
-                       data: {type: forceSaveType, time: forceSave.getTime()}
-                     }, cmd.getUserConnectionId());
-    }
   } else {
     yield utils.promiseRedis(redisClient, redisClient.hdel, redisKeyForceSave + docId, forceSaveIndex);
   }
+  let forceSaveType = forceSave.getType();
+  yield* publish({
+                   type: commonDefines.c_oPublishType.forceSave, docId: docId,
+                   data: {type: forceSaveType, time: forceSave.getTime(), success: success}
+                 }, cmd.getUserConnectionId());
 }
 function* getLastForceSave(docId, lastSave) {
   let res = false;
@@ -686,7 +685,7 @@ function* getLastForceSave(docId, lastSave) {
   }
   return res;
 }
-function* startForceSave(docId, type, opt_userdata, opt_userConnectionId, opt_baseUrl, opt_queue) {
+function* startForceSave(docId, type, opt_userdata, opt_userConnectionId, opt_baseUrl, opt_queue, opt_pubsub) {
   logger.debug('startForceSave start:docId = %s', docId);
   let res = {code: commonDefines.c_oAscServerCommandErrors.NoError, time: null};
   let lastSave = null;
@@ -712,6 +711,13 @@ function* startForceSave(docId, type, opt_userdata, opt_userConnectionId, opt_ba
     let baseUrl = opt_baseUrl || lastSave.baseUrl;
     let forceSave = new commonDefines.CForceSaveData(lastSave);
     forceSave.setType(type);
+
+    if (commonDefines.c_oAscForceSaveTypes.Button !== type) {
+      yield* publish({
+                       type: commonDefines.c_oPublishType.forceSave, docId: docId,
+                       data: {type: type, time: forceSave.getTime(), start: true}
+                     }, undefined, undefined, opt_pubsub);
+    }
 
     let priority;
     let expiration;
@@ -1952,18 +1958,6 @@ exports.install = function(server, callbackFunction) {
         return JSON.parse(val);
       });
     }
-    let lastForceSaveTime = null;
-    if (cfgForceSaveTimeout > 0) {
-      lastForceSaveTime = -1;
-      //todo multi with messages
-      let lastSave = yield* getLastSave(docId);
-      if (lastSave) {
-        let notModified = yield* getLastForceSave(docId, lastSave);
-        if (notModified) {
-          lastForceSaveTime = lastSave.time;
-        }
-      }
-    }
     const sendObject = {
       type: 'auth',
       result: 1,
@@ -1977,7 +1971,6 @@ exports.install = function(server, callbackFunction) {
       indexUser: conn.user.indexUser,
       jwt: cfgTokenEnableBrowser ? {token: fillJwtByConnection(conn), expires: cfgTokenSessionExpires} : undefined,
       g_cAscSpellCheckUrl: cfgSpellcheckerUrl,
-      lastForceSaveTime: lastForceSaveTime,
       buildVersion: commonDefines.buildVersion,
       buildNumber: commonDefines.buildNumber
     };
@@ -2211,7 +2204,7 @@ exports.install = function(server, callbackFunction) {
             'baseUrl', utils.getBaseUrlByConnection(conn)],
           ['expire', redisKeyLastSave + docId, cfgExpLastSave]
         ];
-        if (cfgForceSaveTimeout > 0) {
+        if (cfgForceSaveEnable) {
           let expireAt = new Date().getTime() + cfgForceSaveTimeout;
           commands.push(['zadd', redisKeyForceSaveTimeout, expireAt, docId]);
         }

@@ -57,9 +57,10 @@
 				"savetimeoutdelay": 5000,
 				"edit_singleton": false
 			},
-			"forcesave": {
-				"timeout": "0",
-				"quantum": "1m",
+			"autoAssembly": {
+				"enable": true,
+				"intervalWithoutChanges": "1m",
+				"checkInterval": "1m",
 				"minRetentionPeriod": "1m"
 			},
 			"utils": {

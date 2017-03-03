@@ -515,13 +515,15 @@ function* commandSfcCallback(cmd, isSfcm) {
   logger.debug('Start commandSfcCallback: docId = %s', docId);
   var saveKey = cmd.getSaveKey();
   var statusInfo = cmd.getStatusInfo();
-  var isError = constants.NO_ERROR != statusInfo && constants.CONVERT_CORRUPTED != statusInfo;
+  var isError = constants.NO_ERROR != statusInfo;
+  var isErrorCorrupted = constants.CONVERT_CORRUPTED == statusInfo;
   var savePathDoc = saveKey + '/' + cmd.getOutputPath();
   var savePathChanges = saveKey + '/changes.zip';
   var savePathHistory = saveKey + '/changesHistory.json';
   var getRes = yield* docsCoServer.getCallback(docId);
   var forceSave = cmd.getForceSave();
   var forceSaveType = forceSave ? forceSave.getType() : commonDefines.c_oAscForceSaveTypes.Command;
+  var isSfcmSuccess = false;
   var statusOk;
   var statusErr;
   if (isSfcm) {
@@ -550,7 +552,7 @@ function* commandSfcCallback(cmd, isSfcm) {
       outputSfc.setActions(actions);
     }
     outputSfc.setUserData(cmd.getUserData());
-    if (!isError) {
+    if (!isError || isErrorCorrupted) {
       try {
         var data = yield storage.getObject(savePathHistory);
         outputSfc.setChangeHistory(JSON.parse(data.toString('utf-8')));
@@ -574,18 +576,15 @@ function* commandSfcCallback(cmd, isSfcm) {
       var row = selectRes.length > 0 ? selectRes[0] : null;
       //send only if FileStatus.Ok to prevent forcesave after final save
       if (row && row.status == taskResult.FileStatus.Ok) {
-        if (forceSave && !isError) {
+        if (forceSave) {
+          outputSfc.setForceSaveType(forceSaveType);
           outputSfc.setLastSave(new Date(forceSave.getTime()).toISOString());
         }
-        var resSend = true;
         try {
           yield* docsCoServer.sendServerRequest(docId, uri, outputSfc);
+          isSfcmSuccess = true;
         } catch (err) {
-          resSend = false;
           logger.error('sendServerRequest error: docId = %s;url = %s;data = %j\r\n%s', docId, uri, outputSfc, err.stack);
-        }
-        if (forceSave) {
-          yield* docsCoServer.setForceSave(docId, forceSave, cmd, resSend);
         }
       }
     } else {
@@ -640,6 +639,9 @@ function* commandSfcCallback(cmd, isSfcm) {
     }
   } else {
     logger.error('Empty Callback commandSfcCallback: docId = %s', docId);
+  }
+  if (forceSave) {
+    yield* docsCoServer.setForceSave(docId, forceSave, cmd, isSfcmSuccess && !isError);
   }
   if (docsCoServer.getIsShutdown() && !isSfcm) {
     yield utils.promiseRedis(redisClient, redisClient.srem, redisKeyShutdown, docId);

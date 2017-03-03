@@ -46,13 +46,14 @@ var constants = require('./../../Common/sources/constants');
 var commondefines = require('./../../Common/sources/commondefines');
 var pubsubRedis = require('./pubsubRedis.js');
 var queueService = require('./../../Common/sources/taskqueueRabbitMQ');
+var pubsubService = require('./' + config.get('pubsub.name'));
 
 var cfgRedisPrefix = config.get('redis.prefix');
 var cfgExpFilesCron = config.get('expire.filesCron');
 var cfgExpDocumentsCron = config.get('expire.documentsCron');
 var cfgExpFiles = config.get('expire.files');
 var cfgExpFilesRemovedAtOnce = config.get('expire.filesremovedatonce');
-var cfgForceSaveTimeoutQuantum = ms(config.get('forcesave.quantum'));
+var cfgForceSaveTimeoutQuantum = ms(config.get('autoAssembly.checkInterval'));
 
 var redisKeyDocuments = cfgRedisPrefix + constants.REDIS_KEY_DOCUMENTS;
 var redisForceSaveTimeout = cfgRedisPrefix + constants.REDIS_KEY_FORCE_SAVE_TIMEOUT;
@@ -138,6 +139,7 @@ var checkDocumentExpire = function() {
 let forceSaveTimeout = function() {
   return co(function* () {
     let queue = null;
+    let pubsub = null;
     try {
       logger.debug('forceSaveTimeout start');
       let redisClient = pubsubRedis.getClientRedis();
@@ -153,24 +155,31 @@ let forceSaveTimeout = function() {
         queue = new queueService();
         yield queue.initPromise(true, false, false, false);
 
+        pubsub = new pubsubService();
+        yield pubsub.initPromise();
+
         let actions = [];
         for (let i = 0; i < expiredKeys.length; ++i) {
           let docId = expiredKeys[i];
           if (docId) {
             let action = yield docsCoServer.startForceSavePromise(docId, commondefines.c_oAscForceSaveTypes.Timeout,
-                                                            undefined, undefined, undefined, queue);
+                                                            undefined, undefined, undefined, queue, pubsub);
             actions.push(action);
           }
         }
         yield Promise.all(actions);
         logger.debug('forceSaveTimeout actions.length %d', actions.length);
       }
+      logger.debug('forceSaveTimeout end');
     } catch (e) {
       logger.error('forceSaveTimeout error:\r\n%s', e.stack);
     } finally {
       try {
         if (queue) {
           yield queue.close();
+        }
+        if (pubsub) {
+          yield pubsub.close();
         }
       } catch (e) {
         logger.error('checkDocumentExpire error:\r\n%s', e.stack);

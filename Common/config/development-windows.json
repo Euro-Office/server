@@ -28,6 +28,9 @@
           }
         }
       },
+      "autoAssembly": {
+        "enable": false
+      },
       "utils": {
         "utils_common_fontdir": "C:\\Windows\\Fonts"
       },
