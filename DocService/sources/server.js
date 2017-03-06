@@ -225,7 +225,7 @@ if (cluster.isMaster) {
 		app.post('/upload/:docid/:userid/:index/:jwt?', rawFileParser, fileUploaderService.uploadImageFile);
 
 		app.post('/downloadas/:docid', rawFileParser, canvasService.downloadAs);
-		app.get('/healthcheck', utils.checkClientIp, converterService.convertHealthCheck);
+		app.get('/healthcheck', utils.checkClientIp, docsCoServer.healthCheck);
 
 		const sendUserPlugins = (res, data) => {
 			res.setHeader('Content-Type', 'application/json');

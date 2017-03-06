@@ -78,6 +78,8 @@ const https = require('https');
 const http = require('http');
 const url = require('url');
 const fs = require('fs');
+const os = require('os');
+const cluster = require('cluster');
 const cron = require('cron');
 const co = require('co');
 const jwt = require('jsonwebtoken');
@@ -99,6 +101,7 @@ const redis = require(config.get('redis.name'));
 const pubsubRedis = require('./pubsubRedis');
 const pubsubService = require('./' + config.get('pubsub.name'));
 const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
+const rabbitMQCore = require('./../../Common/sources/rabbitMQCore');
 const cfgSpellcheckerUrl = config.get('server.editor_settings_spellchecker_url');
 const cfgCallbackRequestTimeout = config.get('server.callbackRequestTimeout');
 //The waiting time to document assembly when all out(not 0 in case of F5 in the browser)
@@ -164,6 +167,7 @@ let shutdownFlag = false;
 
 const FORCE_SAVE_EXPIRATION = Math.min(Math.max(cfgForceSaveTimeout, cfgForceSaveMinExpiration),
                                        cfgQueueRetentionPeriod * 1000);
+const HEALTH_CHECK_KEY_MAX = 10000;
 
 function getIsShutdown() {
   return shutdownFlag;
@@ -2685,6 +2689,41 @@ exports.install = function(server, callbackFunction) {
 };
 exports.setLicenseInfo = function(data) {
   licenseInfo = data;
+};
+exports.healthCheck = function(req, res) {
+  return co(function*() {
+    let output = false;
+    try {
+      logger.debug('healthCheck start');
+      let promises = [];
+      //database
+      promises.push(sqlBase.healthCheck());
+      //redis
+      promises.push(utils.promiseRedis(redisClient, redisClient.ping));
+      //rabbitMQ
+      promises.push(rabbitMQCore.connetPromise(function() {}));
+      yield Promise.all(promises);
+      //storage
+      const clusterId = cluster.isWorker ? cluster.worker.id : '';
+      const tempName = 'hc_' + os.hostname() + '_' + clusterId + '_' + Math.round(Math.random() * HEALTH_CHECK_KEY_MAX);
+      const tempBuffer = new Buffer([1, 2, 3, 4, 5]);
+      //It's proper to putObject one tempName
+      yield storage.putObject(tempName, tempBuffer, tempBuffer.length);
+      try {
+        //try to prevent case, when another process can remove same tempName
+        yield storage.deleteObject(tempName);
+      } catch (err) {
+        logger.warn('healthCheck error\r\n%s', err.stack);
+      }
+
+      output = true;
+      logger.debug('healthCheck end');
+    } catch (err) {
+      logger.error('healthCheck error\r\n%s', err.stack);
+    } finally {
+      res.send(output.toString());
+    }
+  });
 };
 // Команда с сервера (в частности teamlab)
 exports.commandFromServer = function (req, res) {

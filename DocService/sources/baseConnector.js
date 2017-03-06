@@ -260,3 +260,16 @@ function unLockCriticalSection (id) {
 	else
 		delete g_oCriticalSection[id];
 }
+exports.healthCheck = function () {
+  return new Promise(function(resolve, reject) {
+  	//SELECT 1; usefull for H2, MySQL, Microsoft SQL Server, PostgreSQL, SQLite
+  	//http://stackoverflow.com/questions/3668506/efficient-sql-test-query-or-validation-query-that-will-work-across-all-or-most
+    baseConnector.sqlQuery('SELECT 1;', function(error, result) {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(result);
+      }
+    });
+  });
+};

@@ -141,40 +141,6 @@ function* convertByCmd(cmd, async, baseUrl, fileTo, opt_healthcheck, opt_priorit
   return status;
 }
 
-function convertHealthCheck(req, res) {
-  return co(function* () {
-    var output = false;
-    try {
-      logger.debug('Start convertHealthCheck');
-      var task = yield* taskResult.addRandomKeyTask('healthcheck');
-      var docId = task.key;
-      //put test file to storage
-      var data = yield utils.readFile(cfgHealthCheckFilePath);
-      var format = 'docx';
-      yield storage.putObject(docId + '/origin.' + format, data, data.length);
-      //convert
-      var cmd = new commonDefines.InputCommand();
-      cmd.setCommand('conv');
-      cmd.setSaveKey(docId);
-      cmd.setFormat(format);
-      cmd.setDocId(docId);
-      cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
-
-      var status = yield* convertByCmd(cmd, false, utils.getBaseUrlByRequest(req), 'Editor.bin', true);
-      if (status && constants.NO_ERROR == status.err) {
-        output = true;
-      }
-      //clean up
-      yield canvasService.cleanupCache(docId);
-      logger.debug('End convertHealthCheck');
-    } catch (e) {
-      logger.error('Error convertHealthCheck\r\n%s', e.stack);
-    } finally {
-      res.send(output.toString());
-    }
-  });
-}
-
 function* convertFromChanges(docId, baseUrl, forceSave, opt_userdata, opt_userConnectionId, opt_priority,
                              opt_expiration, opt_queue) {
   var cmd = new commonDefines.InputCommand();
@@ -296,6 +262,5 @@ function convertRequest(req, res) {
   });
 }
 
-exports.convertHealthCheck = convertHealthCheck;
 exports.convertFromChanges = convertFromChanges;
 exports.convert = convertRequest;
