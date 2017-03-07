@@ -774,7 +774,7 @@ exports.downloadAs = function(req, res) {
         var checkJwtRes = docsCoServer.checkJwt(docId, cmd.getJwt(), true);
         if (checkJwtRes.decoded) {
           var doc = checkJwtRes.decoded.document;
-          if (doc.permissions && (false !== doc.permissions.download || false !== doc.permissions.print)) {
+          if (!doc.permissions || (false !== doc.permissions.download || false !== doc.permissions.print)) {
             isValidJwt = true;
             docId = doc.key;
             cmd.setDocId(doc.key);
