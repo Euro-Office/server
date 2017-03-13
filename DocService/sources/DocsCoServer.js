@@ -1292,7 +1292,11 @@ exports.install = function(server, callbackFunction) {
         fillVersionHistoryFromJwt(checkJwtRes.decoded, cmd);
         docIdNew = cmd.getDocId();
       } else {
-        conn.close(checkJwtRes.code, checkJwtRes.description);
+        if (constants.JWT_EXPIRED_CODE == checkJwtRes.code) {
+          sendData(conn, {type: "expiredToken"});
+        } else {
+          conn.close(checkJwtRes.code, checkJwtRes.description);
+        }
         return;
       }
     }
