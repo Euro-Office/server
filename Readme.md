@@ -35,7 +35,7 @@ g) Microsoft Visual C++ Express 2010 (necessary for the spellchecker modules bui
 
 a) Database setup
 
-Run the schema/createdb.sql script for MySQL
+Run the schema/mysql/createdb.sql script for MySQL
 
 b) Install the Web Monitor for RabbitMQ (see the details for the installation here - https://www.rabbitmq.com/management.html)
 
