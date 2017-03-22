@@ -1730,11 +1730,11 @@ exports.install = function(server, callbackFunction) {
   function* auth(conn, data) {
     //TODO: Do authorization etc. check md5 or query db
     if (data.token && data.user) {
-      var docId = data.docid;
+      let docId = data.docid;
       //check jwt
       if (cfgTokenEnableBrowser) {
-        var isSession = !!data.jwtSession;
-        var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isSession);
+        const isSession = !!data.jwtSession;
+        const checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isSession);
         if (checkJwtRes.decoded) {
           fillDataFromJwt(checkJwtRes.decoded, data);
         } else {
@@ -1744,26 +1744,26 @@ exports.install = function(server, callbackFunction) {
       }
 
       docId = data.docid;
-      var user = data.user;
+      const user = data.user;
 
       //get user index
-      var bIsRestore = null != data.sessionId;
-      var upsertRes = null;
-      var cmd = data.openCmd ? new commonDefines.InputCommand(data.openCmd) : null;
-      var curIndexUser;
+      const bIsRestore = null != data.sessionId;
+      const cmd = data.openCmd ? new commonDefines.InputCommand(data.openCmd) : null;
+      let upsertRes = null;
+      let curIndexUser;
       if (bIsRestore) {
         // Если восстанавливаем, индекс тоже восстанавливаем
         curIndexUser = user.indexUser;
       } else {
         upsertRes = yield canvasService.commandOpenStartPromise(docId, cmd, true, data.documentCallbackUrl, utils.getBaseUrlByConnection(conn));
-        upsertRes.affectedRows == 1 ? curIndexUser = 1 : curIndexUser = upsertRes.insertId;
+		  curIndexUser = upsertRes.affectedRows == 1 ? 1 : upsertRes.insertId;
       }
       if (constants.CONN_CLOSED === conn.readyState) {
         //closing could happen during async action
         return;
       }
 
-      var curUserId = user.id + curIndexUser;
+      const curUserId = user.id + curIndexUser;
       conn.docId = data.docid;
       conn.permissions = data.permissions;
       conn.user = {
@@ -1869,7 +1869,7 @@ exports.install = function(server, callbackFunction) {
         }
       } else {
         conn.sessionId = conn.id;
-        var endAuthRes = yield* endAuth(conn, false, data.documentCallbackUrl);
+        const endAuthRes = yield* endAuth(conn, false, data.documentCallbackUrl);
         if (endAuthRes && cmd) {
           yield canvasService.openDocument(conn, cmd, upsertRes);
         }
