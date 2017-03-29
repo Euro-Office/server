@@ -142,7 +142,7 @@
 				},
 				"session": {
 					"algorithm": "HS256",
-					"expires": "5m"
+					"expires": "10m"
 				}
 			},
 			"plugins": {
