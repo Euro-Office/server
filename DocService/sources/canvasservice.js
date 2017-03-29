@@ -426,9 +426,16 @@ function* commandImgurls(conn, cmd, outputData) {
           data = new Buffer(urlSource.substring(delimiterIndex + 1), 'base64');
         }
       } else if (urlSource) {
-        //todo stream
-        data = yield utils.downloadUrlPromise(urlSource, cfgImageDownloadTimeout * 1000, cfgImageSize);
-        urlParsed = urlModule.parse(urlSource);
+        try {
+          //todo stream
+          data = yield utils.downloadUrlPromise(urlSource, cfgImageDownloadTimeout * 1000, cfgImageSize);
+          urlParsed = urlModule.parse(urlSource);
+        } catch (e) {
+          data = undefined;
+          logger.error('error commandImgurls download: url = %s; docId = %s\r\n%s', urlSource, docId, e.stack);
+          errorCode = constants.UPLOAD_URL;
+          break;
+        }
       }
       var outputUrl = {url: 'error', path: 'error'};
       if (data) {

@@ -149,6 +149,7 @@ exports.UPLOAD = -100;
 exports.UPLOAD_CONTENT_LENGTH = -101;
 exports.UPLOAD_EXTENSION = -102;
 exports.UPLOAD_COUNT_FILES = -103;
+exports.UPLOAD_URL = -104;
 exports.VKEY = -120;
 exports.VKEY_ENCRYPT = -121;
 exports.VKEY_KEY_EXPIRE = -122;
