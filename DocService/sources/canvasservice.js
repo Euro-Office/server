@@ -403,6 +403,7 @@ function* commandImgurls(conn, cmd, outputData) {
   var urls;
   var docId = cmd.getDocId();
   var errorCode = constants.NO_ERROR;
+  var outputUrls = [];
   if (!conn.user.view && !conn.isCloseCoAuthoring) {
     var isImgUrl = 'imgurl' == cmd.getCommand();
     if (isImgUrl) {
@@ -415,7 +416,6 @@ function* commandImgurls(conn, cmd, outputData) {
     //todo Promise.all()
     var displayedImageMap = {};//to make one imageIndex for ole object urls
     var imageCount = 0;
-    var outputUrls = [];
     for (var i = 0; i < urls.length; ++i) {
       var urlSource = urls[i];
       var urlParsed;
@@ -434,7 +434,9 @@ function* commandImgurls(conn, cmd, outputData) {
           data = undefined;
           logger.error('error commandImgurls download: url = %s; docId = %s\r\n%s', urlSource, docId, e.stack);
           errorCode = constants.UPLOAD_URL;
-          break;
+          if (isImgUrl) {
+            break;
+          }
         }
       }
       var outputUrl = {url: 'error', path: 'error'};
@@ -477,9 +479,11 @@ function* commandImgurls(conn, cmd, outputData) {
           outputUrl = {url: imgUrl, path: strLocalPath};
         }
       }
-      if (isImgUrl && ('error' === outputUrl.url || 'error' === outputUrl.path)) {
+      if (constants.NO_ERROR === errorCode && ('error' === outputUrl.url || 'error' === outputUrl.path)) {
         errorCode = constants.UPLOAD_EXTENSION;
-        break;
+        if (isImgUrl) {
+          break;
+        }
       }
       outputUrls.push(outputUrl);
     }
@@ -487,12 +491,12 @@ function* commandImgurls(conn, cmd, outputData) {
     logger.error('error commandImgurls: docId = %s access deny', docId);
     errorCode = errorCode.UPLOAD;
   }
-  if (constants.NO_ERROR !== errorCode) {
+  if (constants.NO_ERROR !== errorCode && 0 == outputUrls.length) {
     outputData.setStatus('err');
     outputData.setData(errorCode);
   } else {
     outputData.setStatus('ok');
-    outputData.setData(outputUrls);
+    outputData.setData({error: errorCode, urls: outputUrls});
   }
 }
 function* commandPathUrl(conn, cmd, outputData) {
