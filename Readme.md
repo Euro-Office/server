@@ -17,7 +17,8 @@ a) Node.js version 6.9.1 or later (https://nodejs.org/en/download/)
 
 b) Java (https://java.com/en/download/). Necessary for the sdk build.
 
-c) MySql Server version 5.5 or later (http://dev.mysql.com/downloads/windows/installer/). When installing use the `onlyoffice` password for the `root` user
+c) MySql Server version 5.5 or later (http://dev.mysql.com/downloads/windows/installer/). When installing use the `onlyoffice` password for the `root` user.
+с) or PostgreSQL Server version 9.1 or later (https://www.postgresql.org/download/).
 
 d) Erlang (http://www.erlang.org/download.html)
 
@@ -31,9 +32,19 @@ h) Microsoft Visual C++ Express 2010 (necessary for the spellchecker modules bui
 
 ### Setting up the system
 
-a) Database setup
+a) Database setup MySQL
 
 Run the schema/mysql/createdb.sql script for MySQL
+
+a) or Database setup PostgreSQL
+Enter in `psql` (PostgreSQL interactive terminal) with login and password introduced during installation, then enter commands:
+`CREATE DATABASE onlyoffice;`
+`CREATE USER onlyoffice WITH PASSWORD 'onlyoffice';`
+`\c onlyoffice`
+`\i 'schema/postgresql/createdb.sql';`
+`GRANT ALL PRIVILEGES ON DATABASE onlyoffice to onlyoffice;`
+`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO onlyoffice;`
+Delete from `server\Common\config\development-windows.json` option `sql`.
 
 b) Install the Web Monitor for RabbitMQ (see the details for the installation here - https://www.rabbitmq.com/management.html)
 
