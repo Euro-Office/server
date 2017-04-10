@@ -2723,9 +2723,10 @@ exports.healthCheck = function(req, res) {
       promises.push(sqlBase.healthCheck());
       //redis
       promises.push(utils.promiseRedis(redisClient, redisClient.ping));
-      //rabbitMQ
-      promises.push(rabbitMQCore.connetPromise(function() {}));
       yield Promise.all(promises);
+      //rabbitMQ
+      let conn = yield rabbitMQCore.connetPromise(function() {});
+      yield rabbitMQCore.closePromise(conn);
       //storage
       const clusterId = cluster.isWorker ? cluster.worker.id : '';
       const tempName = 'hc_' + os.hostname() + '_' + clusterId + '_' + Math.round(Math.random() * HEALTH_CHECK_KEY_MAX);
