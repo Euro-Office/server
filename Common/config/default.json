@@ -14,7 +14,12 @@
 		"retentionPeriod": 900
 	},
 	"storage": {
-		"name": "storage-s3",
+		"name": "storage-fs",
+		"fs": {
+			"folderPath": "",
+			"urlExpires": 2592000,
+			"secretString": "onlyoffice"
+		},
 		"region": "",
 		"endpoint": "http://localhost/s3",
 		"bucketName": "cache",
