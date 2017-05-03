@@ -446,7 +446,7 @@ function* commandImgurls(conn, cmd, outputData) {
         if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN == format && urlParsed) {
           //bin, txt occur in ole object case
           var ext = pathModule.extname(urlParsed.pathname);
-          if ('.bin' == ext || '.txt' == ext) {
+          if ('.bin' == ext) {
             formatStr = ext.substring(1);
           }
         } else {
