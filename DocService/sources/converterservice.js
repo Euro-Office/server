@@ -220,6 +220,7 @@ function convertRequest(req, res) {
       cmd.setDelimiter(parseIntParam(params.delimiter) || commonDefines.c_oAscCsvDelimiter.Comma);
       if(undefined != params.delimiterChar)
         cmd.setDelimiterChar(params.delimiterChar);
+      cmd.setDoctParams(parseIntParam(params.doctparams));
       cmd.setPassword(params.password);
       var thumbnail = params.thumbnail;
       if (thumbnail) {
