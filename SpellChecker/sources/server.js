@@ -44,6 +44,7 @@ var idCheckInterval, c_nCheckHealth = 60000, c_sCheckWord = 'color', c_sCheckLan
 var canStartCheck = true;
 var statusCheckHealth = true;
 function checkHealth (worker) {
+	logger.info('checkHealth');
 	if (!statusCheckHealth) {
 		logger.error('error check health, restart!');
 		worker.kill();
@@ -53,6 +54,7 @@ function checkHealth (worker) {
 	statusCheckHealth = false;
 }
 function endCheckHealth (msg) {
+	logger.info('endCheckHealth');
 	statusCheckHealth = true;
 }
 
