@@ -1662,21 +1662,22 @@ exports.install = function(server, callbackFunction) {
         data.isCloseCoAuthoring = edit.ds_isCloseCoAuthoring;
       }
       if (edit.user) {
+        var dataUser = data.user;
         var user = edit.user;
         if (null != user.id) {
-          data.id = user.id;
+          dataUser.id = user.id;
           if (openCmd) {
             openCmd.userid = user.id;
           }
         }
         if (null != user.firstname) {
-          data.firstname = user.firstname;
+          dataUser.firstname = user.firstname;
         }
         if (null != user.lastname) {
-          data.lastname = user.lastname;
+          dataUser.lastname = user.lastname;
         }
         if (null != user.name) {
-          data.username = user.name;
+          dataUser.username = user.name;
         }
       }
     }
