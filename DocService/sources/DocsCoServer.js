@@ -562,7 +562,9 @@ function* publish(data, optDocId, optUserId, opt_pubsub) {
   if(needPublish) {
     var msg = JSON.stringify(data);
     var realPubsub = opt_pubsub ? opt_pubsub : pubsub;
-    realPubsub.publish(msg);
+    if (realPubsub) {
+      realPubsub.publish(msg);
+    }
   }
 }
 function* addTask(data, priority, opt_queue, opt_expiration) {
