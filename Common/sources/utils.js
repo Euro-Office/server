@@ -92,11 +92,19 @@ exports.getMillisecondsOfHour = function(date) {
   return (date.getUTCMinutes() * 60 +  date.getUTCSeconds()) * 1000 + date.getUTCMilliseconds();
 };
 exports.encodeXml = function(value) {
-  return value.replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+	return value.replace(/[<>&'"\r\n\t\xA0]/g, function (c) {
+		switch (c) {
+			case '<': return '&lt;';
+			case '>': return '&gt;';
+			case '&': return '&amp;';
+			case '\'': return '&apos;';
+			case '"': return '&quot;';
+			case '\r': return '&#xD;';
+			case '\n': return '&#xA;';
+			case '\t': return '&#x9;';
+			case '\xA0': return '&#A0;';
+		}
+	});
 };
 function fsStat(fsPath) {
   return new Promise(function(resolve, reject) {
