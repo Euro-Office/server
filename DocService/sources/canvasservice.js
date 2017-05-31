@@ -388,7 +388,7 @@ function isDisplayedImage(strName) {
     if (-1 != index) {
       if (index + findStr.length < strName.length) {
         var displayN = parseInt(strName[index + findStr.length]);
-        if (1 <= displayN && displayN <= 6) {
+        if (!isNaN(displayN)) {
           var imageIndex = index + findStr.length + 1;
           if (imageIndex == strName.indexOf("image", imageIndex))
             res = displayN;
@@ -441,18 +441,26 @@ function* commandImgurls(conn, cmd, outputData) {
       }
       var outputUrl = {url: 'error', path: 'error'};
       if (data) {
-        var format = formatChecker.getImageFormat(data);
-        var formatStr;
-        if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN == format && urlParsed) {
-          //bin, txt occur in ole object case
-          var ext = pathModule.extname(urlParsed.pathname);
-          if ('.bin' == ext) {
-            formatStr = ext.substring(1);
-          }
-        } else {
+        let format = formatChecker.getImageFormat(data);
+        let formatStr;
+        let isAllow = false;
+        if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== format) {
           formatStr = formatChecker.getStringFromFormat(format);
+          if (formatStr && -1 !== supportedFormats.indexOf(formatStr)) {
+            isAllow = true;
+          }
         }
-        if (formatStr && -1 !== supportedFormats.indexOf(formatStr)) {
+        if (!isAllow && urlParsed) {
+          //for ole object, presentation video/audio
+          let ext = pathModule.extname(urlParsed.pathname).substring(1);
+          let urlBasename = pathModule.basename(urlParsed.pathname);
+          let displayedImageName = urlBasename.substring(0, urlBasename.length - ext.length - 1);
+          if (displayedImageMap.hasOwnProperty(displayedImageName)) {
+            formatStr = ext;
+            isAllow = true;
+          }
+        }
+        if (isAllow) {
           var userid = cmd.getUserId();
           var imageIndex = cmd.getSaveIndex() + imageCount;
           imageCount++;
