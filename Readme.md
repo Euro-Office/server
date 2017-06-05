@@ -20,13 +20,13 @@ b) Java (https://java.com/en/download/). Necessary for the sdk build.
 c) MySql Server version 5.5 or later (http://dev.mysql.com/downloads/windows/installer/). When installing use the `onlyoffice` password for the `root` user.
 с) or PostgreSQL Server version 9.1 or later (https://www.postgresql.org/download/).
 
-d) Erlang (http://www.erlang.org/download.html)
+d) Erlang (https://www.erlang.org/download.html)
 
 e) RabbitMQ (https://www.rabbitmq.com/releases/rabbitmq-server/v3.5.4/rabbitmq-server-3.5.4.exe)
 
 f) Redis (https://github.com/MSOpenTech/redis/releases/download/win-2.8.2102/Redis-x64-2.8.2102.msi)
 
-g) Python 2.7.x (http://www.python.org/download/releases/2.7.3/#download)
+g) Python 2.7.x (https://www.python.org/download/releases/2.7.3/#download)
 
 h) Microsoft Visual C++ Express 2010 (necessary for the spellchecker modules build)
 
@@ -88,7 +88,7 @@ If you have any problems with or questions about [ONLYOFFICE Document Server][2]
 
   [1]: http://dev.onlyoffice.org
   [2]: https://github.com/ONLYOFFICE/DocumentServer
-  [3]: http://stackoverflow.com/questions/tagged/onlyoffice
+  [3]: https://stackoverflow.com/questions/tagged/onlyoffice
 
 ## License
 
