@@ -188,8 +188,7 @@ function* downloadFile(docId, uri, fileFrom) {
   var data = null;
   var downloadAttemptCount = 0;
   var urlParsed = url.parse(uri);
-  var hostIp = yield utils.dnsLookup(urlParsed.hostname);
-  var filterStatus = utils.checkIpFilter(hostIp, urlParsed.hostname);
+  var filterStatus = yield* utils.checkHostFilter(urlParsed.hostname);
   if (0 == filterStatus) {
     while (!res && downloadAttemptCount++ < cfgDownloadAttemptMaxCount) {
       try {

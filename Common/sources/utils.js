@@ -51,6 +51,7 @@ const jwt = require('jsonwebtoken');
 const NodeCache = require( "node-cache" );
 const ms = require('ms');
 const constants = require('./constants');
+const logger = require('./logger');
 const forwarded = require('forwarded');
 
 var configIpFilter = config.get('services.CoAuthoring.ipfilter');
@@ -602,6 +603,21 @@ function checkIpFilter(ipString, opt_hostname) {
   return status;
 }
 exports.checkIpFilter = checkIpFilter;
+function* checkHostFilter(hostname) {
+  let status = 0;
+  let hostIp;
+  try {
+    hostIp = yield dnsLookup(hostname);
+  } catch (e) {
+    status = cfgIpFilterErrorCode;
+    logger.error('dnsLookup error: hostname = %s\r\n%s', hostname, e.stack);
+  }
+  if (0 === status) {
+    status = checkIpFilter(hostIp, hostname);
+  }
+  return status;
+}
+exports.checkHostFilter = checkHostFilter;
 function checkClientIp(req, res, next) {
 	let status = 0;
 	if (cfgIpFilterEseForRequest) {
