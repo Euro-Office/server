@@ -388,7 +388,7 @@ function isDisplayedImage(strName) {
     if (-1 != index) {
       if (index + findStr.length < strName.length) {
         var displayN = parseInt(strName[index + findStr.length]);
-        if (1 <= displayN && displayN <= 6) {
+        if (!isNaN(displayN)) {
           var imageIndex = index + findStr.length + 1;
           if (imageIndex == strName.indexOf("image", imageIndex))
             res = displayN;
@@ -403,8 +403,9 @@ function* commandImgurls(conn, cmd, outputData) {
   var urls;
   var docId = cmd.getDocId();
   var errorCode = constants.NO_ERROR;
+  var outputUrls = [];
+  var isImgUrl = 'imgurl' == cmd.getCommand();
   if (!conn.user.view && !conn.isCloseCoAuthoring) {
-    var isImgUrl = 'imgurl' == cmd.getCommand();
     if (isImgUrl) {
       urls = [cmd.getData()];
       supportedFormats = cfgTypesUpload || 'jpg';
@@ -415,7 +416,6 @@ function* commandImgurls(conn, cmd, outputData) {
     //todo Promise.all()
     var displayedImageMap = {};//to make one imageIndex for ole object urls
     var imageCount = 0;
-    var outputUrls = [];
     for (var i = 0; i < urls.length; ++i) {
       var urlSource = urls[i];
       var urlParsed;
@@ -434,23 +434,33 @@ function* commandImgurls(conn, cmd, outputData) {
           data = undefined;
           logger.error('error commandImgurls download: url = %s; docId = %s\r\n%s', urlSource, docId, e.stack);
           errorCode = constants.UPLOAD_URL;
-          break;
+          if (isImgUrl) {
+            break;
+          }
         }
       }
       var outputUrl = {url: 'error', path: 'error'};
       if (data) {
-        var format = formatChecker.getImageFormat(data);
-        var formatStr;
-        if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN == format && urlParsed) {
-          //bin, txt occur in ole object case
-          var ext = pathModule.extname(urlParsed.pathname);
-          if ('.bin' == ext || '.txt' == ext) {
-            formatStr = ext.substring(1);
-          }
-        } else {
+        let format = formatChecker.getImageFormat(data);
+        let formatStr;
+        let isAllow = false;
+        if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== format) {
           formatStr = formatChecker.getStringFromFormat(format);
+          if (formatStr && -1 !== supportedFormats.indexOf(formatStr)) {
+            isAllow = true;
+          }
         }
-        if (formatStr && -1 !== supportedFormats.indexOf(formatStr)) {
+        if (!isAllow && urlParsed) {
+          //for ole object, presentation video/audio
+          let ext = pathModule.extname(urlParsed.pathname).substring(1);
+          let urlBasename = pathModule.basename(urlParsed.pathname);
+          let displayedImageName = urlBasename.substring(0, urlBasename.length - ext.length - 1);
+          if (displayedImageMap.hasOwnProperty(displayedImageName)) {
+            formatStr = ext;
+            isAllow = true;
+          }
+        }
+        if (isAllow) {
           var userid = cmd.getUserId();
           var imageIndex = cmd.getSaveIndex() + imageCount;
           imageCount++;
@@ -477,9 +487,11 @@ function* commandImgurls(conn, cmd, outputData) {
           outputUrl = {url: imgUrl, path: strLocalPath};
         }
       }
-      if (isImgUrl && ('error' === outputUrl.url || 'error' === outputUrl.path)) {
+      if (constants.NO_ERROR === errorCode && ('error' === outputUrl.url || 'error' === outputUrl.path)) {
         errorCode = constants.UPLOAD_EXTENSION;
-        break;
+        if (isImgUrl) {
+          break;
+        }
       }
       outputUrls.push(outputUrl);
     }
@@ -487,12 +499,16 @@ function* commandImgurls(conn, cmd, outputData) {
     logger.error('error commandImgurls: docId = %s access deny', docId);
     errorCode = errorCode.UPLOAD;
   }
-  if (constants.NO_ERROR !== errorCode) {
+  if (constants.NO_ERROR !== errorCode && 0 == outputUrls.length) {
     outputData.setStatus('err');
     outputData.setData(errorCode);
   } else {
     outputData.setStatus('ok');
-    outputData.setData(outputUrls);
+    if (isImgUrl) {
+       outputData.setData(outputUrls);
+    } else {
+      outputData.setData({error: errorCode, urls: outputUrls});
+    }
   }
 }
 function* commandPathUrl(conn, cmd, outputData) {

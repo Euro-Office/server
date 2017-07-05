@@ -51,6 +51,7 @@ function InputCommand(data) {
     this['saveindex'] = data['saveindex'];
     this['codepage'] = data['codepage'];
     this['delimiter'] = data['delimiter'];
+    this['delimiterChar'] = data['delimiterChar'];
     this['embeddedfonts'] = data['embeddedfonts'];
     if (data['mailmergesend']) {
       this['mailmergesend'] = new CMailMergeSendData(data['mailmergesend']);
@@ -99,6 +100,7 @@ function InputCommand(data) {
     //nullable
     this['codepage'] = undefined;
     this['delimiter'] = undefined;
+    this['delimiterChar'] = undefined;
     this['embeddedfonts'] = undefined;//bool
     this['mailmergesend'] = undefined;
     this['thumbnail'] = undefined;
@@ -200,6 +202,12 @@ InputCommand.prototype = {
   },
   setDelimiter: function(data) {
     this['delimiter'] = data;
+  },
+  getDelimiterChar: function() {
+    return this['delimiterChar'];
+  },
+  setDelimiterChar: function(data) {
+    this['delimiterChar'] = data;
   },
   getEmbeddedFonts: function() {
     return this['embeddedfonts'];

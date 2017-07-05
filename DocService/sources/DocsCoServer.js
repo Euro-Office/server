@@ -562,7 +562,9 @@ function* publish(data, optDocId, optUserId, opt_pubsub) {
   if(needPublish) {
     var msg = JSON.stringify(data);
     var realPubsub = opt_pubsub ? opt_pubsub : pubsub;
-    realPubsub.publish(msg);
+    if (realPubsub) {
+      realPubsub.publish(msg);
+    }
   }
 }
 function* addTask(data, priority, opt_queue, opt_expiration) {
@@ -815,17 +817,15 @@ function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl, 
   }
 
   if (c_oAscChangeBase.No !== bChangeBase) {
-    if (c_oAscServerStatus.Editing === status && c_oAscChangeBase.All === bChangeBase) {
-      // Добавить в базу
-      var updateMask = new taskResult.TaskResultData();
-      updateMask.key = docId;
-      updateMask.callback = '';
-      updateMask.baseurl = '';
+    //update callback even if the connection is closed to avoid script:
+    //open->make changes->disconnect->subscription from community->reconnect
+    if (c_oAscChangeBase.All === bChangeBase) {
+      //always override callback to avoid expired callbacks
       var updateTask = new taskResult.TaskResultData();
       updateTask.key = docId;
       updateTask.callback = callback.href;
       updateTask.baseurl = baseUrl;
-      var updateIfRes = yield taskResult.updateIf(updateTask, updateMask);
+      var updateIfRes = yield taskResult.update(updateTask);
       if (updateIfRes.affectedRows > 0) {
         logger.debug('sendStatusDocument updateIf: docId = %s', docId);
       } else {
@@ -903,16 +903,16 @@ function* bindEvents(docId, callback, baseUrl, opt_userAction, opt_userData) {
   // - если есть пользователи, то просто добавляем в базу
   var bChangeBase;
   var oCallbackUrl;
-  var getRes = yield* getCallback(docId);
-  if (getRes) {
+  if (!callback) {
+    var getRes = yield* getCallback(docId);
     oCallbackUrl = getRes.server;
     bChangeBase = c_oAscChangeBase.Delete;
   } else {
     oCallbackUrl = parseUrl(callback);
     bChangeBase = c_oAscChangeBase.All;
     if (null !== oCallbackUrl) {
-      var hostIp = yield utils.dnsLookup(oCallbackUrl.host);
-      if (utils.checkIpFilter(hostIp, oCallbackUrl.host) > 0) {
+      let filterStatus = yield* utils.checkHostFilter(oCallbackUrl.host);
+      if (filterStatus > 0) {
         logger.error('checkIpFilter error: docId = %s;url = %s', docId, callback);
         //todo add new error type
         oCallbackUrl = null;
@@ -1047,7 +1047,7 @@ exports.install = function(server, callbackFunction) {
     urlParse = new RegExp("^/doc/([" + constants.DOC_ID_PATTERN + "]*)/c.+", 'i');
 
   sockjs_echo.on('connection', function(conn) {
-    if (null == conn) {
+    if (!conn) {
       logger.error("null == conn");
       return;
     }

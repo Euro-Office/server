@@ -218,6 +218,8 @@ function convertRequest(req, res) {
       cmd.setOutputFormat(formatChecker.getFormatFromString(outputtype));
       cmd.setCodepage(commonDefines.c_oAscEncodingsMap[params.codePage] || commonDefines.c_oAscCodePageUtf8);
       cmd.setDelimiter(parseIntParam(params.delimiter) || commonDefines.c_oAscCsvDelimiter.Comma);
+      if(undefined != params.delimiterChar)
+        cmd.setDelimiterChar(params.delimiterChar);
       cmd.setDoctParams(parseIntParam(params.doctparams));
       cmd.setPassword(params.password);
       var thumbnail = params.thumbnail;

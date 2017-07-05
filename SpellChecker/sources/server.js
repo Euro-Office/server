@@ -32,17 +32,16 @@
 
 'use strict';
 
-var cluster = require('cluster');
-var config = require('config').get('SpellChecker');
+const cluster = require('cluster');
+const config = require('config').get('SpellChecker');
 
 //process.env.NODE_ENV = config.get('server.mode');
 
-var logger = require('./../../Common/sources/logger');
-var spellCheck;
+const logger = require('./../../Common/sources/logger');
 
-var idCheckInterval, c_nCheckHealth = 60000, c_sCheckWord = 'color', c_sCheckLang = 1033;
-var canStartCheck = true;
-var statusCheckHealth = true;
+const c_nCheckHealth = 60000, c_sCheckWord = 'color', c_sCheckLang = 1033;
+let idCheckInterval, canStartCheck = true;
+let statusCheckHealth = true;
 function checkHealth (worker) {
 	logger.info('checkHealth');
 	if (!statusCheckHealth) {
@@ -58,7 +57,7 @@ function endCheckHealth (msg) {
 	statusCheckHealth = true;
 }
 
-var workersCount = 1;	// ToDo Пока только 1 процесс будем задействовать. Но в будующем стоит рассмотреть несколько.
+const workersCount = 1;	// ToDo Пока только 1 процесс будем задействовать. Но в будующем стоит рассмотреть несколько.
 if (cluster.isMaster) {
 	logger.warn('start cluster with %s workers', workersCount);
 	cluster.on('listening', function(worker) {
@@ -68,9 +67,8 @@ if (cluster.isMaster) {
 			worker.on('message', function(msg){endCheckHealth(msg);});
 		}
 	});
-	for (var nIndexWorker = 0; nIndexWorker < workersCount; ++nIndexWorker) {
-		var worker = cluster.fork().process;
-		logger.warn('worker %s started.', worker.pid);
+	for (let nIndexWorker = 0; nIndexWorker < workersCount; ++nIndexWorker) {
+		logger.warn('worker %s started.', cluster.fork().process.pid);
 	}
 
 	cluster.on('exit', (worker, code, signal) => {
@@ -81,22 +79,23 @@ if (cluster.isMaster) {
 		cluster.fork();
 	});
 } else {
-	var	express = require('express'),
+	const express = require('express'),
 		http = require('http'),
 		https = require('https'),
 		fs = require("fs"),
 		app = express(),
-		server = null;
-	spellCheck  = require('./spellCheck');
+		spellCheck  = require('./spellCheck');
+	let server = null;
+
 
 	logger.warn('Express server starting...');
 
 	if (config.has('ssl')) {
-		var privateKey = fs.readFileSync(config.get('ssl.key')).toString();
-		var certificateKey = fs.readFileSync(config.get('ssl.cert')).toString();
-		var trustedCertificate = fs.readFileSync(config.get('ssl.ca')).toString();
+		const privateKey = fs.readFileSync(config.get('ssl.key')).toString();
+		const certificateKey = fs.readFileSync(config.get('ssl.cert')).toString();
+		const trustedCertificate = fs.readFileSync(config.get('ssl.ca')).toString();
 		//See detailed options format here: http://nodejs.org/api/tls.html#tls_tls_createserver_options_secureconnectionlistener
-		var options = {key: privateKey, cert: certificateKey, ca: [trustedCertificate]};
+		const options = {key: privateKey, cert: certificateKey, ca: [trustedCertificate]};
 
 		server = https.createServer(options, app);
 	} else {

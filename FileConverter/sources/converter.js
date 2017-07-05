@@ -79,8 +79,9 @@ function TaskQueueDataConvert(task) {
   this.fileFrom = null;
   this.fileTo = null;
   this.formatTo = cmd.outputformat;
-  this.csvTxtEncoding = cmd.codepage;
-  this.csvDelimiter = cmd.delimiter;
+  this.csvTxtEncoding = cmd.getCodepage();
+  this.csvDelimiter = cmd.getDelimiter();
+  this.csvDelimiterChar = cmd.getDelimiterChar();
   this.paid = task.getPaid();
   this.embeddedFonts = cmd.embeddedfonts;
   this.fromChanges = task.getFromChanges();
@@ -108,6 +109,7 @@ TaskQueueDataConvert.prototype = {
     xml += this.serializeXmlProp('m_nFormatTo', this.formatTo);
     xml += this.serializeXmlProp('m_nCsvTxtEncoding', this.csvTxtEncoding);
     xml += this.serializeXmlProp('m_nCsvDelimiter', this.csvDelimiter);
+    xml += this.serializeXmlProp('m_nCsvDelimiterChar', this.csvDelimiterChar);
     xml += this.serializeXmlProp('m_bPaid', this.paid);
     xml += this.serializeXmlProp('m_bEmbeddedFonts', this.embeddedFonts);
     xml += this.serializeXmlProp('m_bFromChanges', this.fromChanges);
@@ -186,8 +188,7 @@ function* downloadFile(docId, uri, fileFrom) {
   var data = null;
   var downloadAttemptCount = 0;
   var urlParsed = url.parse(uri);
-  var hostIp = yield utils.dnsLookup(urlParsed.hostname);
-  var filterStatus = utils.checkIpFilter(hostIp, urlParsed.hostname);
+  var filterStatus = yield* utils.checkHostFilter(urlParsed.hostname);
   if (0 == filterStatus) {
     while (!res && downloadAttemptCount++ < cfgDownloadAttemptMaxCount) {
       try {

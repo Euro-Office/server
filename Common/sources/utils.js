@@ -51,6 +51,7 @@ const jwt = require('jsonwebtoken');
 const NodeCache = require( "node-cache" );
 const ms = require('ms');
 const constants = require('./constants');
+const logger = require('./logger');
 const forwarded = require('forwarded');
 
 var configIpFilter = config.get('services.CoAuthoring.ipfilter');
@@ -92,11 +93,19 @@ exports.getMillisecondsOfHour = function(date) {
   return (date.getUTCMinutes() * 60 +  date.getUTCSeconds()) * 1000 + date.getUTCMilliseconds();
 };
 exports.encodeXml = function(value) {
-  return value.replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+	return value.replace(/[<>&'"\r\n\t\xA0]/g, function (c) {
+		switch (c) {
+			case '<': return '&lt;';
+			case '>': return '&gt;';
+			case '&': return '&amp;';
+			case '\'': return '&apos;';
+			case '"': return '&quot;';
+			case '\r': return '&#xD;';
+			case '\n': return '&#xA;';
+			case '\t': return '&#x9;';
+			case '\xA0': return '&#A0;';
+		}
+	});
 };
 function fsStat(fsPath) {
   return new Promise(function(resolve, reject) {
@@ -323,7 +332,6 @@ exports.mapAscServerErrorToOldError = function(error) {
     case constants.CONVERT_PARAMS :
     case constants.CONVERT_LIBREOFFICE :
     case constants.CONVERT_CORRUPTED :
-    case constants.CONVERT_MS_OFFCRYPTO :
     case constants.CONVERT_UNKNOWN_FORMAT :
     case constants.CONVERT_READ_FILE :
     case constants.CONVERT :
@@ -595,6 +603,21 @@ function checkIpFilter(ipString, opt_hostname) {
   return status;
 }
 exports.checkIpFilter = checkIpFilter;
+function* checkHostFilter(hostname) {
+  let status = 0;
+  let hostIp;
+  try {
+    hostIp = yield dnsLookup(hostname);
+  } catch (e) {
+    status = cfgIpFilterErrorCode;
+    logger.error('dnsLookup error: hostname = %s\r\n%s', hostname, e.stack);
+  }
+  if (0 === status) {
+    status = checkIpFilter(hostIp, hostname);
+  }
+  return status;
+}
+exports.checkHostFilter = checkHostFilter;
 function checkClientIp(req, res, next) {
 	let status = 0;
 	if (cfgIpFilterEseForRequest) {

@@ -3,11 +3,8 @@
     "filePath": "/etc/onlyoffice/documentserver/log4js/production.json"
   },
   "storage": {
-    "name": "storage-fs",
     "fs": {
-      "folderPath": "/var/lib/onlyoffice/documentserver/App_Data/cache/files",
-      "urlExpires": 2592000,
-      "secretString": "onlyoffice"
+      "folderPath": "/var/lib/onlyoffice/documentserver/App_Data/cache/files"
     }
   },
   "services": {
