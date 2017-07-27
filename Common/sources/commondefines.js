@@ -81,6 +81,7 @@ function InputCommand(data) {
     this['outputurls'] = data['outputurls'];
     this['closeonerror'] = data['closeonerror'];
     this['rediskey'] = data['rediskey'];
+    this['nobase64'] = data['nobase64'];
   } else {
     this['c'] = undefined;//string command
     this['id'] = undefined;//string document id
@@ -119,6 +120,7 @@ function InputCommand(data) {
     this['outputurls'] = undefined;
     this['closeonerror'] = undefined;
     this['rediskey'] = undefined;
+    this['nobase64'] = undefined;
   }
 }
 InputCommand.prototype = {
@@ -310,6 +312,12 @@ InputCommand.prototype = {
   },
   setRedisKey: function(data) {
     this['rediskey'] = data;
+  },
+  getNoBase64: function() {
+    return this['nobase64'];
+  },
+  setNoBase64: function(data) {
+    this['nobase64'] = data;
   }
 };
 
