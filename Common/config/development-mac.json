@@ -30,6 +30,9 @@
           "/web-apps": {
             "path": "../../web-apps"
           },
+          "/web-apps-pro": {
+            "path": "../../../web-apps-pro"
+          },
           "/sdkjs-plugins": {
             "path": "../../sdkjs-plugins"
           },
