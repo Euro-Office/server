@@ -251,7 +251,7 @@ if (cluster.isMaster) {
 				pluginsPath = staticContent[pluginsUri].path;
 			}
 
-			let baseUrl = utils.getBaseUrlByRequest(req);
+			let baseUrl = '../../../..';
 			utils.listFolders(pluginsPath, true).then((values) => {
 				return co(function*() {
 					const configFile = 'config.json';
