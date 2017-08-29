@@ -38,6 +38,7 @@ var url = require('url');
 var childProcess = require('child_process');
 var co = require('co');
 var config = require('config');
+var spawnAsync = require('@expo/spawn-async');
 var configConverter = config.get('FileConverter.converter');
 
 var commonDefines = require('./../../Common/sources/commondefines');
@@ -383,14 +384,14 @@ function* processUploadToStorageChunk(list, dir, storagePath) {
 }
 function writeProcessOutputToLog(docId, childRes, isDebug) {
   if (childRes) {
-    if (childRes.stdout) {
+    if (undefined !== childRes.stdout) {
       if (isDebug) {
         logger.debug('stdout (id=%s):%s', docId, childRes.stdout);
       } else {
         logger.error('stdout (id=%s):%s', docId, childRes.stdout);
       }
     }
-    if (childRes.stderr) {
+    if (undefined !== childRes.stderr) {
       if (isDebug) {
         logger.debug('stderr (id=%s):%s', docId, childRes.stderr);
       } else {
@@ -399,21 +400,17 @@ function writeProcessOutputToLog(docId, childRes, isDebug) {
     }
   }
 }
-function* postProcess(cmd, dataConvert, tempDirs, childRes, error) {
+function* postProcess(cmd, dataConvert, tempDirs, childRes, error, isTimeout) {
   var exitCode = 0;
   var exitSignal = null;
-  var errorCode = null;
   if(childRes) {
     exitCode = childRes.status;
     exitSignal = childRes.signal;
-    if (childRes.error) {
-      errorCode = childRes.error.code;
-    }
   }
   if (0 !== exitCode || null !== exitSignal) {
     if (-1 !== exitCodesReturn.indexOf(-exitCode)) {
       error = -exitCode;
-    } else if('ETIMEDOUT' === errorCode) {
+    } else if(isTimeout) {
       error = constants.CONVERT_TIMEOUT;
     } else {
       error = constants.CONVERT;
@@ -519,6 +516,7 @@ function* ExecuteTask(task) {
     error = constants.UNKNOWN;
   }
   var childRes = null;
+  let isTimeout = false;
   if (constants.NO_ERROR === error) {
     if(constants.AVS_OFFICESTUDIO_FILE_OTHER_HTMLZIP === dataConvert.formatTo && cmd.getSaveKey() && !dataConvert.mailMergeSend) {
       //todo заглушка.вся конвертация на клиенте, но нет простого механизма сохранения на клиенте
@@ -533,15 +531,31 @@ function* ExecuteTask(task) {
         childArgs = [];
       }
       childArgs.push(paramsFile);
-      var waitMS = task.getVisibilityTimeout() * 1000 - (new Date().getTime() - getTaskTime.getTime());
-      childRes = childProcess.spawnSync(cfgFilePath, childArgs, {timeout: waitMS});
+      let timeoutId;
+      try {
+        let spawnAsyncPromise = spawnAsync(cfgFilePath, childArgs);
+        childRes = spawnAsyncPromise.child;
+        let waitMS = task.getVisibilityTimeout() * 1000 - (new Date().getTime() - getTaskTime.getTime());
+        timeoutId = setTimeout(function() {
+          isTimeout = true;
+          timeoutId = undefined;
+          childRes.kill();
+        }, waitMS);
+        childRes = yield spawnAsyncPromise;
+      } catch (err) {
+        logger.error('error spawnAsync(id=%s)\r\n%s', cmd.getDocId(), err.stack);
+        childRes = err;
+      }
+      if (undefined !== timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
     if(clientStatsD) {
       clientStatsD.timing('conv.spawnSync', new Date() - curDate);
       curDate = new Date();
     }
   }
-  resData = yield* postProcess(cmd, dataConvert, tempDirs, childRes, error);
+  resData = yield* postProcess(cmd, dataConvert, tempDirs, childRes, error, isTimeout);
   logger.debug('postProcess (id=%s)', dataConvert.key);
   if(clientStatsD) {
     clientStatsD.timing('conv.postProcess', new Date() - curDate);
