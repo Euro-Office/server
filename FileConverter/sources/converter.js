@@ -517,6 +517,15 @@ function* ExecuteTask(task) {
       curDate = new Date();
     }
     yield* processDownloadFromStorage(dataConvert, cmd, task, tempDirs);
+  } else if (cmd.getForgotten()) {
+    yield* downloadFileFromStorage(cmd.getDocId(), cmd.getForgotten(), tempDirs.source);
+    logger.debug('downloadFileFromStorage complete(id=%s)', dataConvert.key);
+    let list = yield utils.listObjects(tempDirs.source, false);
+    if (list.length > 0) {
+      dataConvert.fileFrom = list[0];
+    } else {
+      error = constants.UNKNOWN;
+    }
   } else {
     error = constants.UNKNOWN;
   }

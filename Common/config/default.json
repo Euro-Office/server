@@ -60,7 +60,9 @@
 				"callbackRequestTimeout": 120,
 				"healthcheckfilepath": "../public/healthcheck.docx",
 				"savetimeoutdelay": 5000,
-				"edit_singleton": false
+				"edit_singleton": false,
+				"forgottenfiles": "forgotten",
+				"forgottenfilesname": "output"
 			},
 			"autoAssembly": {
 				"enable": false,
