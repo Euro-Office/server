@@ -59,6 +59,7 @@ var cfgFilePath = configConverter.get('filePath');
 var cfgArgs = configConverter.get('args');
 var cfgErrorFiles = configConverter.get('errorfiles');
 var cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
+const cfgForgottenFilesName = config.get('services.CoAuthoring.server.forgottenfilesname');
 
 //windows limit 512(2048) https://msdn.microsoft.com/en-us/library/6e3b887c.aspx
 //Ubuntu 14.04 limit 4096 http://underyx.me/2015/05/18/raising-the-maximum-number-of-file-descriptors.html
@@ -523,6 +524,9 @@ function* ExecuteTask(task) {
     let list = yield utils.listObjects(tempDirs.source, false);
     if (list.length > 0) {
       dataConvert.fileFrom = list[0];
+      //store indicator file to determine if opening was from the forgotten file
+      var forgottenMarkPath = tempDirs.result + '/' + cfgForgottenFilesName + '.txt';
+      fs.writeFileSync(forgottenMarkPath, cfgForgottenFilesName, {encoding: 'utf8'});
     } else {
       error = constants.UNKNOWN;
     }

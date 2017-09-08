@@ -589,7 +589,14 @@ function* commandSfcCallback(cmd, isSfcm) {
       try {
         let forgottenId = cfgForgottenFiles + '/' + docId;
         let forgotten = yield storage.listObjects(forgottenId);
-        if (0 === forgotten.length) {
+        let isSendHistory = 0 === forgotten.length;
+        if (!isSendHistory) {
+          //check indicator file to determine if opening was from the forgotten file
+          var forgottenMarkPath = docId + '/' + cfgForgottenFilesName + '.txt';
+          var forgottenMark = yield storage.listObjects(forgottenMarkPath);
+          isSendHistory = 0 === forgottenMark.length;
+        }
+        if (isSendHistory) {
           //don't send history info because changes isn't from file in storage
           var data = yield storage.getObject(savePathHistory);
           outputSfc.setChangeHistory(JSON.parse(data.toString('utf-8')));
