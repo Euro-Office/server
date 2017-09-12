@@ -269,7 +269,7 @@ if (cluster.isMaster) {
 						}
 					}
 
-					userPlugins = {'url': '', 'pluginsData': result};
+					userPlugins = {'url': '', 'pluginsData': result, 'startup': []};
 					sendUserPlugins(res, userPlugins);
 				});
 			});
