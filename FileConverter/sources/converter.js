@@ -396,9 +396,8 @@ function* processUploadToStorage(dir, storagePath) {
 }
 function* processUploadToStorageChunk(list, dir, storagePath) {
   yield Promise.all(list.map(function (curValue) {
-    var data = fs.readFileSync(curValue);
-    var localValue = storagePath + '/' + curValue.substring(dir.length + 1);
-    return storage.putObject(localValue, data, data.length);
+    let localValue = storagePath + '/' + curValue.substring(dir.length + 1);
+    return storage.uploadObject(localValue, curValue);
   }));
 }
 function writeProcessOutputToLog(docId, childRes, isDebug) {

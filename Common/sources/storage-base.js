@@ -45,6 +45,12 @@ exports.getObject = function(strPath) {
 exports.putObject = function(strPath, buffer, contentLength) {
   return storage.putObject(getStoragePath(strPath), buffer, contentLength);
 };
+exports.uploadObject = function(strPath, filePath) {
+  return storage.uploadObject(strPath, filePath);
+};
+exports.copyObject = function(sourceKey, destinationKey) {
+  return storage.copyObject(sourceKey, destinationKey);
+};
 exports.listObjects = function(strPath) {
   return storage.listObjects(getStoragePath(strPath)).catch(function(e) {
     logger.error('storage.listObjects:\r\n%s', e.stack);

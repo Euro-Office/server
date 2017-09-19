@@ -698,10 +698,8 @@ function* commandSfcCallback(cmd, isSfcm) {
   }
   if (storeForgotten && (!isError || isErrorCorrupted)) {
     try {
-      //todo implement storage.copy
-      let data = yield storage.getObject(savePathDoc);
       let forgottenName = cfgForgottenFilesName + pathModule.extname(cmd.getOutputPath());
-      yield storage.putObject(cfgForgottenFiles + '/' + docId + '/' + forgottenName, data, data.length);
+      yield storage.copyObject(savePathDoc, cfgForgottenFiles + '/' + docId + '/' + forgottenName);
     } catch (err) {
       logger.error('Empty storeForgotten: docId = %s\r\n%s', docId, err.stack);
     }

@@ -12,6 +12,7 @@
     "dnscache": "^1.0.1",
     "escape-string-regexp": "^1.0.5",
     "forwarded": "^0.1.0",
+    "fs-extra": "^4.0.2",
     "ipaddr.js": "^1.2.0",
     "jsonwebtoken": "^7.1.9",
     "log4js": "^0.6.38",

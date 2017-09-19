@@ -146,6 +146,24 @@ exports.putObject = function(strPath, buffer, contentLength) {
     });
   });
 };
+exports.uploadObject = function(strPath, filePath) {
+  return new Promise(function(resolve, reject) {
+    fs.readFile(filePath, (err, data) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(data);
+      }
+    });
+  }).then(function(data) {
+    return exports.putObject(strPath, data, data.length);
+  });
+};
+exports.copyObject = function(sourceKey, destinationKey) {
+  return exports.getObject(sourceKey).then(function(data) {
+    return exports.putObject(destinationKey, data, data.length);
+  });
+};
 exports.listObjects = function(strPath) {
   return new Promise(function(resolve, reject) {
     var params = {Bucket: cfgBucketName, Prefix: getFilePath(strPath)};
