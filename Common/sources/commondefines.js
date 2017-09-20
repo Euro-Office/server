@@ -82,7 +82,6 @@ function InputCommand(data) {
     this['closeonerror'] = data['closeonerror'];
     this['rediskey'] = data['rediskey'];
     this['nobase64'] = data['nobase64'];
-    this['savexfile'] = data['savexfile'];
     this['forgotten'] = data['forgotten'];
   } else {
     this['c'] = undefined;//string command
@@ -123,7 +122,6 @@ function InputCommand(data) {
     this['closeonerror'] = undefined;
     this['rediskey'] = undefined;
     this['nobase64'] = true;
-    this['savexfile'] = undefined;
     this['forgotten'] = undefined;
   }
 }
@@ -328,12 +326,6 @@ InputCommand.prototype = {
   },
   setNoBase64: function(data) {
     this['nobase64'] = data;
-  },
-  getSaveXFile: function() {
-    return this['savexfile'];
-  },
-  setSaveXFile: function(data) {
-    this['savexfile'] = data;
   }
 };
 

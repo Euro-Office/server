@@ -1272,6 +1272,7 @@ exports.install = function(server, callbackFunction) {
             //more effective to send file without sfc, but this method is simpler by code
             let forgotten = yield storage.listObjects(cfgForgottenFiles + '/' + docId);
             needSaveChanges = forgotten.length > 0;
+            logger.debug('closeDocument hasForgotten %s: docId = %s', needSaveChanges, docId);
           }
           if (needSaveChanges) {
             // Send changes to save server
@@ -1929,6 +1930,7 @@ exports.install = function(server, callbackFunction) {
           //check forgotten file
           let forgotten = yield storage.listObjects(cfgForgottenFiles + '/' + docId);
           hasForgotten = forgotten.length > 0;
+          logger.debug('endAuth hasForgotten %s: docId = %s', hasForgotten, docId);
         }
       }
     }
