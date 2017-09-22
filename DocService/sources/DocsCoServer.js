@@ -1731,7 +1731,7 @@ exports.install = function(server, callbackFunction) {
     }
   }
   function fillVersionHistoryFromJwt(decoded, cmd) {
-    if (decoded.changesUrl && decoded.previous) {
+    if (decoded.changesUrl && decoded.previous && (cmd.getServerVersion() === commonDefines.buildVersion)) {
       if (decoded.previous.url) {
         cmd.setUrl(decoded.previous.url);
       }
