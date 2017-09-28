@@ -17,7 +17,7 @@
 		"name": "storage-fs",
 		"fs": {
 			"folderPath": "",
-			"urlExpires": 2592000,
+			"urlExpires": 900,
 			"secretString": "onlyoffice"
 		},
 		"region": "",
@@ -114,7 +114,7 @@
 				"filesCron": "00 00 */1 * * *",
 				"filesremovedatonce": 100,
 				"sessionidle": "0",
-				"sessionabsolute": "0",
+				"sessionabsolute": "30d",
 				"sessionclosecommand": "2m",
 				"pemStdTTL": "1h",
 				"pemCheckPeriod": "10m"

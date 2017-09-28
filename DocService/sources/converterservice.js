@@ -59,7 +59,7 @@ function* getConvertStatus(cmd, selectRes, baseUrl, fileTo) {
     var row = selectRes[0];
     switch (row.status) {
       case taskResult.FileStatus.Ok:
-        status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + fileTo);
+        status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + fileTo, commonDefines.c_oAscUrlTypes.Temporary);
         break;
       case taskResult.FileStatus.Err:
       case taskResult.FileStatus.ErrToReload:
