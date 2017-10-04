@@ -246,6 +246,7 @@ if (cluster.isMaster) {
 			let staticContent = config.get('server.static_content');
 			let pluginsUri = config.get('plugins.uri');
 			let pluginsPath = undefined;
+			let pluginsAutostart = config.get('plugins.autostart');
 
 			if (staticContent[pluginsUri]) {
 				pluginsPath = staticContent[pluginsUri].path;
@@ -269,7 +270,7 @@ if (cluster.isMaster) {
 						}
 					}
 
-					userPlugins = {'url': '', 'pluginsData': result, 'autostart': []};
+					userPlugins = {'url': '', 'pluginsData': result, 'autostart': pluginsAutostart};
 					sendUserPlugins(res, userPlugins);
 				});
 			});
