@@ -80,6 +80,7 @@ function InputCommand(data) {
     this['password'] = data['password'];
     this['outputurls'] = data['outputurls'];
     this['closeonerror'] = data['closeonerror'];
+    this['serverVersion'] = data['serverVersion'];
     this['rediskey'] = data['rediskey'];
     this['nobase64'] = data['nobase64'];
     this['forgotten'] = data['forgotten'];
@@ -120,6 +121,7 @@ function InputCommand(data) {
     this['password'] = undefined;
     this['outputurls'] = undefined;
     this['closeonerror'] = undefined;
+    this['serverVersion'] = undefined;
     this['rediskey'] = undefined;
     this['nobase64'] = true;
     this['forgotten'] = undefined;
@@ -314,6 +316,12 @@ InputCommand.prototype = {
   },
   setCloseOnError: function(data) {
     this['closeonerror'] = data;
+  },
+  getServerVersion: function() {
+    return this['serverVersion'];
+  },
+  setServerVersion: function(data) {
+    this['serverVersion'] = data;
   },
   getRedisKey: function() {
     return this['rediskey'];

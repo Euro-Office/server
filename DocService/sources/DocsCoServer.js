@@ -763,14 +763,13 @@ function handleDeadLetter(data) {
   return co(function*() {
     let docId = 'null';
     try {
-      logger.debug('handleDeadLetter start: docId = %s %s', docId, data);
       var isRequeued = false;
       let task = new commonDefines.TaskQueueData(JSON.parse(data));
       if (task) {
         let cmd = task.getCmd();
         docId = cmd.getDocId();
+        logger.warn('handleDeadLetter start: docId = %s %s', docId, data);
         let forceSave = cmd.getForceSave();
-        //todo requeue other tasks
         if (forceSave && commonDefines.c_oAscForceSaveTypes.Timeout == forceSave.getType()) {
           let lastSave = yield* getLastSave(docId);
           //check that there are no new changes
@@ -779,11 +778,15 @@ function handleDeadLetter(data) {
             yield* addTask(task, constants.QUEUE_PRIORITY_VERY_LOW, undefined, FORCE_SAVE_EXPIRATION);
             isRequeued = true;
           }
+        } else {
+          //simulate error response
+          cmd.setStatusInfo(constants.CONVERT_DEAD_LETTER);
+          canvasService.receiveTask(JSON.stringify(task))
         }
       }
-      logger.debug('handleDeadLetter end: docId = %s; requeue = %s', docId, isRequeued);
+      logger.warn('handleDeadLetter end: docId = %s; requeue = %s', docId, isRequeued);
     } catch (err) {
-      logger.debug('handleDeadLetter error: docId = %s\r\n%s', docId, err.stack);
+      logger.error('handleDeadLetter error: docId = %s\r\n%s', docId, err.stack);
     }
   });
 }
@@ -1201,6 +1204,7 @@ exports.install = function(server, callbackFunction) {
       return;
     }
     var hvals;
+    let participantsTimestamp;
     var tmpUser = conn.user;
     var isView = tmpUser.view;
     logger.info("Connection closed or timed out: userId = %s isCloseConnection = %s docId = %s", tmpUser.id, isCloseConnection, docId);
@@ -1219,6 +1223,7 @@ exports.install = function(server, callbackFunction) {
                                         ['zrem', redisKeyPresenceSet + docId, tmpUser.id]]);
         yield utils.promiseRedis(multi, multi.exec);
         hvals = yield* getAllPresence(docId);
+        participantsTimestamp = Date.now();
         if (hvals.length <= 0) {
           yield utils.promiseRedis(redisClient, redisClient.zrem, redisKeyDocuments, docId);
         }
@@ -1243,7 +1248,11 @@ exports.install = function(server, callbackFunction) {
       //revert old view to send event
       var tmpView = tmpUser.view;
       tmpUser.view = isView;
-      yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, user: tmpUser, state: false}, docId, tmpUser.id);
+      let participants = yield* getParticipantMap(docId, undefined, undefined, hvals);
+      if (!participantsTimestamp) {
+        participantsTimestamp = Date.now();
+      }
+      yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, userId: tmpUser.id, participantsTimestamp: participantsTimestamp, participants: participants}, docId, tmpUser.id);
       tmpUser.view = tmpView;
 
       // Для данного пользователя снимаем лок с сохранения
@@ -1392,9 +1401,14 @@ exports.install = function(server, callbackFunction) {
     return userLocks;
   }
 
-  function* getParticipantMap(docId, opt_userId, opt_connInfo) {
+  function* getParticipantMap(docId, opt_userId, opt_connInfo, opt_hvals) {
     var participantsMap = [];
-    var hvals = yield* getAllPresence(docId, opt_userId, opt_connInfo);
+    let hvals;
+    if (opt_hvals) {
+      hvals = opt_hvals;
+    } else {
+      hvals = yield* getAllPresence(docId, opt_userId, opt_connInfo);
+    }
     for (var i = 0; i < hvals.length; ++i) {
       var elem = JSON.parse(hvals[i]);
       if (!elem.isCloseCoAuthoring) {
@@ -1444,8 +1458,9 @@ exports.install = function(server, callbackFunction) {
     _.each(participants, function(participant) {
       sendData(participant, {
         type: "connectState",
-        state: data.state,
-        user: data.user
+        participantsTimestamp: data.participantsTimestamp,
+        participants: data.participants,
+        waitAuth: !!data.waitAuthUserId
       });
     });
   }
@@ -1454,6 +1469,19 @@ exports.install = function(server, callbackFunction) {
     logger.error('error description: docId = %s errorId = %s', conn.docId, errorId);
     conn.isCiriticalError = true;
     sendData(conn, {type: 'error', description: errorId});
+  }
+
+  function* sendFileErrorAuth(conn, sessionId, errorId) {
+    conn.sessionId = sessionId;//restore old
+    //Kill previous connections
+    connections = _.reject(connections, function(el) {
+      return el.sessionId === sessionId;//Delete this connection
+    });
+    // Кладем в массив, т.к. нам нужно отправлять данные для открытия/сохранения документа
+    connections.push(conn);
+    yield* updatePresence(conn.docId, conn.user.id, getConnectionInfo(conn));
+
+    sendFileError(conn, errorId);
   }
 
   // Пересчет только для чужих Lock при сохранении на клиенте, который добавлял/удалял строки или столбцы
@@ -1703,7 +1731,7 @@ exports.install = function(server, callbackFunction) {
     }
   }
   function fillVersionHistoryFromJwt(decoded, cmd) {
-    if (decoded.changesUrl && decoded.previous) {
+    if (decoded.changesUrl && decoded.previous && (cmd.getServerVersion() === commonDefines.buildVersion)) {
       if (decoded.previous.url) {
         cmd.setUrl(decoded.previous.url);
       }
@@ -1799,6 +1827,7 @@ exports.install = function(server, callbackFunction) {
 
       // Ситуация, когда пользователь уже отключен от совместного редактирования
       if (bIsRestore && data.isCloseCoAuthoring) {
+        conn.sessionId = data.sessionId;//restore old
         // Удаляем предыдущие соединения
         connections = _.reject(connections, function(el) {
           return el.sessionId === data.sessionId;//Delete this connection
@@ -1839,16 +1868,16 @@ exports.install = function(server, callbackFunction) {
               var updateIfRes = yield taskResult.updateIf(updateTask, updateMask);
               if (!(updateIfRes.affectedRows > 0)) {
                 // error version
-                sendFileError(conn, 'Update Version error');
+                yield* sendFileErrorAuth(conn, data.sessionId, 'Update Version error');
                 return;
               }
             } else if (taskResult.FileStatus.UpdateVersion === status) {
               // error version
-              sendFileError(conn, 'Update Version error');
+              yield* sendFileErrorAuth(conn, data.sessionId, 'Update Version error');
               return;
             } else {
               // Other error
-              sendFileError(conn, 'Other error');
+              yield* sendFileErrorAuth(conn, data.sessionId, 'Other error');
               return;
             }
 
@@ -1870,14 +1899,14 @@ exports.install = function(server, callbackFunction) {
               if (arrayBlocks && (0 === arrayBlocks.length || getLockRes)) {
                 yield* authRestore(conn, data.sessionId);
               } else {
-                sendFileError(conn, 'Restore error. Locks not checked.');
+                yield* sendFileErrorAuth(conn, data.sessionId, 'Restore error. Locks not checked.');
               }
             } else {
-              sendFileError(conn, 'Restore error. Document modified.');
+              yield* sendFileErrorAuth(conn, data.sessionId, 'Restore error. Document modified.');
             }
           } catch (err) {
             logger.error("DataBase error: docId = %s %s", docId, err.stack);
-            sendFileError(conn, 'DataBase error');
+            yield* sendFileErrorAuth(conn, data.sessionId, 'DataBase error');
           }
         } else {
           yield* authRestore(conn, data.sessionId);
@@ -1904,6 +1933,7 @@ exports.install = function(server, callbackFunction) {
     connections.push(conn);
     var firstParticipantNoView, countNoView = 0;
     var participantsMap = yield* getParticipantMap(docId, tmpUser.id, getConnectionInfo(conn));
+    let participantsTimestamp = Date.now();
     for (var i = 0; i < participantsMap.length; ++i) {
       var elem = participantsMap[i];
       if (!elem.view) {
@@ -1953,8 +1983,9 @@ exports.install = function(server, callbackFunction) {
           }
         }
       }
-
+      let waitAuthUserId;
       if (lockDocument && !tmpUser.view) {
+        waitAuthUserId = lockDocument.id;
         // Для view не ждем снятия lock-а
         var sendObject = {
           type: "waitAuth",
@@ -1969,7 +2000,7 @@ exports.install = function(server, callbackFunction) {
           yield* sendAuthInfo(objChangesDocument.arrChanges, objChangesDocument.getLength(), conn, participantsMap, hasForgotten);
         }
       }
-      yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, user: tmpUser, state: true}, docId, tmpUser.id);
+      yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, userId: tmpUser.id, participantsTimestamp: participantsTimestamp, participants: participantsMap, waitAuthUserId: waitAuthUserId}, docId, tmpUser.id);
     } else {
       sendFileError(conn, 'ip filter');
       res = false;
@@ -2519,8 +2550,13 @@ exports.install = function(server, callbackFunction) {
             });
             break;
           case commonDefines.c_oPublishType.participantsState:
-            participants = getParticipants(data.docId, true, data.user.id);
+            participants = getParticipants(data.docId, true, data.userId);
             sendParticipantsState(participants, data);
+            //release lock if participants is empty
+            if (0 == participants.length && data.waitAuthUserId) {
+              logger.warn('pubsub participantsState participants is empty docId = %s', data.docId);
+              yield* checkEndAuthLock(true, false, data.docId, data.waitAuthUserId);
+            }
             break;
           case commonDefines.c_oPublishType.message:
             participants = getParticipants(data.docId, true, data.userId);

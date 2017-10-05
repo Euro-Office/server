@@ -145,6 +145,7 @@ exports.CONVERT_PARAMS = -88;
 exports.CONVERT_NEED_PARAMS = -89;
 exports.CONVERT_DRM = -90;
 exports.CONVERT_PASSWORD = -91;
+exports.CONVERT_DEAD_LETTER = -92;
 exports.UPLOAD = -100;
 exports.UPLOAD_CONTENT_LENGTH = -101;
 exports.UPLOAD_EXTENSION = -102;

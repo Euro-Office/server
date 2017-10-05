@@ -145,14 +145,17 @@ function repeat(taskqueue) {
   //acknowledge data after reconnect raises an exception 'PRECONDITION_FAILED - unknown delivery tag'
   for (var i = 0; i < taskqueue.addTaskStore.length; ++i) {
     var elem = taskqueue.addTaskStore[i];
-    addTask(taskqueue, elem.task, elem.priority, function () {}, elem.expiration);
+    addTask(taskqueue, elem.task, elem.priority, function () {}, elem.expiration, elem.headers);
   }
   taskqueue.addTaskStore.length = 0;
 }
-function addTask(taskqueue, content, priority, callback, opt_expiration) {
+function addTask(taskqueue, content, priority, callback, opt_expiration, opt_headers) {
   var options = {persistent: true, priority: priority};
   if (undefined !== opt_expiration) {
     options.expiration = opt_expiration.toString();
+  }
+  if (undefined !== opt_headers) {
+    options.headers = opt_headers;
   }
   taskqueue.channelConvertTask.sendToQueue(cfgRabbitQueueConvertTask, content, options, callback);
 }
@@ -193,7 +196,7 @@ TaskQueueRabbitMQ.prototype.initPromise = function(isAddTask, isAddResponse, isA
     });
   });
 };
-TaskQueueRabbitMQ.prototype.addTask = function (task, priority, opt_expiration) {
+TaskQueueRabbitMQ.prototype.addTask = function (task, priority, opt_expiration, opt_headers) {
   //todo confirmation mode
   var t = this;
   return new Promise(function (resolve, reject) {
@@ -206,9 +209,9 @@ TaskQueueRabbitMQ.prototype.addTask = function (task, priority, opt_expiration) 
         } else {
           resolve();
         }
-      }, opt_expiration);
+      }, opt_expiration, opt_headers);
     } else {
-      t.addTaskStore.push({task: content, priority: priority, expiration: opt_expiration});
+      t.addTaskStore.push({task: content, priority: priority, expiration: opt_expiration, headers: opt_headers});
       resolve();
     }
   });

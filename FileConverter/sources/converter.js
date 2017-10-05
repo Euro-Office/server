@@ -59,6 +59,10 @@ var cfgPresentationThemesDir = configConverter.get('presentationThemesDir');
 var cfgFilePath = configConverter.get('filePath');
 var cfgArgs = configConverter.get('args');
 var cfgErrorFiles = configConverter.get('errorfiles');
+const cfgStreamWriterBufferSize = configConverter.get('streamWriterBufferSize');
+//cfgMaxRequestChanges was obtained as a result of the test: 84408 changes - 5,16 MB
+const cfgMaxRequestChanges = configConverter.get('maxRequestChanges');
+const cfgMaxRedeliveredCount = configConverter.get('maxRedeliveredCount')
 var cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
 const cfgForgottenFilesName = config.get('services.CoAuthoring.server.forgottenfilesname');
 
@@ -223,23 +227,6 @@ function* downloadFile(docId, uri, fileFrom) {
   }
   return res;
 }
-function promiseGetChanges(key, forceSave) {
-  return new Promise(function(resolve, reject) {
-    var time;
-    var index;
-    if (forceSave) {
-      time = forceSave.getTime();
-      index = forceSave.getIndex();
-    }
-    baseConnector.getChanges(key, time, index, function(err, result) {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(result);
-      }
-    });
-  });
-}
 function* downloadFileFromStorage(id, strPath, dir) {
   var list = yield storage.listObjects(strPath);
   logger.debug('downloadFileFromStorage list %s (id=%s)', list.toString(), id);
@@ -318,53 +305,83 @@ function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
     }
   }
   if (task.getFromChanges()) {
-    var changesDir = path.join(tempDirs.source, 'changes');
-    fs.mkdirSync(changesDir);
-    var indexFile = 0;
-    var changesAuthor = null;
-    var changesHistory = {
-      serverVersion: commonDefines.buildVersion,
-      changes: []
-    };
-    //todo writeable stream
-    let changesBuffers = null;
-    let changes = yield promiseGetChanges(cmd.getDocId(), cmd.getForceSave());
-    for (var i = 0; i < changes.length; ++i) {
-      var change = changes[i];
+    yield* processChanges(tempDirs, cmd);
+  }
+}
+
+function* processChanges(tempDirs, cmd) {
+  let changesDir = path.join(tempDirs.source, 'changes');
+  fs.mkdirSync(changesDir);
+  let indexFile = 0;
+  let changesAuthor = null;
+  let changesHistory = {
+    serverVersion: commonDefines.buildVersion,
+    changes: []
+  };
+  let forceSave = cmd.getForceSave();
+  let forceSaveTime;
+  let forceSaveIndex = Number.MAX_VALUE;
+  if (forceSave) {
+    forceSaveTime = forceSave.getTime();
+    forceSaveIndex = forceSave.getIndex();
+  }
+  let streamObj = yield* streamCreate(cmd.getDocId(), changesDir, indexFile++, {highWaterMark: cfgStreamWriterBufferSize});
+  let curIndexStart = 0;
+  let curIndexEnd = Math.min(curIndexStart + cfgMaxRequestChanges, forceSaveIndex);
+  while (curIndexStart < curIndexEnd) {
+    let changes = yield baseConnector.getChangesPromise(cmd.getDocId(), curIndexStart, curIndexEnd, forceSaveTime);
+    for (let i = 0; i < changes.length; ++i) {
+      let change = changes[i];
       if (null === changesAuthor || changesAuthor !== change.user_id_original) {
         if (null !== changesAuthor) {
-          changesBuffers.push(new Buffer(']', 'utf8'));
-          let dataZipFile = Buffer.concat(changesBuffers);
-          changesBuffers = null;
-          var fileName = 'changes' + (indexFile++) + '.json';
-          var filePath = path.join(changesDir, fileName);
-          fs.writeFileSync(filePath, dataZipFile);
+          yield* streamEnd(streamObj, ']');
+          streamObj = yield* streamCreate(cmd.getDocId(), changesDir, indexFile++);
         }
         changesAuthor = change.user_id_original;
-        var strDate = baseConnector.getDateTime(change.change_date);
-        changesHistory.changes.push({
-          'created': strDate, 'user': {
-            'id': changesAuthor, 'name': change.user_name
-          }
-        });
-        changesBuffers = [];
-        changesBuffers.push(new Buffer('[', 'utf8'));
+        let strDate = baseConnector.getDateTime(change.change_date);
+        changesHistory.changes.push({'created': strDate, 'user': {'id': changesAuthor, 'name': change.user_name}});
+        yield* streamWrite(streamObj, '[');
       } else {
-        changesBuffers.push(new Buffer(',', 'utf8'));
+        yield* streamWrite(streamObj, ',');
       }
-      changesBuffers.push(new Buffer(change.change_data, 'utf8'));
+      yield* streamWrite(streamObj, change.change_data);
+      streamObj.isNoChangesInFile = false;
     }
-    if (null !== changesBuffers) {
-      changesBuffers.push(new Buffer(']', 'utf8'));
-      let dataZipFile = Buffer.concat(changesBuffers);
-      changesBuffers = null;
-      var fileName = 'changes' + (indexFile++) + '.json';
-      var filePath = path.join(changesDir, fileName);
-      fs.writeFileSync(filePath, dataZipFile);
+    if (changes.length === curIndexEnd - curIndexStart) {
+      curIndexStart += cfgMaxRequestChanges;
+      curIndexEnd = Math.min(curIndexStart + cfgMaxRequestChanges, forceSaveIndex);
+    } else {
+      break;
     }
-    cmd.setUserId(changesAuthor);
-    fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
   }
+  yield* streamEnd(streamObj, ']');
+  if (streamObj.isNoChangesInFile) {
+    fs.unlinkSync(streamObj.filePath);
+  }
+  cmd.setUserId(changesAuthor);
+  fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
+}
+
+function* streamCreate(docId, changesDir, indexFile, opt_options) {
+  let fileName = 'changes' + indexFile + '.json';
+  let filePath = path.join(changesDir, fileName);
+  let writeStream = yield utils.promiseCreateWriteStream(filePath, opt_options);
+  writeStream.on('error', function(err) {
+    //todo integrate error handle in main thread (probable: set flag here and check it in main thread)
+    logger.error('WriteStreamError (id=%s)\r\n%s', docId, err.stack);
+  });
+  return {writeStream: writeStream, filePath: filePath, isNoChangesInFile: true};
+}
+
+function* streamWrite(streamObj, text) {
+  if (!streamObj.writeStream.write(text, 'utf8')) {
+    yield utils.promiseWaitDrain(streamObj.writeStream);
+  }
+}
+
+function* streamEnd(streamObj, text) {
+  streamObj.writeStream.end(text, 'utf8');
+  yield utils.promiseWaitClose(streamObj.writeStream);
 }
 function* processUploadToStorage(dir, storagePath) {
   var list = yield utils.listObjects(dir);
@@ -378,9 +395,8 @@ function* processUploadToStorage(dir, storagePath) {
 }
 function* processUploadToStorageChunk(list, dir, storagePath) {
   yield Promise.all(list.map(function (curValue) {
-    var data = fs.readFileSync(curValue);
-    var localValue = storagePath + '/' + curValue.substring(dir.length + 1);
-    return storage.putObject(localValue, data, data.length);
+    let localValue = storagePath + '/' + curValue.substring(dir.length + 1);
+    return storage.uploadObject(localValue, curValue);
   }));
 }
 function writeProcessOutputToLog(docId, childRes, isDebug) {
@@ -592,26 +608,49 @@ function receiveTask(data, dataRaw) {
   return co(function* () {
     var res = null;
     var task = null;
-    try {
-      task = new commonDefines.TaskQueueData(JSON.parse(data));
-      if (task) {
-        res = yield* ExecuteTask(task);
-      }
-    } catch (err) {
-      logger.error(err);
-    } finally {
+    if (!dataRaw.fields.redelivered) {
       try {
-        if (!res && task) {
-          //если все упало так что даже нет res, все равно пытаемся отдать ошибку.
-          var cmd = task.getCmd();
+        task = new commonDefines.TaskQueueData(JSON.parse(data));
+        if (task) {
+          res = yield* ExecuteTask(task);
+        }
+      } catch (err) {
+        logger.error(err);
+      } finally {
+        try {
+          if (!res && task) {
+            //если все упало так что даже нет res, все равно пытаемся отдать ошибку.
+            var cmd = task.getCmd();
+            cmd.setStatusInfo(constants.CONVERT);
+            res = new commonDefines.TaskQueueData();
+            res.setCmd(cmd);
+          }
+          if(res) {
+            yield queue.addResponse(res);
+          }
+          yield queue.removeTask(dataRaw);
+        } catch (err) {
+          logger.error(err);
+        }
+      }
+    } else {
+      try {
+        logger.warn('receiveTask redelivered data=%j', dataRaw);
+        //remove current task and add new into tail of queue to remove redelivered flag
+        yield queue.removeTask(dataRaw);
+        task = new commonDefines.TaskQueueData(JSON.parse(data));
+        let redeliveredCount = dataRaw.properties.headers['x-redelivered-count'];
+        if (!redeliveredCount || redeliveredCount < cfgMaxRedeliveredCount) {
+          dataRaw.properties.headers['x-redelivered-count'] = redeliveredCount ? redeliveredCount + 1 : 1;
+          yield queue.addTask(task, dataRaw.properties.priority, undefined, dataRaw.properties.headers);
+        } else {
+          //simulate error response
+          let cmd = task.getCmd();
           cmd.setStatusInfo(constants.CONVERT);
           res = new commonDefines.TaskQueueData();
           res.setCmd(cmd);
-        }
-        if(res) {
           yield queue.addResponse(res);
         }
-        yield queue.removeTask(dataRaw);
       } catch (err) {
         logger.error(err);
       }
@@ -621,7 +660,7 @@ function receiveTask(data, dataRaw) {
 function run() {
   queue = new queueService();
   queue.on('task', receiveTask);
-  queue.init(false, true, true, false, function(err) {
+  queue.init(true, true, true, false, function(err) {
     if (null != err) {
       logger.error('createTaskQueue error :\r\n%s', err.stack);
     }
