@@ -2456,7 +2456,17 @@ exports.install = function(server, callbackFunction) {
       try {
         const c_LR = constants.LICENSE_RESULT;
         let licenseType = licenseInfo.type;
+        // Warning. Cluster version or if workers > 1 will work with increasing numbers.
+        let connectionsCount = 0;
         if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
+          connectionsCount = constants.LICENSE_CONNECTIONS;
+        } else if (c_LR.Success === licenseType) {
+          connectionsCount = licenseInfo.connections;
+        }
+        if (connectionsCount) {
+			licenseType = (connectionsCount > connections.length) ? c_LR.Success : c_LR.Connections;
+		}
+        /*if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
           licenseType = c_LR.SuccessLimit;
 
           const count = constants.LICENSE_CONNECTIONS;
@@ -2486,7 +2496,7 @@ exports.install = function(server, callbackFunction) {
               break;
             }
           }
-        }
+        }*/
 
         let rights = constants.RIGHTS.Edit;
         if (config.get('server.edit_singleton')) {
