@@ -46,7 +46,8 @@
     "converter": {
       "fontDir": "",
       "presentationThemesDir": "../../../OfficeWeb/PowerPoint/themes",
-      "filePath": "../../FileConverter/Bin/x2t",
+      "x2tPath": "../../FileConverter/Bin/x2t",
+      "docbuilderPath": "../../FileConverter/Bin/docbuilder",
       "errorfiles": "error"
     }
   }

@@ -84,6 +84,7 @@ function InputCommand(data) {
     this['rediskey'] = data['rediskey'];
     this['nobase64'] = data['nobase64'];
     this['forgotten'] = data['forgotten'];
+    this['isbuilder'] = data['isbuilder'];
   } else {
     this['c'] = undefined;//string command
     this['id'] = undefined;//string document id
@@ -125,6 +126,7 @@ function InputCommand(data) {
     this['rediskey'] = undefined;
     this['nobase64'] = true;
     this['forgotten'] = undefined;
+    this['isbuilder'] = undefined;
   }
 }
 InputCommand.prototype = {
@@ -334,6 +336,12 @@ InputCommand.prototype = {
   },
   setNoBase64: function(data) {
     this['nobase64'] = data;
+  },
+  getIsBuilder: function() {
+    return this['isbuilder'];
+  },
+  setIsBuilder: function(data) {
+    this['isbuilder'] = data;
   }
 };
 

@@ -227,6 +227,8 @@ if (cluster.isMaster) {
 		app.post('/downloadas/:docid', rawFileParser, canvasService.downloadAs);
 		app.get('/healthcheck', utils.checkClientIp, docsCoServer.healthCheck);
 
+		app.post('/docbuilder', utils.checkClientIp, rawFileParser, converterService.builder);
+
 		const sendUserPlugins = (res, data) => {
 			res.setHeader('Content-Type', 'application/json');
 			res.send(JSON.stringify(data));
