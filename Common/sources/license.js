@@ -113,6 +113,7 @@ exports.readLicense = function*() {
 
 	return res;
 };
+exports.packageType = oPackageType;
 
 function* _getFileState() {
 	const val = yield utils.promiseRedis(redisClient, redisClient.hget, redisKeyLicense, redisKeyLicense);

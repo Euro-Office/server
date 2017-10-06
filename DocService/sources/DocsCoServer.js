@@ -2770,6 +2770,9 @@ exports.install = function(server, callbackFunction) {
 exports.setLicenseInfo = function(data) {
   licenseInfo = data;
 };
+exports.getLicenseInfo = function() {
+  return licenseInfo;
+};
 exports.healthCheck = function(req, res) {
   return co(function*() {
     let output = false;
