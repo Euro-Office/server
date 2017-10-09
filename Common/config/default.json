@@ -171,6 +171,7 @@
 			"presentationThemesDir": "null",
 			"x2tPath": "null",
 			"docbuilderPath": "null",
+			"docbuilderAllFontsPath": "null",
 			"args": "",
 			"errorfiles": "",
 			"streamWriterBufferSize": 8388608,

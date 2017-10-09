@@ -58,6 +58,7 @@ var cfgFontDir = configConverter.get('fontDir');
 var cfgPresentationThemesDir = configConverter.get('presentationThemesDir');
 var cfgX2tPath = configConverter.get('x2tPath');
 var cfgDocbuilderPath = configConverter.get('docbuilderPath');
+var cfgDocbuilderAllFontsPath = configConverter.get('docbuilderAllFontsPath');
 var cfgArgs = configConverter.get('args');
 var cfgErrorFiles = configConverter.get('errorfiles');
 const cfgStreamWriterBufferSize = configConverter.get('streamWriterBufferSize');
@@ -577,6 +578,7 @@ function* ExecuteTask(task) {
       } else {
         fs.mkdirSync(path.join(tempDirs.result, 'output'));
         processPath = cfgDocbuilderPath;
+        childArgs.push('--all-fonts-path=' + cfgDocbuilderAllFontsPath);
         childArgs.push('--save-use-only-names=' + tempDirs.result + '/output');
         childArgs.push(dataConvert.fileFrom);
       }
