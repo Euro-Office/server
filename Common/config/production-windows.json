@@ -43,7 +43,8 @@
       "fontDir": "",
       "presentationThemesDir": "../../../sdkjs/slide/themes",
       "x2tPath": "../../FileConverter/bin/x2t.exe",
-      "docbuilderPath": "../../FileConverter/bin/docbuildert.exe",
+      "docbuilderPath": "../../FileConverter/bin/docbuilder.exe",
+      "docbuilderAllFontsPath": "../../App_Data/docbuilder",
       "errorfiles": "error"
     }
   }
