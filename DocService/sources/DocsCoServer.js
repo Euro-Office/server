@@ -2562,11 +2562,6 @@ exports.install = function(server, callbackFunction) {
           case commonDefines.c_oPublishType.participantsState:
             participants = getParticipants(data.docId, true, data.userId);
             sendParticipantsState(participants, data);
-            //release lock if participants is empty
-            if (0 == participants.length && data.waitAuthUserId) {
-              logger.warn('pubsub participantsState participants is empty docId = %s', data.docId);
-              yield* checkEndAuthLock(true, false, data.docId, data.waitAuthUserId);
-            }
             break;
           case commonDefines.c_oPublishType.message:
             participants = getParticipants(data.docId, true, data.userId);

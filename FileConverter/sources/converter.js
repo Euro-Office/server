@@ -262,52 +262,51 @@ function* downloadFileFromStorage(id, strPath, dir) {
   }
 }
 function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
+  let needConcatFiles = false;
   if (task.getFromOrigin() || task.getFromSettings()) {
     dataConvert.fileFrom = path.join(tempDirs.source, 'origin.' + cmd.getFormat());
   } else {
     //перезаписываем некоторые файлы из m_sKey(например Editor.bin или changes)
     yield* downloadFileFromStorage(cmd.getSaveKey(), cmd.getSaveKey(), tempDirs.source);
     dataConvert.fileFrom = path.join(tempDirs.source, 'Editor.bin');
-    //при необходимости собираем файл из частей, вида EditorN.bin
-    var parsedFrom = path.parse(dataConvert.fileFrom);
-    var list = yield utils.listObjects(parsedFrom.dir, true);
-    list.sort(utils.compareStringByLength);
-    var fsFullFile = null;
-    for (var i = 0; i < list.length; ++i) {
-      var file = list[i];
-      var parsedFile = path.parse(file);
-      if (parsedFile.name !== parsedFrom.name && parsedFile.name.startsWith(parsedFrom.name)) {
-        if (!fsFullFile) {
-          fsFullFile = yield utils.promiseCreateWriteStream(dataConvert.fileFrom);
-        }
-        var fsCurFile = yield utils.promiseCreateReadStream(file);
-        yield utils.pipeStreams(fsCurFile, fsFullFile, false);
-      }
-    }
-    if (fsFullFile) {
-      fsFullFile.end();
-    }
+    needConcatFiles = true;
   }
   //mail merge
-  var mailMergeSend = cmd.getMailMergeSend();
+  let mailMergeSend = cmd.getMailMergeSend();
   if (mailMergeSend) {
     yield* downloadFileFromStorage(mailMergeSend.getJsonKey(), mailMergeSend.getJsonKey(), tempDirs.source);
-    //разбиваем на 2 файла
-    var data = fs.readFileSync(dataConvert.fileFrom);
-    var head = data.slice(0, 11).toString('ascii');
-    var index = head.indexOf(';');
-    if (-1 != index) {
-      var lengthBinary = parseInt(head.substring(0, index));
-      var dataJson = data.slice(index + 1 + lengthBinary);
-      fs.writeFileSync(path.join(tempDirs.source, 'Editor.json'), dataJson);
-      var dataBinary = data.slice(index + 1, index + 1 + lengthBinary);
-      fs.writeFileSync(dataConvert.fileFrom, dataBinary);
-    } else {
-      logger.error('mail merge format (id=%s)', cmd.getDocId());
-    }
+    needConcatFiles = true;
+  }
+  if (needConcatFiles) {
+    yield* concatFiles(tempDirs.source);
   }
   if (task.getFromChanges()) {
     yield* processChanges(tempDirs, cmd);
+  }
+}
+
+function* concatFiles(source) {
+  //concatenate EditorN.ext parts in Editor.ext
+  let list = yield utils.listObjects(source, true);
+  list.sort(utils.compareStringByLength);
+  let writeStreams = {};
+  for (let i = 0; i < list.length; ++i) {
+    let file = list[i];
+    if (file.match(/Editor\d+\./)) {
+      let target = file.replace(/(Editor)\d+(\..*)/, '$1$2');
+      let writeStream = writeStreams[target];
+      if (!writeStream) {
+        writeStream = yield utils.promiseCreateWriteStream(target);
+        writeStreams[target] = writeStream;
+      }
+      let readStream = yield utils.promiseCreateReadStream(file);
+      yield utils.pipeStreams(readStream, writeStream, false);
+    }
+  }
+  for (let i in writeStreams) {
+    if (writeStreams.hasOwnProperty(i)) {
+      writeStreams[i].end();
+    }
   }
 }
 

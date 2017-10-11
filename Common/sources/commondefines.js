@@ -437,6 +437,7 @@ function CMailMergeSendData(obj) {
     this['url'] = obj['url'];
     this['baseUrl'] = obj['baseUrl'];
     this['jsonkey'] = obj['jsonkey'];
+	this['isJson'] = obj['isJson'];
   } else {
     this['from'] = null;
     this['to'] = null;
@@ -452,6 +453,7 @@ function CMailMergeSendData(obj) {
     this['url'] = null;
     this['baseUrl'] = null;
     this['jsonkey'] = null;
+	this['isJson'] = null;
   }
 }
 CMailMergeSendData.prototype.getFrom = function() {
@@ -537,6 +539,12 @@ CMailMergeSendData.prototype.getJsonKey = function() {
 };
 CMailMergeSendData.prototype.setJsonKey = function(v) {
   this['jsonkey'] = v;
+};
+CMailMergeSendData.prototype.getIsJsonKey = function() {
+  return this['isJson']
+};
+CMailMergeSendData.prototype.setIsJsonKey = function(v) {
+  this['isJson'] = v;
 };
 function TaskQueueData(data) {
   if (data) {
