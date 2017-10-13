@@ -328,7 +328,8 @@ function builderRequest(req, res) {
         end = status.end;
         error = status.err;
         if (end) {
-          urls = yield storageBase.getSignedUrls(utils.getBaseUrlByRequest(req), docId + '/output');
+          urls = yield storageBase.getSignedUrls(utils.getBaseUrlByRequest(req), docId + '/output',
+                                                 commonDefines.c_oAscUrlTypes.Temporary);
         }
       } else {
         error = constants.UNKNOWN;
