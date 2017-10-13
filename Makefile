@@ -53,6 +53,9 @@ endif
 
 FILE_CONVERTER_FILES += ../core/build/bin/$(TARGET)/x2t$(EXEC_EXT)
 
+DOC_BUILDER_FILES += ../core/build/bin/$(TARGET)/docbuilder$(EXEC_EXT)
+DOC_BUILDER_FILES += ../core/Common/empty
+
 HTML_FILE_INTERNAL := $(FILE_CONVERTER)/HtmlFileInternal
 HTML_FILE_INTERNAL_FILES += ../core/build/lib/$(TARGET)/HtmlFileInternal$(EXEC_EXT)
 HTML_FILE_INTERNAL_FILES += ../core/Common/3dParty/cef/$(TARGET)/build/**
@@ -78,10 +81,12 @@ WELCOME_DIR = welcome
 WELCOME_FILES = $(WELCOME_DIR)/**
 WELCOME = $(OUTPUT)/$(WELCOME_DIR)/
 
-.PHONY: all clean install uninstall build-date htmlfileinternal
+.PHONY: all clean install uninstall build-date htmlfileinternal docbuilder
 
 .NOTPARALLEL:
 all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(LICENSE) $(WELCOME) build-date
+
+ext: htmlfileinternal docbuilder
 
 build-date: $(GRUNT_FILES)
 	sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i $(COMMON_DEFINES_JS)
@@ -91,7 +96,10 @@ build-date: $(GRUNT_FILES)
 htmlfileinternal: $(FILE_CONVERTER)
 	mkdir -p $(HTML_FILE_INTERNAL) && \
 		cp -r -t $(HTML_FILE_INTERNAL) $(HTML_FILE_INTERNAL_FILES)
-		
+
+docbuilder: $(FILE_CONVERTER)
+	cp -r -t $(FILE_CONVERTER) $(DOC_BUILDER_FILES)
+
 $(FILE_CONVERTER): $(GRUNT_FILES)
 	mkdir -p $(FILE_CONVERTER) && \
 		cp -r -t $(FILE_CONVERTER) $(FILE_CONVERTER_FILES)

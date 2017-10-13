@@ -32,6 +32,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 var sqlBase = require('./baseConnector');
 var logger = require('./../../Common/sources/logger');
 var utils = require('./../../Common/sources/utils');
@@ -183,9 +184,13 @@ function getInsertString(task) {
   return 'INSERT INTO task_result ( id, status, status_info, last_open_date, user_index, change_id, callback,' +
     ' baseurl) VALUES (' + commandArgEsc.join(', ') + ');';
 }
-function addRandomKey(task) {
+function addRandomKey(task, opt_prefix, opt_size) {
   return new Promise(function(resolve, reject) {
-    task.key = task.key + '_' + Math.round(Math.random() * RANDOM_KEY_MAX);
+    if (undefined !== opt_prefix && undefined !== opt_size) {
+      task.key = opt_prefix + crypto.randomBytes(opt_size).toString("hex");
+    } else {
+      task.key = task.key + '_' + Math.round(Math.random() * RANDOM_KEY_MAX);
+    }
     var sqlCommand = getInsertString(task);
     sqlBase.baseConnector.sqlQuery(sqlCommand, function(error, result) {
       if (error) {
@@ -196,7 +201,7 @@ function addRandomKey(task) {
     });
   });
 }
-function* addRandomKeyTask(key) {
+function* addRandomKeyTask(key, opt_prefix, opt_size) {
   var task = new TaskResultData();
   task.key = key;
   task.status = FileStatus.WaitQueue;
@@ -205,7 +210,7 @@ function* addRandomKeyTask(key) {
   var addRes = null;
   while (nTryCount-- > 0) {
     try {
-      addRes = yield addRandomKey(task);
+      addRes = yield addRandomKey(task, opt_prefix, opt_size);
     } catch (e) {
       addRes = null;
       //key exist, try again
