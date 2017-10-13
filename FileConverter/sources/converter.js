@@ -56,7 +56,9 @@ var cfgDownloadAttemptMaxCount = configConverter.has('downloadAttemptMaxCount') 
 var cfgDownloadAttemptDelay = configConverter.has('downloadAttemptDelay') ? configConverter.get('downloadAttemptDelay') : 1000;
 var cfgFontDir = configConverter.get('fontDir');
 var cfgPresentationThemesDir = configConverter.get('presentationThemesDir');
-var cfgFilePath = configConverter.get('filePath');
+var cfgX2tPath = configConverter.get('x2tPath');
+var cfgDocbuilderPath = configConverter.get('docbuilderPath');
+var cfgDocbuilderAllFontsPath = configConverter.get('docbuilderAllFontsPath');
 var cfgArgs = configConverter.get('args');
 var cfgErrorFiles = configConverter.get('errorfiles');
 const cfgStreamWriterBufferSize = configConverter.get('streamWriterBufferSize');
@@ -260,52 +262,51 @@ function* downloadFileFromStorage(id, strPath, dir) {
   }
 }
 function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
+  let needConcatFiles = false;
   if (task.getFromOrigin() || task.getFromSettings()) {
     dataConvert.fileFrom = path.join(tempDirs.source, 'origin.' + cmd.getFormat());
   } else {
     //перезаписываем некоторые файлы из m_sKey(например Editor.bin или changes)
     yield* downloadFileFromStorage(cmd.getSaveKey(), cmd.getSaveKey(), tempDirs.source);
     dataConvert.fileFrom = path.join(tempDirs.source, 'Editor.bin');
-    //при необходимости собираем файл из частей, вида EditorN.bin
-    var parsedFrom = path.parse(dataConvert.fileFrom);
-    var list = yield utils.listObjects(parsedFrom.dir, true);
-    list.sort(utils.compareStringByLength);
-    var fsFullFile = null;
-    for (var i = 0; i < list.length; ++i) {
-      var file = list[i];
-      var parsedFile = path.parse(file);
-      if (parsedFile.name !== parsedFrom.name && parsedFile.name.startsWith(parsedFrom.name)) {
-        if (!fsFullFile) {
-          fsFullFile = yield utils.promiseCreateWriteStream(dataConvert.fileFrom);
-        }
-        var fsCurFile = yield utils.promiseCreateReadStream(file);
-        yield utils.pipeStreams(fsCurFile, fsFullFile, false);
-      }
-    }
-    if (fsFullFile) {
-      fsFullFile.end();
-    }
+    needConcatFiles = true;
   }
   //mail merge
-  var mailMergeSend = cmd.getMailMergeSend();
+  let mailMergeSend = cmd.getMailMergeSend();
   if (mailMergeSend) {
     yield* downloadFileFromStorage(mailMergeSend.getJsonKey(), mailMergeSend.getJsonKey(), tempDirs.source);
-    //разбиваем на 2 файла
-    var data = fs.readFileSync(dataConvert.fileFrom);
-    var head = data.slice(0, 11).toString('ascii');
-    var index = head.indexOf(';');
-    if (-1 != index) {
-      var lengthBinary = parseInt(head.substring(0, index));
-      var dataJson = data.slice(index + 1 + lengthBinary);
-      fs.writeFileSync(path.join(tempDirs.source, 'Editor.json'), dataJson);
-      var dataBinary = data.slice(index + 1, index + 1 + lengthBinary);
-      fs.writeFileSync(dataConvert.fileFrom, dataBinary);
-    } else {
-      logger.error('mail merge format (id=%s)', cmd.getDocId());
-    }
+    needConcatFiles = true;
+  }
+  if (needConcatFiles) {
+    yield* concatFiles(tempDirs.source);
   }
   if (task.getFromChanges()) {
     yield* processChanges(tempDirs, cmd);
+  }
+}
+
+function* concatFiles(source) {
+  //concatenate EditorN.ext parts in Editor.ext
+  let list = yield utils.listObjects(source, true);
+  list.sort(utils.compareStringByLength);
+  let writeStreams = {};
+  for (let i = 0; i < list.length; ++i) {
+    let file = list[i];
+    if (file.match(/Editor\d+\./)) {
+      let target = file.replace(/(Editor)\d+(\..*)/, '$1$2');
+      let writeStream = writeStreams[target];
+      if (!writeStream) {
+        writeStream = yield utils.promiseCreateWriteStream(target);
+        writeStreams[target] = writeStream;
+      }
+      let readStream = yield utils.promiseCreateReadStream(file);
+      yield utils.pipeStreams(readStream, writeStream, false);
+    }
+  }
+  for (let i in writeStreams) {
+    if (writeStreams.hasOwnProperty(i)) {
+      writeStreams[i].end();
+    }
   }
 }
 
@@ -510,7 +511,9 @@ function* ExecuteTask(task) {
   logger.debug('Start Task(id=%s)', dataConvert.key);
   var error = constants.NO_ERROR;
   tempDirs = getTempDir();
-  dataConvert.fileTo = path.join(tempDirs.result, task.getToFile());
+  let fileTo = task.getToFile();
+  dataConvert.fileTo = fileTo ? path.join(tempDirs.result, fileTo) : '';
+  let isBuilder = cmd.getIsBuilder();
   if (cmd.getUrl()) {
     dataConvert.fileFrom = path.join(tempDirs.source, dataConvert.key + '.' + cmd.getFormat());
     var isDownload = yield* downloadFile(dataConvert.key, cmd.getUrl(), dataConvert.fileFrom);
@@ -541,6 +544,14 @@ function* ExecuteTask(task) {
     } else {
       error = constants.UNKNOWN;
     }
+  } else if (isBuilder) {
+    //in cause script in POST body
+    yield* downloadFileFromStorage(cmd.getDocId(), cmd.getDocId(), tempDirs.source);
+    logger.debug('downloadFileFromStorage complete(id=%s)', dataConvert.key);
+    let list = yield utils.listObjects(tempDirs.source, false);
+    if (list.length > 0) {
+      dataConvert.fileFrom = list[0];
+    }
   } else {
     error = constants.UNKNOWN;
   }
@@ -551,18 +562,28 @@ function* ExecuteTask(task) {
       //todo заглушка.вся конвертация на клиенте, но нет простого механизма сохранения на клиенте
       yield utils.pipeFiles(dataConvert.fileFrom, dataConvert.fileTo);
     } else {
-      var paramsFile = path.join(tempDirs.temp, 'params.xml');
-      dataConvert.serialize(paramsFile);
       var childArgs;
       if (cfgArgs.length > 0) {
         childArgs = cfgArgs.trim().replace(/  +/g, ' ').split(' ');
       } else {
         childArgs = [];
       }
-      childArgs.push(paramsFile);
+      let processPath;
+      if (!isBuilder) {
+        processPath = cfgX2tPath;
+        let paramsFile = path.join(tempDirs.temp, 'params.xml');
+        dataConvert.serialize(paramsFile);
+        childArgs.push(paramsFile);
+      } else {
+        fs.mkdirSync(path.join(tempDirs.result, 'output'));
+        processPath = cfgDocbuilderPath;
+        childArgs.push('--all-fonts-path=' + cfgDocbuilderAllFontsPath);
+        childArgs.push('--save-use-only-names=' + tempDirs.result + '/output');
+        childArgs.push(dataConvert.fileFrom);
+      }
       let timeoutId;
       try {
-        let spawnAsyncPromise = spawnAsync(cfgFilePath, childArgs);
+        let spawnAsyncPromise = spawnAsync(processPath, childArgs);
         childRes = spawnAsyncPromise.child;
         let waitMS = task.getVisibilityTimeout() * 1000 - (new Date().getTime() - getTaskTime.getTime());
         timeoutId = setTimeout(function() {

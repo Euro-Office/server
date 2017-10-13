@@ -38,12 +38,12 @@ const config = configCommon.get('services.CoAuthoring');
 //process.env.NODE_ENV = config.get('server.mode');
 const logger = require('./../../Common/sources/logger');
 const co = require('co');
+const license = require('./../../Common/sources/license');
 
 if (cluster.isMaster) {
 	const fs = require('fs');
 
 	//const numCPUs = require('os').cpus().length;
-	const license = require('./../../Common/sources/license');
 
 	//const cfgWorkerPerCpu = config.get('server.workerpercpu');
 	let licenseInfo, workersCount = 0, updateTime;
@@ -227,6 +227,21 @@ if (cluster.isMaster) {
 		app.post('/downloadas/:docid', rawFileParser, canvasService.downloadAs);
 		app.get('/healthcheck', utils.checkClientIp, docsCoServer.healthCheck);
 
+		app.post('/docbuilder', utils.checkClientIp, rawFileParser, (req, res) => {
+			if (constants.PACKAGE_TYPE_I !== license.packageType) {
+				logger.error('In this installation there is no docbuilder');
+				res.sendStatus(403);
+				return;
+			}
+			const licenseInfo = docsCoServer.getLicenseInfo();
+			if (licenseInfo.type !== constants.LICENSE_RESULT.Success) {
+				logger.error('License expired');
+				res.sendStatus(403);
+				return;
+			}
+			converterService.builder(req, res);
+		});
+
 		const sendUserPlugins = (res, data) => {
 			res.setHeader('Content-Type', 'application/json');
 			res.send(JSON.stringify(data));
@@ -237,8 +252,7 @@ if (cluster.isMaster) {
 				return;
 			}
 
-			if (!config.has('server.static_content') || 
-					!config.has('plugins.uri')) {
+			if (!config.has('server.static_content') || !config.has('plugins.uri')) {
 				res.sendStatus(404);
 				return;
 			}
@@ -246,6 +260,7 @@ if (cluster.isMaster) {
 			let staticContent = config.get('server.static_content');
 			let pluginsUri = config.get('plugins.uri');
 			let pluginsPath = undefined;
+			let pluginsAutostart = config.get('plugins.autostart');
 
 			if (staticContent[pluginsUri]) {
 				pluginsPath = staticContent[pluginsUri].path;
@@ -269,7 +284,7 @@ if (cluster.isMaster) {
 						}
 					}
 
-					userPlugins = {'url': '', 'pluginsData': result, 'autostart': []};
+					userPlugins = {'url': '', 'pluginsData': result, 'autostart': pluginsAutostart};
 					sendUserPlugins(res, userPlugins);
 				});
 			});

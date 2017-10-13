@@ -42,7 +42,9 @@
     "converter": {
       "fontDir": "/usr/share/fonts",
       "presentationThemesDir": "/var/www/onlyoffice/documentserver/sdkjs/slide/themes",
-      "filePath": "/var/www/onlyoffice/documentserver/server/FileConverter/bin/x2t",
+      "x2tPath": "/var/www/onlyoffice/documentserver/server/FileConverter/bin/x2t",
+      "docbuilderPath": "/var/www/onlyoffice/documentserver/server/FileConverter/bin/docbuilder",
+      "docbuilderAllFontsPath": "/var/lib/onlyoffice/documentserver/App_Data/docbuilder/AllFonts.js",
       "errorfiles": "error"
     }
   },

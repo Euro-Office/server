@@ -42,7 +42,9 @@
     "converter": {
       "fontDir": "",
       "presentationThemesDir": "../../../sdkjs/slide/themes",
-      "filePath": "../../FileConverter/bin/x2t.exe",
+      "x2tPath": "../../FileConverter/bin/x2t.exe",
+      "docbuilderPath": "../../FileConverter/bin/docbuilder.exe",
+      "docbuilderAllFontsPath": "../../App_Data/docbuilder/AllFonts.js",
       "errorfiles": "error"
     }
   }

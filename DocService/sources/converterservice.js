@@ -44,22 +44,25 @@ var canvasService = require('./canvasservice');
 var storage = require('./../../Common/sources/storage-base');
 var formatChecker = require('./../../Common/sources/formatchecker');
 var statsDClient = require('./../../Common/sources/statsdclient');
+var storageBase = require('./../../Common/sources/storage-base');
 
-var cfgHealthCheckFilePath = config.get('services.CoAuthoring.server.healthcheckfilepath');
 var cfgTokenEnableRequestInbox = config.get('services.CoAuthoring.token.enable.request.inbox');
 
 var CONVERT_ASYNC_DELAY = 1000;
 
 var clientStatsD = statsDClient.getClient();
 
-function* getConvertStatus(cmd, selectRes, baseUrl, fileTo) {
-  var status = {url: undefined, err: constants.NO_ERROR};
+function* getConvertStatus(cmd, selectRes, baseUrl, opt_fileTo) {
+  var status = {end: false, url: undefined, err: constants.NO_ERROR};
   if (selectRes.length > 0) {
     var docId = cmd.getDocId();
     var row = selectRes[0];
     switch (row.status) {
       case taskResult.FileStatus.Ok:
-        status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + fileTo, commonDefines.c_oAscUrlTypes.Temporary);
+        status.end = true;
+        if (opt_fileTo) {
+          status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + opt_fileTo, commonDefines.c_oAscUrlTypes.Temporary);
+        }
         break;
       case taskResult.FileStatus.Err:
       case taskResult.FileStatus.ErrToReload:
@@ -81,11 +84,13 @@ function* getConvertStatus(cmd, selectRes, baseUrl, fileTo) {
     if (new Date().getTime() - lastOpenDate.getTime() > utils.CONVERTION_TIMEOUT) {
       status.err = constants.CONVERT_TIMEOUT;
     }
+  } else {
+    status.err = constants.UNKNOWN;
   }
   return status;
 }
 
-function* convertByCmd(cmd, async, baseUrl, fileTo, opt_healthcheck, opt_priority, opt_expiration, opt_queue) {
+function* convertByCmd(cmd, async, baseUrl, opt_fileTo, opt_taskExist, opt_priority, opt_expiration, opt_queue) {
   var docId = cmd.getDocId();
   var startDate = null;
   if (clientStatsD) {
@@ -93,48 +98,51 @@ function* convertByCmd(cmd, async, baseUrl, fileTo, opt_healthcheck, opt_priorit
   }
   logger.debug('Start convert request docId = %s', docId);
 
-  var task = new taskResult.TaskResultData();
-  task.key = docId;
-  task.status = taskResult.FileStatus.WaitQueue;
-  task.statusInfo = constants.NO_ERROR;
+  let bCreate = false;
+  if (!opt_taskExist) {
+    let task = new taskResult.TaskResultData();
+    task.key = docId;
+    task.status = taskResult.FileStatus.WaitQueue;
+    task.statusInfo = constants.NO_ERROR;
 
-  var upsertRes = yield taskResult.upsert(task);
-  //if CLIENT_FOUND_ROWS don't specify 1 row is inserted , 2 row is updated, and 0 row is set to its current values
-  //http://dev.mysql.com/doc/refman/5.7/en/insert-on-duplicate.html
-  var bCreate = upsertRes.affectedRows == 1;
+    let upsertRes = yield taskResult.upsert(task);
+    //if CLIENT_FOUND_ROWS don't specify 1 row is inserted , 2 row is updated, and 0 row is set to its current values
+    //http://dev.mysql.com/doc/refman/5.7/en/insert-on-duplicate.html
+    bCreate = upsertRes.affectedRows == 1;
+  }
   var selectRes;
   var status;
-  if (!bCreate && !opt_healthcheck) {
+  if (!bCreate) {
     selectRes = yield taskResult.select(docId);
-    status = yield* getConvertStatus(cmd, selectRes, baseUrl, fileTo);
+    status = yield* getConvertStatus(cmd, selectRes, baseUrl, opt_fileTo);
   } else {
     var queueData = new commonDefines.TaskQueueData();
     queueData.setCmd(cmd);
-    queueData.setToFile(fileTo);
-    if (opt_healthcheck) {
-      queueData.setFromOrigin(true);
+    if (opt_fileTo) {
+      queueData.setToFile(opt_fileTo);
     }
+    queueData.setFromOrigin(true);
     var priority = null != opt_priority ? opt_priority : constants.QUEUE_PRIORITY_LOW
     yield* docsCoServer.addTask(queueData, priority, opt_queue, opt_expiration);
-    status = {url: undefined, err: constants.NO_ERROR};
+    status = {end: false, url: undefined, err: constants.NO_ERROR};
   }
   //wait
   if (!async) {
     var waitTime = 0;
     while (true) {
-      if (status.url || constants.NO_ERROR != status.err) {
+      if (status.end || constants.NO_ERROR != status.err) {
         break;
       }
       yield utils.sleep(CONVERT_ASYNC_DELAY);
       selectRes = yield taskResult.select(docId);
-      status = yield* getConvertStatus(cmd, selectRes, baseUrl, fileTo);
+      status = yield* getConvertStatus(cmd, selectRes, baseUrl, opt_fileTo);
       waitTime += CONVERT_ASYNC_DELAY;
       if (waitTime > utils.CONVERTION_TIMEOUT) {
         status.err = constants.CONVERT_TIMEOUT;
       }
     }
   }
-  logger.debug('End convert request url %s status %s docId = %s', status.url, status.err, docId);
+  logger.debug('End convert request end %s url %s status %s docId = %s', status.end, status.url, status.err, docId);
   if (clientStatsD) {
     clientStatsD.timing('coauth.convertservice', new Date() - startDate);
   }
@@ -267,5 +275,74 @@ function convertRequest(req, res) {
   });
 }
 
+function builderRequest(req, res) {
+  return co(function* () {
+    let docId = 'builderRequest';
+    try {
+      let params = req.query;
+      let urls;
+      let end = false;
+      let error = constants.NO_ERROR;
+      if (cfgTokenEnableRequestInbox) {
+        error = constants.VKEY;
+        let checkJwtRes = docsCoServer.checkJwtHeader(docId, req);
+        if (checkJwtRes) {
+          if (checkJwtRes.decoded) {
+            error = constants.NO_ERROR;
+            if (!utils.isEmptyObject(checkJwtRes.decoded.query)) {
+              Object.assign(params, checkJwtRes.decoded.query);
+            }
+            if (checkJwtRes.decoded.payloadhash &&
+              !docsCoServer.checkJwtPayloadHash(docId, checkJwtRes.decoded.payloadhash, req.body, checkJwtRes.token)) {
+              error = constants.VKEY;
+            }
+          } else {
+            if (constants.JWT_EXPIRED_CODE === checkJwtRes.code) {
+              error = constants.VKEY_KEY_EXPIRE;
+            }
+          }
+        }
+      }
+      if (error === constants.NO_ERROR && (params.key || params.url || (req.body && Buffer.isBuffer(req.body)))) {
+        docId = params.key;
+        let cmd = new commonDefines.InputCommand();
+        cmd.setCommand('builder');
+        cmd.setIsBuilder(true);
+        cmd.setDocId(docId);
+        if (!docId) {
+          let task = yield* taskResult.addRandomKeyTask(undefined, 'bldr_', 16);
+          docId = task.key;
+          cmd.setDocId(docId);
+          if (params.url) {
+            cmd.setUrl(params.url);
+            cmd.setFormat('docbuilder');
+          } else {
+            yield storageBase.putObject(docId + '/script.docbuilder', req.body, req.body.length);
+          }
+          let queueData = new commonDefines.TaskQueueData();
+          queueData.setCmd(cmd);
+          yield* docsCoServer.addTask(queueData, constants.QUEUE_PRIORITY_LOW);
+        }
+        let async = (typeof params.async === 'string') ? 'true' === params.async : params.async;
+        let status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req), undefined, true);
+        end = status.end;
+        error = status.err;
+        if (end) {
+          urls = yield storageBase.getSignedUrls(utils.getBaseUrlByRequest(req), docId + '/output');
+        }
+      } else {
+        error = constants.UNKNOWN;
+      }
+      logger.debug('End builderRequest request: docId = %s urls = %j end = %s error = %s', docId, urls, end, error);
+      utils.fillResponseBuilder(res, docId, urls, end, error);
+    }
+    catch (e) {
+      logger.error('Error builderRequest: docId = %s\r\n%s', docId, e.stack);
+      utils.fillResponseBuilder(res, undefined, undefined, undefined, constants.UNKNOWN);
+    }
+  });
+}
+
 exports.convertFromChanges = convertFromChanges;
 exports.convert = convertRequest;
+exports.builder = builderRequest;

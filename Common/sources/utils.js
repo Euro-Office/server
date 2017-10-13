@@ -390,29 +390,49 @@ function fillXmlResponse(val) {
   xml += '</FileResult>';
   return xml;
 }
-function fillResponse(req, res, uri, error) {
-  var data;
-  var contentType;
-  var output;
-  if (constants.NO_ERROR != error) {
-    output = {error: exports.mapAscServerErrorToOldError(error)};
-  } else {
-    output = {fileUrl: uri, percent: (uri ? 100 : 0), endConvert: !!uri};
-  }
-  var accept = req.get('Accept');
-  if (accept && -1 != accept.toLowerCase().indexOf('application/json')) {
+
+function _fillResponse(res, output, isJSON) {
+  let data;
+  let contentType;
+  if (isJSON) {
     data = JSON.stringify(output);
     contentType = 'application/json';
   } else {
     data = fillXmlResponse(output);
     contentType = 'text/xml';
   }
-  var body = new Buffer(data, 'utf-8');
+  let body = new Buffer(data, 'utf-8');
   res.setHeader('Content-Type', contentType + '; charset=UTF-8');
   res.setHeader('Content-Length', body.length);
   res.send(body);
 }
+
+function fillResponse(req, res, uri, error) {
+  let output;
+  if (constants.NO_ERROR != error) {
+    output = {error: exports.mapAscServerErrorToOldError(error)};
+  } else {
+    output = {fileUrl: uri, percent: (uri ? 100 : 0), endConvert: !!uri};
+  }
+  var accept = req.get('Accept');
+  let isJSON = accept && -1 !== accept.toLowerCase().indexOf('application/json');
+  _fillResponse(res, output, isJSON);
+}
+
 exports.fillResponse = fillResponse;
+
+function fillResponseBuilder(res, key, urls, end, error) {
+  let output;
+  if (constants.NO_ERROR != error) {
+    output = {error: exports.mapAscServerErrorToOldError(error)};
+  } else {
+    output = {key: key, urls: urls, end: end};
+  }
+  _fillResponse(res, output, true);
+}
+
+exports.fillResponseBuilder = fillResponseBuilder;
+
 function promiseCreateWriteStream(strPath, optOptions) {
   return new Promise(function(resolve, reject) {
     var file = fs.createWriteStream(strPath, optOptions);

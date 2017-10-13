@@ -84,6 +84,7 @@ function InputCommand(data) {
     this['rediskey'] = data['rediskey'];
     this['nobase64'] = data['nobase64'];
     this['forgotten'] = data['forgotten'];
+    this['isbuilder'] = data['isbuilder'];
   } else {
     this['c'] = undefined;//string command
     this['id'] = undefined;//string document id
@@ -125,6 +126,7 @@ function InputCommand(data) {
     this['rediskey'] = undefined;
     this['nobase64'] = true;
     this['forgotten'] = undefined;
+    this['isbuilder'] = undefined;
   }
 }
 InputCommand.prototype = {
@@ -334,6 +336,12 @@ InputCommand.prototype = {
   },
   setNoBase64: function(data) {
     this['nobase64'] = data;
+  },
+  getIsBuilder: function() {
+    return this['isbuilder'];
+  },
+  setIsBuilder: function(data) {
+    this['isbuilder'] = data;
   }
 };
 
@@ -429,6 +437,7 @@ function CMailMergeSendData(obj) {
     this['url'] = obj['url'];
     this['baseUrl'] = obj['baseUrl'];
     this['jsonkey'] = obj['jsonkey'];
+	this['isJson'] = obj['isJson'];
   } else {
     this['from'] = null;
     this['to'] = null;
@@ -444,6 +453,7 @@ function CMailMergeSendData(obj) {
     this['url'] = null;
     this['baseUrl'] = null;
     this['jsonkey'] = null;
+	this['isJson'] = null;
   }
 }
 CMailMergeSendData.prototype.getFrom = function() {
@@ -529,6 +539,12 @@ CMailMergeSendData.prototype.getJsonKey = function() {
 };
 CMailMergeSendData.prototype.setJsonKey = function(v) {
   this['jsonkey'] = v;
+};
+CMailMergeSendData.prototype.getIsJsonKey = function() {
+  return this['isJson']
+};
+CMailMergeSendData.prototype.setIsJsonKey = function(v) {
+  this['isJson'] = v;
 };
 function TaskQueueData(data) {
   if (data) {

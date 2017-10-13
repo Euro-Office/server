@@ -207,16 +207,14 @@ function* addRandomKeyTaskCmd(cmd) {
   var task = yield* taskResult.addRandomKeyTask(cmd.getDocId());
   cmd.setSaveKey(task.key);
 }
-function* saveParts(cmd) {
+function* saveParts(cmd, filename) {
   var result = false;
   var saveType = cmd.getSaveType();
-  var filename;
-  if (SAVE_TYPE_COMPLETE_ALL === saveType) {
-    filename = 'Editor.bin';
-  } else {
-    filename = 'Editor' + (cmd.getSaveIndex() || '') + '.bin';
+  if (SAVE_TYPE_COMPLETE_ALL !== saveType) {
+    let ext = pathModule.extname(filename);
+    filename = pathModule.basename(filename, ext) + (cmd.getSaveIndex() || '') + ext;
   }
-  if (SAVE_TYPE_PART_START === saveType || SAVE_TYPE_COMPLETE_ALL === saveType) {
+  if ((SAVE_TYPE_PART_START === saveType || SAVE_TYPE_COMPLETE_ALL === saveType) && !cmd.getSaveKey()) {
     yield* addRandomKeyTaskCmd(cmd);
   }
   if (cmd.getUrl()) {
@@ -356,7 +354,7 @@ function* commandReopen(cmd) {
   }
 }
 function* commandSave(cmd, outputData) {
-  var completeParts = yield* saveParts(cmd);
+  var completeParts = yield* saveParts(cmd, "Editor.bin");
   if (completeParts) {
     var queueData = getSaveTask(cmd);
     yield* docsCoServer.addTask(queueData, constants.QUEUE_PRIORITY_LOW);
@@ -365,13 +363,14 @@ function* commandSave(cmd, outputData) {
   outputData.setData(cmd.getSaveKey());
 }
 function* commandSendMailMerge(cmd, outputData) {
-  var completeParts = yield* saveParts(cmd);
+  let mailMergeSend = cmd.getMailMergeSend();
+  let isJson = mailMergeSend.getIsJsonKey();
+  var completeParts = yield* saveParts(cmd, isJson ? "Editor.json" : "Editor.bin");
   var isErr = false;
-  if (completeParts) {
+  if (completeParts && !isJson) {
     isErr = true;
     var getRes = yield* docsCoServer.getCallback(cmd.getDocId());
     if (getRes) {
-      var mailMergeSend = cmd.getMailMergeSend();
       mailMergeSend.setUrl(getRes.server.href);
       mailMergeSend.setBaseUrl(getRes.baseUrl);
       //меняем JsonKey и SaveKey, новый key нужет потому что за одну конвертацию делается часть, а json нужен всегда
@@ -586,6 +585,7 @@ function* commandSfcCallback(cmd, isSfcm) {
     var outputSfc = new commonDefines.OutputSfcData();
     outputSfc.setKey(docId);
     var users = [];
+    let isOpenFromForgotten = false;
     //setUserId - set from changes in convert
     //setUserActionId - used in case of save without changes(forgotten files)
     let userLastChangeId = cmd.getUserId() || cmd.getUserActionId();
@@ -612,7 +612,8 @@ function* commandSfcCallback(cmd, isSfcm) {
           //check indicator file to determine if opening was from the forgotten file
           var forgottenMarkPath = docId + '/' + cfgForgottenFilesName + '.txt';
           var forgottenMark = yield storage.listObjects(forgottenMarkPath);
-          isSendHistory = 0 === forgottenMark.length;
+          isOpenFromForgotten = 0 !== forgottenMark.length;
+          isSendHistory = !isOpenFromForgotten;
           logger.debug('commandSfcCallback forgotten no empty: docId = %s isSendHistory = %s', docId, isSendHistory);
         }
         if (isSendHistory) {
@@ -697,6 +698,10 @@ function* commandSfcCallback(cmd, isSfcm) {
           }
           if (requestRes) {
             yield docsCoServer.cleanDocumentOnExitPromise(docId, true);
+            if (isOpenFromForgotten) {
+              //remove forgotten file in cache
+              yield cleanupCache(docId);
+            }
           } else {
             var updateTask = new taskResult.TaskResultData();
             updateTask.key = docId;

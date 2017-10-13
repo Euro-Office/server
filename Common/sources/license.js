@@ -53,7 +53,7 @@ const redisKeyLicense = cfgRedisPrefix + ((constants.PACKAGE_TYPE_OS === oPackag
 exports.readLicense = function*() {
 	const c_LR = constants.LICENSE_RESULT;
 	const resMax = {count: 999999, type: c_LR.Success};
-	const res = {count: 1, type: c_LR.Error, light: false, packageType: oPackageType, trial: false, branding: false};
+	const res = {count: 1, type: c_LR.Error, light: false, packageType: oPackageType, trial: false, branding: false, connections: constants.LICENSE_CONNECTIONS};
 	let checkFile = false;
 	try {
 		const oFile = fs.readFileSync(configL.get('license_file')).toString();
@@ -78,6 +78,9 @@ exports.readLicense = function*() {
 
 			res.light = (true === oLicense['light'] || 'true' === oLicense['light']); // Someone who likes to put json string instead of bool
 			res.branding = (true === oLicense['branding'] || 'true' === oLicense['branding']); // Someone who likes to put json string instead of bool
+			if (oLicense.hasOwnProperty('connections')) {
+				res.connections = oLicense['connections'];
+			}
 		} else {
 			throw 'verify';
 		}
@@ -113,6 +116,7 @@ exports.readLicense = function*() {
 
 	return res;
 };
+exports.packageType = oPackageType;
 
 function* _getFileState() {
 	const val = yield utils.promiseRedis(redisClient, redisClient.hget, redisKeyLicense, redisKeyLicense);
