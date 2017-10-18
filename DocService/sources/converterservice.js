@@ -303,7 +303,8 @@ function builderRequest(req, res) {
           }
         }
       }
-      if (error === constants.NO_ERROR && (params.key || params.url || (req.body && Buffer.isBuffer(req.body)))) {
+      if (error === constants.NO_ERROR &&
+        (params.key || params.url || (req.body && Buffer.isBuffer(req.body) && req.body.length > 0))) {
         docId = params.key;
         let cmd = new commonDefines.InputCommand();
         cmd.setCommand('builder');
@@ -330,7 +331,7 @@ function builderRequest(req, res) {
         if (end) {
           urls = yield storageBase.getSignedUrls(utils.getBaseUrlByRequest(req), docId + '/output');
         }
-      } else {
+      } else if (error === constants.NO_ERROR) {
         error = constants.UNKNOWN;
       }
       logger.debug('End builderRequest request: docId = %s urls = %j end = %s error = %s', docId, urls, end, error);
