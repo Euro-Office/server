@@ -228,11 +228,6 @@ if (cluster.isMaster) {
 		app.get('/healthcheck', utils.checkClientIp, docsCoServer.healthCheck);
 
 		app.post('/docbuilder', utils.checkClientIp, rawFileParser, (req, res) => {
-			if (constants.PACKAGE_TYPE_I !== license.packageType) {
-				logger.error('In this installation there is no docbuilder');
-				res.sendStatus(403);
-				return;
-			}
 			const licenseInfo = docsCoServer.getLicenseInfo();
 			if (licenseInfo.type !== constants.LICENSE_RESULT.Success) {
 				logger.error('License expired');
