@@ -2528,7 +2528,7 @@ exports.install = function(server, callbackFunction) {
           license: {
             type: licenseType,
             light: licenseInfo.light,
-            trial: constants.PACKAGE_TYPE_OS === licenseInfo.packageType ? false : licenseInfo.trial,
+            mode: licenseInfo.mode,
             rights: rights,
             buildVersion: commonDefines.buildVersion,
             buildNumber: commonDefines.buildNumber,

@@ -46,6 +46,12 @@ exports.RIGHTS = {
   View    : 4
 };
 
+exports.LICENSE_MODE = {
+  None: 0,
+  Trial: 1,
+  Developer: 2
+};
+
 exports.LICENSE_RESULT = {
   Error       : 1,
   Expired     : 2,
@@ -172,7 +178,6 @@ exports.EDITOR_TYPE_CONVERTATION = 3;
 
 exports.PACKAGE_TYPE_OS = 0;
 exports.PACKAGE_TYPE_I = 1;
-exports.PACKAGE_TYPE_D = 2;
 
 exports.REDIS_KEY_PUBSUB = 'pubsub';
 exports.REDIS_KEY_SAVE_LOCK = 'savelock:';
