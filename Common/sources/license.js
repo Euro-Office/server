@@ -78,7 +78,7 @@ exports.readLicense = function*() {
 			const endDate = new Date(oLicense['end_date']);
 			const isTrial = (true === oLicense['trial'] || 'true' === oLicense['trial']); // Someone who likes to put json string instead of bool
 			res.mode = isTrial ? c_LM.Trial : getLicenseMode(oLicense['mode']);
-			const checkDate = isTrial ? new Date() : oBuildDate;
+			const checkDate = c_LM.Trial === res.mode ? new Date() : oBuildDate;
 			if (endDate >= checkDate && 2 <= oLicense['version']) {
 				res.connections = Math.max(res.count, oLicense['process'] >> 0) * 100;
 				res.count = resMax.count;
