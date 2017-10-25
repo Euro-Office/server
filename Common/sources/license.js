@@ -53,7 +53,7 @@ const redisKeyLicense = cfgRedisPrefix + ((constants.PACKAGE_TYPE_OS === oPackag
 exports.readLicense = function*() {
 	const c_LR = constants.LICENSE_RESULT;
 	const c_LM = constants.LICENSE_MODE;
-	const resMax = {count: 999999, type: c_LR.Success};
+	const resMax = {count: 999999, type: c_LR.Success, mode: c_LM.None, connections: 999999999};
 	const res = {
 		count: 1,
 		type: c_LR.Error,
