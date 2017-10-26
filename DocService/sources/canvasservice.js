@@ -269,7 +269,8 @@ var cleanupCache = co.wrap(function* (docId) {
 function commandOpenStartPromise(docId, cmd, opt_updateUserIndex, opt_documentCallbackUrl, opt_baseUrl) {
   var task = new taskResult.TaskResultData();
   task.key = docId;
-  task.status = taskResult.FileStatus.WaitQueue;
+  //None instead WaitQueue to prevent: conversion task is lost when entering and leaving the editor quickly(that leads to an endless opening)
+  task.status = taskResult.FileStatus.None;
   task.statusInfo = constants.NO_ERROR;
   if (opt_documentCallbackUrl && opt_baseUrl) {
     task.callback = opt_documentCallbackUrl;
@@ -290,37 +291,63 @@ function* commandOpen(conn, cmd, outputData, opt_upsertRes) {
   }
   //if CLIENT_FOUND_ROWS don't specify 1 row is inserted , 2 row is updated, and 0 row is set to its current values
   //http://dev.mysql.com/doc/refman/5.7/en/insert-on-duplicate.html
-  var bCreate = upsertRes.affectedRows == 1;
+  let bCreate = upsertRes.affectedRows == 1;
+  let needAddTask = bCreate;
   if (!bCreate) {
-    var selectRes = yield taskResult.select(cmd.getDocId());
-    if (selectRes.length > 0) {
-      var row = selectRes[0];
+    needAddTask = yield* commandOpenFillOutput(conn, cmd, outputData);
+  }
+  if (needAddTask) {
+    let updateMask = new taskResult.TaskResultData();
+    updateMask.key = cmd.getDocId();
+    updateMask.status = taskResult.FileStatus.None;
+
+    let task = new taskResult.TaskResultData();
+    task.key = cmd.getDocId();
+    task.status = taskResult.FileStatus.WaitQueue;
+    task.statusInfo = constants.NO_ERROR;
+
+    let updateIfRes = yield taskResult.updateIf(task, updateMask);
+    if (updateIfRes.affectedRows > 0) {
+      let forgottenId = cfgForgottenFiles + '/' + cmd.getDocId();
+      let forgotten = yield storage.listObjects(forgottenId);
+      //replace url with forgotten file because it absorbed all lost changes
+      if (forgotten.length > 0) {
+        logger.debug("commandOpen from forgotten: docId = %s", cmd.getDocId());
+        cmd.setUrl(undefined);
+        cmd.setForgotten(forgottenId);
+      }
+      //add task
+      cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
+      cmd.setEmbeddedFonts(false);
+      var dataQueue = new commonDefines.TaskQueueData();
+      dataQueue.setCmd(cmd);
+      dataQueue.setToFile('Editor.bin');
+      var priority = constants.QUEUE_PRIORITY_HIGH;
+      var formatIn = formatChecker.getFormatFromString(cmd.getFormat());
+      //decrease pdf, djvu, xps convert priority becase long open time
+      if (constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF === formatIn ||
+        constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_DJVU === formatIn ||
+        constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_XPS === formatIn) {
+        priority = constants.QUEUE_PRIORITY_LOW;
+      }
+      yield* docsCoServer.addTask(dataQueue, priority);
+    } else {
+      yield* commandOpenFillOutput(conn, cmd, outputData);
+    }
+  }
+}
+function* commandOpenFillOutput(conn, cmd, outputData) {
+  let needAddTask = false;
+  let selectRes = yield taskResult.select(cmd.getDocId());
+  if (selectRes.length > 0) {
+    let row = selectRes[0];
+    if (taskResult.FileStatus.None === row.status) {
+      needAddTask = true;
+    } else {
       yield* getOutputData(cmd, outputData, cmd.getDocId(), row.status, row.status_info, conn);
     }
-  } else {
-    let forgottenId = cfgForgottenFiles + '/' + cmd.getDocId();
-    let forgotten = yield storage.listObjects(forgottenId);
-    //replace url with forgotten file because it absorbed all lost changes
-    if (forgotten.length > 0) {
-      logger.debug("commandOpen from forgotten: docId = %s", cmd.getDocId());
-      cmd.setUrl(undefined);
-      cmd.setForgotten(forgottenId);
-    }
-    //add task
-    cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
-    cmd.setEmbeddedFonts(false);
-    var dataQueue = new commonDefines.TaskQueueData();
-    dataQueue.setCmd(cmd);
-    dataQueue.setToFile('Editor.bin');
-    var priority = constants.QUEUE_PRIORITY_HIGH;
-    var formatIn = formatChecker.getFormatFromString(cmd.getFormat());
-    //decrease pdf, djvu, xps convert priority becase long open time
-    if (constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF === formatIn || constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_DJVU === formatIn ||
-      constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_XPS === formatIn) {
-      priority = constants.QUEUE_PRIORITY_LOW;
-    }
-    yield* docsCoServer.addTask(dataQueue, priority);
   }
+  return needAddTask;
 }
 function* commandReopen(cmd) {
   let updateMask = new taskResult.TaskResultData();
