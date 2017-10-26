@@ -80,7 +80,7 @@ exports.readLicense = function*() {
 			res.mode = isTrial ? c_LM.Trial : getLicenseMode(oLicense['mode']);
 			const checkDate = c_LM.Trial === res.mode ? new Date() : oBuildDate;
 			if (endDate >= checkDate && 2 <= oLicense['version']) {
-				res.connections = Math.max(res.count, oLicense['process'] >> 0) * 100;
+				res.connections = Math.max(res.count, oLicense['process'] >> 0) * 75;
 				res.count = resMax.count;
 				res.type = c_LR.Success;
 			} else {
