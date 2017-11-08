@@ -87,10 +87,13 @@ exports.getSignedUrls = function(baseUrl, strPath, optUrlExpires) {
     });
   });
 };
-exports.getSignedUrlsByArray = function(baseUrl, list, optPath, optUrlExpires) {
+exports.getSignedUrlsArrayByArray = function(baseUrl, list, optUrlExpires, opt_type) {
   return Promise.all(list.map(function(curValue) {
-    return exports.getSignedUrl(baseUrl, curValue, optUrlExpires);
-  })).then(function(urls) {
+    return exports.getSignedUrl(baseUrl, curValue, optUrlExpires, undefined, opt_type);
+  }));
+};
+exports.getSignedUrlsByArray = function(baseUrl, list, optPath, optUrlExpires) {
+  return exports.getSignedUrlsArrayByArray(baseUrl, list, optUrlExpires).then(function(urls) {
     var outputMap = {};
     for (var i = 0; i < list.length && i < urls.length; ++i) {
       if (optPath) {

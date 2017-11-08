@@ -553,6 +553,17 @@ function* commandImgurls(conn, cmd, outputData) {
     }
   }
 }
+function* commandPathUrls(conn, cmd, outputData) {
+  let contentDisposition = cmd.getInline() ? constants.CONTENT_DISPOSITION_INLINE :
+    constants.CONTENT_DISPOSITION_ATTACHMENT;
+  let docId = cmd.getDocId();
+  let listImages = cmd.getData().map(function callback(currentValue) {
+    return docId + '/' + currentValue;
+  });
+  let urls = yield storage.getSignedUrlsArrayByArray(conn.baseUrl, listImages, undefined, contentDisposition);
+  outputData.setStatus('ok');
+  outputData.setData(urls);
+}
 function* commandPathUrl(conn, cmd, outputData) {
   var contentDisposition = cmd.getInline() ? constants.CONTENT_DISPOSITION_INLINE :
     constants.CONTENT_DISPOSITION_ATTACHMENT;
@@ -832,6 +843,9 @@ exports.openDocument = function(conn, cmd, opt_upsertRes) {
           break;
         case 'pathurl':
           yield* commandPathUrl(conn, cmd, outputData);
+          break;
+        case 'pathurls':
+          yield* commandPathUrls(conn, cmd, outputData);
           break;
         default:
           outputData.setStatus('err');
