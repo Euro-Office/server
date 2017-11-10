@@ -211,6 +211,8 @@ exports.JWT_EXPIRED_CODE = 4005;
 exports.JWT_EXPIRED_REASON = 'token:';
 exports.JWT_ERROR_CODE = 4006;
 exports.JWT_ERROR_REASON = 'token:';
+exports.DROP_CODE = 4007;
+exports.DROP_REASON = 'drop';
 
 exports.CONTENT_DISPOSITION_INLINE = 'inline';
 exports.CONTENT_DISPOSITION_ATTACHMENT = 'attachment';

@@ -163,6 +163,7 @@ const defaultHttpPort = 80, defaultHttpsPort = 443;	// Порты по умол�
 const redisClient = pubsubRedis.getClientRedis();
 const clientStatsD = statsDClient.getClient();
 let connections = []; // Активные соединения
+let lockDocumentsTimerId = {};//to drop connection that can't unlockDocument
 let pubsub;
 let queue;
 let licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false, branding: false};
@@ -568,6 +569,7 @@ function* publish(data, optDocId, optUserId, opt_pubsub) {
       realPubsub.publish(msg);
     }
   }
+  return needPublish;
 }
 function* addTask(data, priority, opt_queue, opt_expiration) {
   var realQueue = opt_queue ? opt_queue : queue;
@@ -879,6 +881,29 @@ function* onReplySendStatusDocument(docId, replyData) {
   if (!(oData && commonDefines.c_oAscServerCommandErrors.NoError == oData.error)) {
     // Ошибка подписки на callback, посылаем warning
     yield* publish({type: commonDefines.c_oPublishType.warning, docId: docId, description: 'Error on save server subscription!'});
+  }
+}
+function* publishCloseUsersConnection(docId, users, isOriginalId, code, description) {
+  if (Array.isArray(users)) {
+    let usersMap = users.reduce(function(map, val) {
+      map[val] = 1;
+      return map;
+    }, {});
+    yield* publish({
+                     type: commonDefines.c_oPublishType.closeConnection, docId: docId, usersMap: usersMap,
+                     isOriginalId: isOriginalId, code: code, description: description
+                   });
+  }
+}
+function closeUsersConnection(docId, usersMap, isOriginalId, code, description) {
+  let elConnection;
+  for (let i = connections.length - 1; i >= 0; --i) {
+    elConnection = connections[i];
+    if (elConnection.docId === docId) {
+      if (isOriginalId ? usersMap[elConnection.user.idOriginal] : usersMap[elConnection.user.id]) {
+        elConnection.close(code, description);
+      }
+    }
   }
 }
 function* dropUsersFromDocument(docId, users) {
@@ -1432,7 +1457,7 @@ exports.install = function(server, callbackFunction) {
 					docId: docId,
 					userId: userId,
 					participantsMap: participantsMap
-				}, docId, userId);
+				});
 
 				result = true;
 			}
@@ -1454,6 +1479,29 @@ exports.install = function(server, callbackFunction) {
 
 		return result;
 	}
+
+  function* setLockDocumentTimer(docId, userId) {
+    yield utils.promiseRedis(redisClient, redisClient.expire, redisKeyLockDoc + docId, 2 * cfgExpLockDoc);
+    let timerId = setTimeout(function() {
+      return co(function*() {
+        try {
+          logger.debug("lockDocumentsTimerId timeout: docId = %s", docId);
+          delete lockDocumentsTimerId[docId];
+          //todo remove checkEndAuthLock(only needed for lost connections in redis)
+          yield* checkEndAuthLock(true, false, docId, userId);
+          yield* publishCloseUsersConnection(docId, [userId], false, constants.DROP_CODE, constants.DROP_REASON);
+        } catch (e) {
+          logger.error("lockDocumentsTimerId error:\r\n%s", e.stack);
+        }
+      });
+    }, 1000 * cfgExpLockDoc);
+    lockDocumentsTimerId[docId] = {timerId: timerId, userId: userId};
+    logger.debug("lockDocumentsTimerId set userId = %s: docId = %s", userId, docId);
+  }
+  function cleanLockDocumentTimer(docId, lockDocumentTimer) {
+    clearTimeout(lockDocumentTimer.timerId);
+    delete lockDocumentsTimerId[docId];
+  }
 
   function sendParticipantsState(participants, data) {
     _.each(participants, function(participant) {
@@ -1979,7 +2027,7 @@ exports.install = function(server, callbackFunction) {
                                               redisKeyLockDoc + docId, JSON.stringify(firstParticipantNoView));
         if (isLock) {
           lockDocument = firstParticipantNoView;
-          yield utils.promiseRedis(redisClient, redisClient.expire, redisKeyLockDoc + docId, cfgExpLockDoc);
+          yield* setLockDocumentTimer(docId, lockDocument.id);
         }
       }
       if (!lockDocument) {
@@ -2301,14 +2349,18 @@ exports.install = function(server, callbackFunction) {
         yield utils.promiseRedis(multi, multi.exec);
       }
     } else {
-		let changesToSend = arrNewDocumentChanges;
+      let changesToSend = arrNewDocumentChanges;
       if(changesToSend.length > cfgPubSubMaxChanges) {
         changesToSend = null;
       }
-      yield* publish({type: commonDefines.c_oPublishType.changes, docId: docId, userId: userId,
+      let isPublished = yield* publish({type: commonDefines.c_oPublishType.changes, docId: docId, userId: userId,
         changes: changesToSend, startIndex: startIndex, changesIndex: puckerIndex,
         locks: [], excelAdditionalInfo: undefined}, docId, userId);
       sendData(conn, {type: 'savePartChanges', changesIndex: changesIndex});
+      if (!isPublished) {
+        //stub for lockDocumentsTimerId
+        yield* publish({type: commonDefines.c_oPublishType.changesNotify, docId: docId});
+      }
     }
   }
 
@@ -2556,11 +2608,15 @@ exports.install = function(server, callbackFunction) {
         var participant;
         var objChangesDocument;
         var i;
+        let lockDocumentTimer;
         switch (data.type) {
           case commonDefines.c_oPublishType.drop:
             for (i = 0; i < data.users.length; ++i) {
               dropUserFromDocument(data.docId, data.users[i], data.description);
             }
+            break;
+          case commonDefines.c_oPublishType.closeConnection:
+            closeUsersConnection(data.docId, data.usersMap, data.isOriginalId, data.code, data.description);
             break;
           case commonDefines.c_oPublishType.releaseLock:
             participants = getParticipants(data.docId, true, data.userId, true);
@@ -2583,6 +2639,12 @@ exports.install = function(server, callbackFunction) {
             sendGetLock(participants, data.documentLocks);
             break;
           case commonDefines.c_oPublishType.changes:
+            lockDocumentTimer = lockDocumentsTimerId[data.docId];
+            if (lockDocumentTimer) {
+              logger.debug("lockDocumentsTimerId update c_oPublishType.changes: docId = %s", data.docId);
+              cleanLockDocumentTimer(data.docId, lockDocumentTimer);
+              yield* setLockDocumentTimer(data.docId, lockDocumentTimer.userId);
+            }
             participants = getParticipants(data.docId, true, data.userId, true);
             if(participants.length > 0) {
               var changes = data.changes;
@@ -2596,7 +2658,20 @@ exports.install = function(server, callbackFunction) {
               });
             }
             break;
+          case commonDefines.c_oPublishType.changesNotify:
+            lockDocumentTimer = lockDocumentsTimerId[data.docId];
+            if (lockDocumentTimer) {
+              logger.debug("lockDocumentsTimerId update c_oPublishType.changesNotify: docId = %s", data.docId);
+              cleanLockDocumentTimer(data.docId, lockDocumentTimer);
+              yield* setLockDocumentTimer(data.docId, lockDocumentTimer.userId);
+            }
+            break;
           case commonDefines.c_oPublishType.auth:
+            lockDocumentTimer = lockDocumentsTimerId[data.docId];
+            if (lockDocumentTimer) {
+              logger.debug("lockDocumentsTimerId clear: docId = %s", data.docId);
+              cleanLockDocumentTimer(data.docId, lockDocumentTimer);
+            }
             participants = getParticipants(data.docId, true, data.userId, true);
             if(participants.length > 0) {
               objChangesDocument = yield* getDocumentChanges(data.docId);
