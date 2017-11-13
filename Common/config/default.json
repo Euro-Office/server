@@ -104,7 +104,7 @@
 				"presence": 300,
 				"locks": 604800,
 				"changeindex": 86400,
-				"lockDoc": 60,
+				"lockDoc": 30,
 				"message": 86400,
 				"lastsave": 604800,
 				"forcesave": 604800,

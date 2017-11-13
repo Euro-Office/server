@@ -779,7 +779,9 @@ const c_oPublishType = {
   cursor: 9,
   shutdown: 10,
   meta: 11,
-  forceSave: 12
+  forceSave: 12,
+  closeConnection: 13,
+  changesNotify: 14
 };
 const c_oAscCsvDelimiter = {
   None: 0,
