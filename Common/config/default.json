@@ -62,7 +62,8 @@
 				"savetimeoutdelay": 5000,
 				"edit_singleton": false,
 				"forgottenfiles": "forgotten",
-				"forgottenfilesname": "output"
+				"forgottenfilesname": "output",
+				"userAgent": "Node.js/6.12"
 			},
 			"autoAssembly": {
 				"enable": false,

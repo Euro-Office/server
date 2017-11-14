@@ -45,7 +45,7 @@ var configDnsCache = config.get('dnscache');
 const dnscache = require('dnscache')({
                                      "enable": configDnsCache.get('enable'),
                                      "ttl": configDnsCache.get('ttl'),
-                                     "cachesize": configDnsCache.get('cachesize'),
+                                     "cachesize": configDnsCache.get('cachesize')
                                    });
 const jwt = require('jsonwebtoken');
 const NodeCache = require( "node-cache" );
@@ -68,8 +68,11 @@ var cfgSignatureSecretInbox = config.get('services.CoAuthoring.secret.inbox');
 var cfgSignatureSecretOutbox = config.get('services.CoAuthoring.secret.outbox');
 var cfgVisibilityTimeout = config.get('queue.visibilityTimeout');
 var cfgQueueRetentionPeriod = config.get('queue.retentionPeriod');
+var cfgUserAgent = config.get('services.CoAuthoring.server.userAgent');
 
 var ANDROID_SAFE_FILENAME = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-+,@£$€!½§~\'=()[]{}0123456789';
+
+var baseRequest = request.defaults({headers: {'User-Agent': cfgUserAgent}});
 
 var g_oIpFilterRules = function() {
   var res = [];
@@ -260,7 +263,7 @@ function downloadUrlPromise(uri, optTimeout, optLimit, opt_Authorization) {
     urlParsed.rejectUnauthorized = false;
     options.rejectUnauthorized = false;
 
-    request.get(options, function (err, response, body) {
+    baseRequest.get(options, function (err, response, body) {
       if (err) {
         reject(err);
       } else {
@@ -295,7 +298,7 @@ function postRequestPromise(uri, postData, optTimeout, opt_Authorization) {
     urlParsed.rejectUnauthorized = false;
     options.rejectUnauthorized = false;
 
-    request.post(options, function(err, response, body) {
+    baseRequest.post(options, function(err, response, body) {
       if (err) {
         reject(err);
       } else {
