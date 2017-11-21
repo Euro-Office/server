@@ -480,13 +480,13 @@ function updatePresenceCommandsToArray(outCommands, docId, userId, userInfo) {
   );
 }
 function* updatePresence(docId, userId, connInfo) {
-  var multi = redisClient.multi(getUpdatePresenceCommands(docId, userId, connInfo));
+  const multi = redisClient.multi(getUpdatePresenceCommands(docId, userId, connInfo));
   yield utils.promiseRedis(multi, multi.exec);
 }
 function getUpdatePresenceCommands(docId, userId, connInfo) {
   let commands = [];
   updatePresenceCommandsToArray(commands, docId, userId, connInfo);
-  var expireAt = new Date().getTime() + cfgExpPresence * 1000;
+  const expireAt = new Date().getTime() + cfgExpPresence * 1000;
   commands.push(['zadd', redisKeyDocuments, expireAt, docId]);
   return commands;
 }
@@ -1428,15 +1428,15 @@ exports.install = function(server, callbackFunction) {
   }
 
   function* getParticipantMap(docId, opt_userId, opt_connInfo, opt_hvals) {
-    var participantsMap = [];
+    const participantsMap = [];
     let hvals;
     if (opt_hvals) {
       hvals = opt_hvals;
     } else {
       hvals = yield* getAllPresence(docId, opt_userId, opt_connInfo);
     }
-    for (var i = 0; i < hvals.length; ++i) {
-      var elem = JSON.parse(hvals[i]);
+    for (let i = 0; i < hvals.length; ++i) {
+      const elem = JSON.parse(hvals[i]);
       if (!elem.isCloseCoAuthoring) {
         participantsMap.push(elem);
       }
@@ -1979,32 +1979,32 @@ exports.install = function(server, callbackFunction) {
   }
 
   function* endAuth(conn, bIsRestore, documentCallbackUrl) {
-    var res = true;
-    var docId = conn.docId;
-    var tmpUser = conn.user;
+    let res = true;
+    const docId = conn.docId;
+    const tmpUser = conn.user;
     let hasForgotten;
     if (constants.CONN_CLOSED === conn.readyState) {
       //closing could happen during async action
       return false;
     }
     connections.push(conn);
-    var firstParticipantNoView, countNoView = 0;
-    var participantsMap = yield* getParticipantMap(docId, tmpUser.id, getConnectionInfo(conn));
-    let participantsTimestamp = Date.now();
-    for (var i = 0; i < participantsMap.length; ++i) {
-      var elem = participantsMap[i];
+    let firstParticipantNoView, countNoView = 0;
+    let participantsMap = yield* getParticipantMap(docId, tmpUser.id, getConnectionInfo(conn));
+    const participantsTimestamp = Date.now();
+    for (let i = 0; i < participantsMap.length; ++i) {
+      const elem = participantsMap[i];
       if (!elem.view) {
         ++countNoView;
-        if (!firstParticipantNoView && elem.id != tmpUser.id) {
+        if (!firstParticipantNoView && elem.id !== tmpUser.id) {
           firstParticipantNoView = elem;
         }
       }
     }
 
     // Отправляем на внешний callback только для тех, кто редактирует
-    var bindEventsRes = commonDefines.c_oAscServerCommandErrors.NoError;
+    let bindEventsRes = commonDefines.c_oAscServerCommandErrors.NoError;
     if (!tmpUser.view) {
-      var userAction = new commonDefines.OutputAction(commonDefines.c_oAscUserAction.In, tmpUser.idOriginal);
+      const userAction = new commonDefines.OutputAction(commonDefines.c_oAscUserAction.In, tmpUser.idOriginal);
       // Если пришла информация о ссылке для посылания информации, то добавляем
       if (documentCallbackUrl) {
         bindEventsRes = yield* bindEvents(docId, documentCallbackUrl, conn.baseUrl, userAction);
@@ -2020,10 +2020,10 @@ exports.install = function(server, callbackFunction) {
     }
 
     if (commonDefines.c_oAscServerCommandErrors.NoError === bindEventsRes) {
-      var lockDocument = null;
+      let lockDocument = null;
       if (!bIsRestore && 2 === countNoView && !tmpUser.view) {
         // Ставим lock на документ
-        var isLock = yield utils.promiseRedis(redisClient, redisClient.setnx,
+        const isLock = yield utils.promiseRedis(redisClient, redisClient.setnx,
                                               redisKeyLockDoc + docId, JSON.stringify(firstParticipantNoView));
         if (isLock) {
           lockDocument = firstParticipantNoView;
@@ -2031,9 +2031,9 @@ exports.install = function(server, callbackFunction) {
         }
       }
       if (!lockDocument) {
-        var getRes = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyLockDoc + docId);
+        const getRes = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyLockDoc + docId);
         if (getRes) {
-          var getResParsed = JSON.parse(getRes);
+          const getResParsed = JSON.parse(getRes);
           //prevent self locking
           if (tmpUser.id !== getResParsed.id) {
             lockDocument = getResParsed;
@@ -2044,18 +2044,18 @@ exports.install = function(server, callbackFunction) {
       if (lockDocument && !tmpUser.view) {
         waitAuthUserId = lockDocument.id;
         // Для view не ждем снятия lock-а
-        var sendObject = {
+        const sendObject = {
           type: "waitAuth",
           lockDocument: lockDocument
         };
         sendData(conn, sendObject);//Or 0 if fails
       } else {
-        if (bIsRestore) {
-          yield* sendAuthInfo(undefined, undefined, conn, participantsMap, hasForgotten);
-        } else {
-          var objChangesDocument = yield* getDocumentChanges(docId);
-          yield* sendAuthInfo(objChangesDocument.arrChanges, objChangesDocument.getLength(), conn, participantsMap, hasForgotten);
+        let objChangesDocument;
+        if (!bIsRestore) {
+          objChangesDocument = yield* getDocumentChanges(docId);
         }
+        yield* sendAuthInfo(objChangesDocument && objChangesDocument.arrChanges, objChangesDocument &&
+            objChangesDocument.getLength(), conn, participantsMap, hasForgotten);
       }
       yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, userId: tmpUser.id, participantsTimestamp: participantsTimestamp, participants: participantsMap, waitAuthUserId: waitAuthUserId}, docId, tmpUser.id);
     } else {
