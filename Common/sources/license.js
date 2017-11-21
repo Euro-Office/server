@@ -53,7 +53,7 @@ const redisKeyLicense = cfgRedisPrefix + ((constants.PACKAGE_TYPE_OS === oPackag
 exports.readLicense = function*() {
 	const c_LR = constants.LICENSE_RESULT;
 	const c_LM = constants.LICENSE_MODE;
-	const resMax = {count: 999999, type: c_LR.Success, mode: c_LM.None, connections: 999999999};
+	const resMax = {count: 999999, type: c_LR.Success, mode: c_LM.None, connections: 999999999, users: 999999999};
 	const res = {
 		count: 1,
 		type: c_LR.Error,
@@ -61,7 +61,9 @@ exports.readLicense = function*() {
 		packageType: oPackageType,
 		mode: c_LM.None,
 		branding: false,
-		connections: constants.LICENSE_CONNECTIONS
+		connections: constants.LICENSE_CONNECTIONS,
+		usersCount: 0,
+		usersExpire: constants.LICENSE_EXPIRE_USERS_ONE_DAY
 	};
 	let checkFile = false;
 	try {
@@ -91,6 +93,13 @@ exports.readLicense = function*() {
 			res.branding = (true === oLicense['branding'] || 'true' === oLicense['branding']); // Someone who likes to put json string instead of bool
 			if (oLicense.hasOwnProperty('connections')) {
 				res.connections = oLicense['connections'] >> 0;
+			}
+			if (oLicense.hasOwnProperty('users_count')) {
+				res.usersCount = oLicense['users_count'] >> 0;
+			}
+			if (oLicense.hasOwnProperty('users_expire')) {
+				res.usersExpire = Math.max(constants.LICENSE_EXPIRE_USERS_ONE_DAY, (oLicense['users_expire'] >> 0) *
+					constants.LICENSE_EXPIRE_USERS_ONE_DAY);
 			}
 		} else {
 			throw 'verify';

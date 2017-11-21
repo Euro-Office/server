@@ -59,10 +59,12 @@ exports.LICENSE_RESULT = {
   UnknownUser : 4,
   Connections : 5,
   ExpiredTrial: 6,
-  SuccessLimit: 7
+  SuccessLimit: 7,
+  UsersCount  : 8
 };
 
 exports.LICENSE_CONNECTIONS = 20;
+exports.LICENSE_EXPIRE_USERS_ONE_DAY = 24 * 60 * 60; // day in seconds
 
 exports.AVS_OFFICESTUDIO_FILE_UNKNOWN =  0x0000;
 exports.AVS_OFFICESTUDIO_FILE_DOCUMENT = 0x0040;
@@ -184,6 +186,7 @@ exports.REDIS_KEY_PUBSUB = 'pubsub';
 exports.REDIS_KEY_SAVE_LOCK = 'savelock:';
 exports.REDIS_KEY_PRESENCE_HASH = 'presence:hash:';
 exports.REDIS_KEY_PRESENCE_SET = 'presence:set:';
+exports.REDIS_KEY_PRESENCE_UNIQUE_USERS = 'presence:unique:users';
 exports.REDIS_KEY_LOCKS = 'locks:';
 exports.REDIS_KEY_CHANGES_INDEX = 'changesindex:';
 exports.REDIS_KEY_LOCK_DOCUMENT = 'lockdocument:';

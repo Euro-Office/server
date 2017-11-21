@@ -152,6 +152,7 @@ const redisKeyForceSave = cfgRedisPrefix + constants.REDIS_KEY_FORCE_SAVE;
 const redisKeyForceSaveTimer = cfgRedisPrefix + constants.REDIS_KEY_FORCE_SAVE_TIMER;
 const redisKeyForceSaveTimerLock = cfgRedisPrefix + constants.REDIS_KEY_FORCE_SAVE_TIMER_LOCK;
 const redisKeySaved = cfgRedisPrefix + constants.REDIS_KEY_SAVED;
+const redisKeyPresenceUniqueUsers = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_UNIQUE_USERS;
 
 const EditorTypes = {
   document : 0,
@@ -471,7 +472,7 @@ function getConnectionInfo(conn) {
   return JSON.stringify(data);
 }
 function updatePresenceCommandsToArray(outCommands, docId, userId, userInfo) {
-  var expireAt = new Date().getTime() + cfgExpPresence * 1000;
+  const expireAt = new Date().getTime() + cfgExpPresence * 1000;
   outCommands.push(
     ['zadd', redisKeyPresenceSet + docId, expireAt, userId],
     ['hset', redisKeyPresenceHash + docId, userId, userInfo],
@@ -480,13 +481,20 @@ function updatePresenceCommandsToArray(outCommands, docId, userId, userInfo) {
   );
 }
 function* updatePresence(docId, userId, connInfo) {
-  var multi = redisClient.multi(getUpdatePresenceCommands(docId, userId, connInfo));
+  const multi = redisClient.multi(getUpdatePresenceCommands(docId, userId, connInfo));
   yield utils.promiseRedis(multi, multi.exec);
 }
+function* updateEditUsers(userId) {
+  if (!licenseInfo.usersCount) {
+    return;
+  }
+  const expireAt = new Date().getTime() + licenseInfo.usersExpire * 1000;
+  yield utils.promiseRedis(redisClient, redisClient.zadd, redisKeyPresenceUniqueUsers, expireAt, userId);
+}
 function getUpdatePresenceCommands(docId, userId, connInfo) {
-  let commands = [];
+  const commands = [];
   updatePresenceCommandsToArray(commands, docId, userId, connInfo);
-  var expireAt = new Date().getTime() + cfgExpPresence * 1000;
+  const expireAt = new Date().getTime() + cfgExpPresence * 1000;
   commands.push(['zadd', redisKeyDocuments, expireAt, docId]);
   return commands;
 }
@@ -1882,6 +1890,15 @@ exports.install = function(server, callbackFunction) {
         conn.sessionTimeLastAction = new Date().getTime() - data.sessionTimeIdle;
       }
 
+      if (!conn.user.view) {
+        let res = yield* _checkLicenseAuth(conn.user.idOriginal);
+        if (c_LR.Success !== res && c_LR.SuccessLimit !== res) {
+          conn.user.view = true;
+        } else {
+          yield* updateEditUsers(conn.user.idOriginal);
+        }
+      }
+
       // Ситуация, когда пользователь уже отключен от совместного редактирования
       if (bIsRestore && data.isCloseCoAuthoring) {
         conn.sessionId = data.sessionId;//restore old
@@ -2512,89 +2529,110 @@ exports.install = function(server, callbackFunction) {
     return {res: !isLock, documentLocks: documentLocks};
   }
 
-  function _checkLicense(conn) {
-    return co(function* () {
-      try {
-        const c_LR = constants.LICENSE_RESULT;
-        let licenseType = licenseInfo.type;
-        // Warning. Cluster version or if workers > 1 will work with increasing numbers.
-        let connectionsCount = 0;
-        if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
-          connectionsCount = constants.LICENSE_CONNECTIONS;
-        } else if (c_LR.Success === licenseType) {
-          connectionsCount = licenseInfo.connections;
-        }
-        if (connectionsCount) {
-          const editConnectionsCount = (_.filter(connections, function (el) {
-            return true !== el.isCloseCoAuthoring && el.user.view !== true;
-          })).length;
-          licenseType = (connectionsCount > editConnectionsCount) ? c_LR.Success : c_LR.Connections;
+	function _checkLicense(conn) {
+		return co(function* () {
+			try {
+				const c_LR = constants.LICENSE_RESULT;
+				let licenseType = licenseInfo.type;
+				if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
+					licenseType = c_LR.Success;
+				}
+				let rights = constants.RIGHTS.Edit;
+				if (config.get('server.edit_singleton')) {
+					// ToDo docId from url ?
+					const docIdParsed = urlParse.exec(conn.url);
+					if (docIdParsed && 1 < docIdParsed.length) {
+						const participantsMap = yield* getParticipantMap(docIdParsed[1]);
+						for (let i = 0; i < participantsMap.length; ++i) {
+							const elem = participantsMap[i];
+							if (!elem.view) {
+								rights = constants.RIGHTS.View;
+								break;
+							}
+						}
+					}
+				}
+
+				sendData(conn, {
+					type: 'license', license: {
+						type: licenseType,
+						light: licenseInfo.light,
+						mode: licenseInfo.mode,
+						rights: rights,
+						buildVersion: commonDefines.buildVersion,
+						buildNumber: commonDefines.buildNumber,
+						branding: licenseInfo.branding
+					}
+				});
+			} catch (err) {
+				logger.error('_checkLicense error:\r\n%s', err.stack);
+			}
+		});
+	}
+
+	function* _checkLicenseAuth(userId) {
+		const c_LR = constants.LICENSE_RESULT;
+		let licenseType = licenseInfo.type;
+		if (licenseInfo.usersCount) {
+			if (c_LR.Success === licenseType) {
+				const usersCount = yield utils.promiseRedis(redisClient, redisClient.zcount,
+					redisKeyPresenceUniqueUsers, '-inf', '+inf');
+				if (licenseInfo.usersCount > usersCount) {
+					licenseType = c_LR.Success;
+				} else {
+					let rank = yield utils.promiseRedis(redisClient, redisClient.zrank, redisKeyPresenceUniqueUsers,
+						userId);
+					licenseType = null !== rank ? c_LR.Success : c_LR.UsersCount;
+				}
+			}
+		} else {
+			// Warning. Cluster version or if workers > 1 will work with increasing numbers.
+			let connectionsCount = 0;
+			if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
+				connectionsCount = constants.LICENSE_CONNECTIONS;
+			} else if (c_LR.Success === licenseType) {
+				connectionsCount = licenseInfo.connections;
+			}
+			if (connectionsCount) {
+				const editConnectionsCount = (_.filter(connections, function (el) {
+					return true !== el.isCloseCoAuthoring && el.user.view !== true;
+				})).length;
+				licenseType = (connectionsCount > editConnectionsCount) ? c_LR.Success : c_LR.Connections;
+			}
+			/*if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
+			licenseType = c_LR.SuccessLimit;
+
+			const count = constants.LICENSE_CONNECTIONS;
+			let cursor = '0', sum = 0, scanRes, tmp, length, i, users;
+			while (true) {
+			  scanRes = yield utils.promiseRedis(redisClient, redisClient.scan, cursor, 'MATCH', redisKeyPresenceHash + '*');
+			  tmp = scanRes[1];
+			  sum += (length = tmp.length);
+
+			  for (i = 0; i < length; ++i) {
+				if (sum >= count) {
+				  licenseType = c_LR.Connections;
+				  break;
+				}
+
+				users = yield utils.promiseRedis(redisClient, redisClient.hlen, tmp[i]);
+				sum += users - (0 !== users ? 1 : 0);
+			  }
+
+			  if (sum >= count) {
+				licenseType = c_LR.Connections;
+				break;
+			  }
+
+			  cursor = scanRes[0];
+			  if ('0' === cursor) {
+				break;
+			  }
+			}
+		  }*/
 		}
-        /*if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
-          licenseType = c_LR.SuccessLimit;
-
-          const count = constants.LICENSE_CONNECTIONS;
-          let cursor = '0', sum = 0, scanRes, tmp, length, i, users;
-          while (true) {
-            scanRes = yield utils.promiseRedis(redisClient, redisClient.scan, cursor, 'MATCH', redisKeyPresenceHash + '*');
-            tmp = scanRes[1];
-            sum += (length = tmp.length);
-
-            for (i = 0; i < length; ++i) {
-              if (sum >= count) {
-                licenseType = c_LR.Connections;
-                break;
-              }
-
-              users = yield utils.promiseRedis(redisClient, redisClient.hlen, tmp[i]);
-              sum += users - (0 !== users ? 1 : 0);
-            }
-
-            if (sum >= count) {
-              licenseType = c_LR.Connections;
-              break;
-            }
-
-            cursor = scanRes[0];
-            if ('0' === cursor) {
-              break;
-            }
-          }
-        }*/
-
-        let rights = constants.RIGHTS.Edit;
-        if (config.get('server.edit_singleton')) {
-          // ToDo docId from url ?
-          const docIdParsed = urlParse.exec(conn.url);
-          if (docIdParsed && 1 < docIdParsed.length) {
-            const participantsMap = yield* getParticipantMap(docIdParsed[1]);
-            for (let i = 0; i < participantsMap.length; ++i) {
-              const elem = participantsMap[i];
-              if (!elem.view) {
-                rights = constants.RIGHTS.View;
-                break;
-              }
-            }
-          }
-        }
-
-        sendData(conn, {
-          type: 'license',
-          license: {
-            type: licenseType,
-            light: licenseInfo.light,
-            mode: licenseInfo.mode,
-            rights: rights,
-            buildVersion: commonDefines.buildVersion,
-            buildNumber: commonDefines.buildNumber,
-            branding: licenseInfo.branding
-          }
-        });
-      } catch (err) {
-        logger.error('_checkLicense error:\r\n%s', err.stack);
-      }
-    });
-  }
+		return licenseType;
+	}
 
   sockjs_echo.installHandlers(server, {prefix: '/doc/['+constants.DOC_ID_PATTERN+']*/c', log: function(severity, message) {
     //TODO: handle severity
