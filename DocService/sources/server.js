@@ -231,7 +231,7 @@ if (cluster.isMaster) {
 			const licenseInfo = docsCoServer.getLicenseInfo();
 			if (licenseInfo.type !== constants.LICENSE_RESULT.Success) {
 				logger.error('License expired');
-				res.sendStatus(403);
+				res.sendStatus(402);
 				return;
 			}
 			converterService.builder(req, res);

@@ -311,7 +311,7 @@ function builderRequest(req, res) {
         cmd.setIsBuilder(true);
         cmd.setDocId(docId);
         if (!docId) {
-          let task = yield* taskResult.addRandomKeyTask(undefined, 'bldr_', 16);
+          let task = yield* taskResult.addRandomKeyTask(undefined, 'bld_', 8);
           docId = task.key;
           cmd.setDocId(docId);
           if (params.url) {
