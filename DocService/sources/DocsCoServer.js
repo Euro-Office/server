@@ -121,6 +121,7 @@ const cfgExpDocumentsCron = config.get('expire.documentsCron');
 const cfgExpSessionIdle = ms(config.get('expire.sessionidle'));
 const cfgExpSessionAbsolute = ms(config.get('expire.sessionabsolute'));
 const cfgExpSessionCloseCommand = ms(config.get('expire.sessionclosecommand'));
+const cfgExpUpdateVersionStatus = ms(config.get('expire.updateVersionStatus'));
 const cfgSockjsUrl = config.get('server.sockjsUrl');
 const cfgTokenEnableBrowser = config.get('token.enable.browser');
 const cfgTokenEnableRequestInbox = config.get('token.enable.request.inbox');
@@ -1933,7 +1934,12 @@ exports.install = function(server, callbackFunction) {
             var status = result && result.length > 0 ? result[0]['status'] : null;
             if (taskResult.FileStatus.Ok === status) {
               // Все хорошо, статус обновлять не нужно
-            } else if (taskResult.FileStatus.SaveVersion === status) {
+            } else if (taskResult.FileStatus.SaveVersion === status ||
+              (taskResult.FileStatus.UpdateVersion === status &&
+              Date.now() - result[0]['status_info'] * 60000 > cfgExpUpdateVersionStatus)) {
+              if (taskResult.FileStatus.UpdateVersion === status) {
+                logger.warn("UpdateVersion expired: docId = %s", docId);
+              }
               // Обновим статус файла (идет сборка, нужно ее остановить)
               var updateMask = new taskResult.TaskResultData();
               updateMask.key = docId;

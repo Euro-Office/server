@@ -123,7 +123,8 @@
 				"sessionabsolute": "30d",
 				"sessionclosecommand": "2m",
 				"pemStdTTL": "1h",
-				"pemCheckPeriod": "10m"
+				"pemCheckPeriod": "10m",
+				"updateVersionStatus": "5m"
 			},
 			"ipfilter": {
 				"rules": [{"address": "*", "allowed": true}],

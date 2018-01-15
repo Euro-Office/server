@@ -35,6 +35,7 @@
 var pathModule = require('path');
 var urlModule = require('url');
 var co = require('co');
+const ms = require('ms');
 var sqlBase = require('./baseConnector');
 var docsCoServer = require('./DocsCoServer');
 var taskResult = require('./taskresult');
@@ -60,6 +61,7 @@ var cfgTokenEnableBrowser = config.get('services.CoAuthoring.token.enable.browse
 const cfgForgottenFiles = config_server.get('forgottenfiles');
 const cfgForgottenFilesName = config_server.get('forgottenfilesname');
 const cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
+const cfgExpUpdateVersionStatus = ms(config.get('services.CoAuthoring.expire.updateVersionStatus'));
 
 var SAVE_TYPE_PART_START = 0;
 var SAVE_TYPE_PART = 1;
@@ -133,10 +135,15 @@ function* getOutputData(cmd, outputData, key, status, statusInfo, optConn, optAd
     case taskResult.FileStatus.Ok:
       if(taskResult.FileStatus.Ok == status) {
         outputData.setStatus('ok');
-      } else if(taskResult.FileStatus.SaveVersion == status) {
+      } else if (taskResult.FileStatus.SaveVersion == status ||
+        (taskResult.FileStatus.UpdateVersion === status &&
+        Date.now() - statusInfo * 60000 > cfgExpUpdateVersionStatus)) {
         if ((optConn && optConn.user.view) || optConn.isCloseCoAuthoring) {
           outputData.setStatus('updateversion');
         } else {
+          if (taskResult.FileStatus.UpdateVersion === status) {
+            logger.warn("UpdateVersion expired: docId = %s", docId);
+          }
           var updateMask = new taskResult.TaskResultData();
           updateMask.key = docId;
           updateMask.status = status;
@@ -714,7 +721,7 @@ function* commandSfcCallback(cmd, isSfcm) {
         updateMask.statusInfo = cmd.getData();
         var updateIfTask = new taskResult.TaskResultData();
         updateIfTask.status = taskResult.FileStatus.UpdateVersion;
-        updateIfTask.statusInfo = constants.NO_ERROR;
+        updateIfTask.statusInfo = Math.floor(Date.now() / 60000);//minutes
         var updateIfRes = yield taskResult.updateIf(updateIfTask, updateMask);
         if (updateIfRes.affectedRows > 0) {
           var replyStr = null;
