@@ -124,7 +124,7 @@ exports.uploadImageFileOld = function(req, res) {
   logger.debug('Start uploadImageFileOld: docId = %s', docId);
   var userid = req.params.userid;
   if (cfgTokenEnableBrowser) {
-    var checkJwtRes = checkJwtUpload(docId, 'uploadImageFileOld', req.params.jwt);
+    var checkJwtRes = checkJwtUpload(docId, 'uploadImageFileOld', req.query['token']);
     if(!checkJwtRes.err){
       docId = checkJwtRes.docId || docId;
       userid = checkJwtRes.userid || userid;
@@ -211,7 +211,7 @@ exports.uploadImageFile = function(req, res) {
 
       var isValidJwt = true;
       if (cfgTokenEnableBrowser) {
-        var checkJwtRes = checkJwtUpload(docId, 'uploadImageFile', req.params.jwt);
+        var checkJwtRes = checkJwtUpload(docId, 'uploadImageFile', req.query['token']);
         if (!checkJwtRes.err) {
           docId = checkJwtRes.docId || docId;
           userid = checkJwtRes.userid || userid;

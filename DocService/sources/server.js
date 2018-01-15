@@ -221,8 +221,8 @@ if (cluster.isMaster) {
 				res.sendStatus(403);
 			}
 		});
-		app.post('/uploadold/:docid/:userid/:index/:jwt?', fileUploaderService.uploadImageFileOld);
-		app.post('/upload/:docid/:userid/:index/:jwt?', rawFileParser, fileUploaderService.uploadImageFile);
+		app.post('/uploadold/:docid/:userid/:index', fileUploaderService.uploadImageFileOld);
+		app.post('/upload/:docid/:userid/:index', rawFileParser, fileUploaderService.uploadImageFile);
 
 		app.post('/downloadas/:docid', rawFileParser, canvasService.downloadAs);
 		app.get('/healthcheck', utils.checkClientIp, docsCoServer.healthCheck);

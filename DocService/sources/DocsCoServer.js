@@ -488,7 +488,9 @@ function* updateEditUsers(userId) {
   if (!licenseInfo.usersCount) {
     return;
   }
-  const expireAt = new Date().getTime() + licenseInfo.usersExpire * 1000;
+  const now = new Date();
+  const expireAt = (Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)) / 1000 +
+      licenseInfo.usersExpire - 1;
   yield utils.promiseRedis(redisClient, redisClient.zadd, redisKeyPresenceUniqueUsers, expireAt, userId);
 }
 function getUpdatePresenceCommands(docId, userId, connInfo) {
@@ -2580,14 +2582,18 @@ exports.install = function(server, callbackFunction) {
 		let licenseType = licenseInfo.type;
 		if (licenseInfo.usersCount) {
 			if (c_LR.Success === licenseType) {
-				const usersCount = yield utils.promiseRedis(redisClient, redisClient.zcount,
-					redisKeyPresenceUniqueUsers, '-inf', '+inf');
-				if (licenseInfo.usersCount > usersCount) {
+				const now = new Date();
+				const nowUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(),
+					now.getUTCMinutes(), now.getUTCSeconds()) / 1000;
+				const multi = redisClient.multi([
+					['zrangebyscore', redisKeyPresenceUniqueUsers, nowUTC, '+inf'],
+					['zremrangebyscore', redisKeyPresenceUniqueUsers, '-inf', nowUTC]
+				]);
+				const execRes = yield utils.promiseRedis(multi, multi.exec);
+				if (licenseInfo.usersCount > execRes[0].length) {
 					licenseType = c_LR.Success;
 				} else {
-					let rank = yield utils.promiseRedis(redisClient, redisClient.zrank, redisKeyPresenceUniqueUsers,
-						userId);
-					licenseType = null !== rank ? c_LR.Success : c_LR.UsersCount;
+					licenseType = -1 === execRes[0].indexOf(userId) ? c_LR.UsersCount : c_LR.Success;
 				}
 			}
 		} else {
