@@ -598,6 +598,10 @@ function* ExecuteTask(task) {
         timeoutId = setTimeout(function() {
           isTimeout = true;
           timeoutId = undefined;
+          //close stdio streams to enable emit 'close' event even if HtmlFileInternal is hung-up
+          childRes.stdin.end();
+          childRes.stdout.destroy();
+          childRes.stderr.destroy();
           childRes.kill();
         }, waitMS);
         childRes = yield spawnAsyncPromise;
