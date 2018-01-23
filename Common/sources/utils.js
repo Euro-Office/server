@@ -266,6 +266,10 @@ function downloadUrlPromise(uri, optTimeout, optLimit, opt_Authorization) {
       } else {
         var correctSize = (!optLimit || body.length < optLimit);
         if (response.statusCode == 200 && correctSize) {
+          var contentLength = response.headers['content-length'];
+          if (contentLength && body.length !== (contentLength - 0)) {
+            logger.warn('downloadUrlPromise body size mismatch: uri=%s; content-length=%s; body.length=%d', uri, contentLength, body.length);
+          }
           resolve(body);
         } else {
           if (!correctSize) {

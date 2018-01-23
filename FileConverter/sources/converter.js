@@ -226,7 +226,7 @@ function* downloadFile(docId, uri, fileFrom) {
       }
     }
     if (res) {
-      logger.debug('downloadFile complete(id=%s)', docId);
+      logger.debug('downloadFile complete filesize=%d (id=%s)', data.length, docId);
       fs.writeFileSync(fileFrom, data);
     }
   } else {
