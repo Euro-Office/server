@@ -132,6 +132,7 @@
 				"errorcode": 401
 			},
 			"secret": {
+				"browser": {"string": "secret", "file": "", "tenants": {}},
 				"inbox": {"string": "secret", "file": "", "tenants": {}},
 				"outbox": {"string": "secret", "file": ""},
 				"session": {"string": "secret", "file": ""}
@@ -143,6 +144,9 @@
 						"inbox": false,
 						"outbox": false
 					}
+				},
+				"browser": {
+					"secretFromInbox": false
 				},
 				"inbox": {
 					"header": "Authorization",

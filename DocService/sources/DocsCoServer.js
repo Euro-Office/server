@@ -130,6 +130,9 @@ const cfgTokenSessionAlgorithm = config.get('token.session.algorithm');
 const cfgTokenSessionExpires = ms(config.get('token.session.expires'));
 const cfgTokenInboxHeader = config.get('token.inbox.header');
 const cfgTokenInboxPrefix = config.get('token.inbox.prefix');
+const cfgTokenBrowserSecretFromInbox = config.get('token.browser.secretFromInbox');
+const cfgSecretBrowser = config.get('secret.browser');
+const cfgSecretInbox = config.get('secret.inbox');
 const cfgSecretSession = config.get('secret.session');
 const cfgForceSaveEnable = config.get('autoAssembly.enable');
 const cfgForceSaveInterval = ms(config.get('autoAssembly.interval'));
@@ -1017,13 +1020,19 @@ function* _createSaveTimer(docId, opt_userId, opt_queue, opt_noDelay) {
   }
 }
 
-function checkJwt(docId, token, isSession) {
+function checkJwt(docId, token, type) {
   var res = {decoded: null, description: null, code: null, token: token};
   var secret;
-  if (isSession) {
-    secret = utils.getSecretByElem(cfgSecretSession);
-  } else {
-    secret = utils.getSecret(docId, null, token);
+  switch (type) {
+    case commonDefines.c_oAscSecretType.Browser:
+      secret = utils.getSecret(docId, cfgTokenBrowserSecretFromInbox ? cfgSecretInbox : cfgSecretBrowser, null, token);
+      break;
+    case commonDefines.c_oAscSecretType.Inbox:
+      secret = utils.getSecret(docId, cfgSecretInbox, null, token);
+      break;
+    case commonDefines.c_oAscSecretType.Session:
+      secret = utils.getSecretByElem(cfgSecretSession);
+      break;
   }
   if (undefined == secret) {
     logger.error('empty secret: docId = %s token = %s', docId, token);
@@ -1047,7 +1056,7 @@ function checkJwtHeader(docId, req) {
   var authorization = req.get(cfgTokenInboxHeader);
   if (authorization && authorization.startsWith(cfgTokenInboxPrefix)) {
     var token = authorization.substring(cfgTokenInboxPrefix.length);
-    return checkJwt(docId, token, false);
+    return checkJwt(docId, token, commonDefines.c_oAscSecretType.Inbox);
   }
   return null;
 }
@@ -1056,7 +1065,7 @@ function checkJwtPayloadHash(docId, hash, body, token) {
   if (body && Buffer.isBuffer(body)) {
     var decoded = jwt.decode(token, {complete: true});
     var hmac = jwa(decoded.header.alg);
-    var secret = utils.getSecret(docId, null, token);
+    var secret = utils.getSecret(docId, cfgSecretInbox, null, token);
     var signature = hmac.sign(body, secret);
     res = (hash === signature);
   }
@@ -1178,8 +1187,9 @@ exports.install = function(server, callbackFunction) {
             conn.sessionTimeLastAction = new Date().getTime() - data.idletime;
             break;
           case 'refreshToken' :
-            var isSession = !!data.jwtSession;
-            var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isSession);
+            let secretType = !!data.jwtSession ? commonDefines.c_oAscSecretType.Session :
+              commonDefines.c_oAscSecretType.Browser;
+            var checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, secretType);
             if (checkJwtRes.decoded) {
               if (checkJwtRes.decoded.document.key == conn.docId) {
                 sendDataRefreshToken(conn, {token: fillJwtByConnection(conn), expires: cfgTokenSessionExpires});
@@ -1348,7 +1358,7 @@ exports.install = function(server, callbackFunction) {
     var docIdNew = cmd.getDocId();
     //check jwt
     if (cfgTokenEnableBrowser) {
-      var checkJwtRes = checkJwt(docIdNew, cmd.getJwt(), false);
+      var checkJwtRes = checkJwt(docIdNew, cmd.getJwt(), commonDefines.c_oAscSecretType.Browser);
       if (checkJwtRes.decoded) {
         fillVersionHistoryFromJwt(checkJwtRes.decoded, cmd);
         docIdNew = cmd.getDocId();
@@ -1841,8 +1851,9 @@ exports.install = function(server, callbackFunction) {
       let docId = data.docid;
       //check jwt
       if (cfgTokenEnableBrowser) {
-        const isSession = !!data.jwtSession;
-        const checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, isSession);
+        let secretType = !!data.jwtSession ? commonDefines.c_oAscSecretType.Session :
+          commonDefines.c_oAscSecretType.Browser;
+        const checkJwtRes = checkJwt(docId, data.jwtSession || data.jwtOpen, secretType);
         if (checkJwtRes.decoded) {
           if (!fillDataFromJwt(checkJwtRes.decoded, data)) {
             logger.warn("fillDataFromJwt return false: docId = %s", docId);

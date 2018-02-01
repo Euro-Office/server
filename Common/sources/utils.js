@@ -64,7 +64,6 @@ var cfgTokenOutboxHeader = config.get('services.CoAuthoring.token.outbox.header'
 var cfgTokenOutboxPrefix = config.get('services.CoAuthoring.token.outbox.prefix');
 var cfgTokenOutboxAlgorithm = config.get('services.CoAuthoring.token.outbox.algorithm');
 var cfgTokenOutboxExpires = config.get('services.CoAuthoring.token.outbox.expires');
-var cfgSignatureSecretInbox = config.get('services.CoAuthoring.secret.inbox');
 var cfgSignatureSecretOutbox = config.get('services.CoAuthoring.secret.outbox');
 var cfgVisibilityTimeout = config.get('queue.visibilityTimeout');
 var cfgQueueRetentionPeriod = config.get('queue.retentionPeriod');
@@ -84,7 +83,6 @@ var g_oIpFilterRules = function() {
   }
   return res;
 }();
-var isEmptySecretTenants = isEmptyObject(cfgSignatureSecretInbox.tenants);
 const pemfileCache = new NodeCache({stdTTL: ms(cfgExpPemStdTtl) / 1000, checkperiod: ms(cfgExpPemCheckPeriod) / 1000, errorOnMissing: false, useClones: true});
 
 exports.CONVERTION_TIMEOUT = 1.5 * (cfgVisibilityTimeout + cfgQueueRetentionPeriod) * 1000;
@@ -700,9 +698,8 @@ function getSecretByElem(secretElem) {
   return secret;
 }
 exports.getSecretByElem = getSecretByElem;
-function getSecret(docId, opt_iss, opt_token) {
-  var secretElem = cfgSignatureSecretInbox;
-  if (!isEmptySecretTenants) {
+function getSecret(docId, secretElem, opt_iss, opt_token) {
+  if (!isEmptyObject(secretElem.tenants)) {
     var iss;
     if (opt_token) {
       //look for issuer
@@ -714,7 +711,7 @@ function getSecret(docId, opt_iss, opt_token) {
       iss = opt_iss;
     }
     if (iss) {
-      secretElem = cfgSignatureSecretInbox.tenants[iss];
+      secretElem = secretElem.tenants[iss];
       if (!secretElem) {
         logger.error('getSecret unknown issuer: docId = %s iss = %s', docId, iss);
       }

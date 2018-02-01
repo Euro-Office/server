@@ -923,7 +923,7 @@ exports.downloadAs = function(req, res) {
 
       if (cfgTokenEnableBrowser) {
         var isValidJwt = false;
-        var checkJwtRes = docsCoServer.checkJwt(docId, cmd.getJwt(), true);
+        var checkJwtRes = docsCoServer.checkJwt(docId, cmd.getJwt(), commonDefines.c_oAscSecretType.Session);
         if (checkJwtRes.decoded) {
           var doc = checkJwtRes.decoded.document;
           if (!doc.permissions || (false !== doc.permissions.download || false !== doc.permissions.print)) {
