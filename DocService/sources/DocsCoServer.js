@@ -130,6 +130,7 @@ const cfgTokenSessionAlgorithm = config.get('token.session.algorithm');
 const cfgTokenSessionExpires = ms(config.get('token.session.expires'));
 const cfgTokenInboxHeader = config.get('token.inbox.header');
 const cfgTokenInboxPrefix = config.get('token.inbox.prefix');
+const cfgTokenOutboxInBody = config.get('token.outbox.inBody');
 const cfgTokenBrowserSecretFromInbox = config.get('token.browser.secretFromInbox');
 const cfgSecretBrowser = config.get('secret.browser');
 const cfgSecretInbox = config.get('secret.inbox');
@@ -605,15 +606,21 @@ function* getOriginalParticipantsId(docId) {
   return result;
 }
 
-function* sendServerRequest(docId, uri, dataObject, opt_authorization) {
+function* sendServerRequest(docId, uri, dataObject, opt_checkAuthorization) {
   logger.debug('postData request: docId = %s;url = %s;data = %j', docId, uri, dataObject);
-  var authorization;
-  if (opt_authorization) {
-    authorization = opt_authorization;
-  } else if (cfgTokenEnableRequestOutbox) {
-    authorization = utils.fillJwtForRequest(dataObject);
+  let auth;
+  if (cfgTokenEnableRequestOutbox) {
+    auth = utils.fillJwtForRequest(dataObject);
+    if (opt_checkAuthorization && !opt_checkAuthorization(auth, dataObject)) {
+      auth = utils.fillJwtForRequest(dataObject);
+      logger.warn('authorization reduced to: docId = %s; length=%d', docId, auth.length);
+    }
+    if (cfgTokenOutboxInBody) {
+      dataObject = {token: auth};
+      auth = undefined;
+    }
   }
-  var res = yield utils.postRequestPromise(uri, JSON.stringify(dataObject), cfgCallbackRequestTimeout * 1000, authorization);
+  let res = yield utils.postRequestPromise(uri, JSON.stringify(dataObject), cfgCallbackRequestTimeout * 1000, auth);
   logger.debug('postData response: docId = %s;data = %s', docId, res);
   return res;
 }

@@ -156,7 +156,8 @@
 					"header": "Authorization",
 					"prefix": "Bearer ",
 					"algorithm": "HS256",
-					"expires": "5m"
+					"expires": "5m",
+					"inBody": false
 				},
 				"session": {
 					"algorithm": "HS256",
