@@ -64,7 +64,7 @@ var cfgErrorFiles = configConverter.get('errorfiles');
 const cfgStreamWriterBufferSize = configConverter.get('streamWriterBufferSize');
 //cfgMaxRequestChanges was obtained as a result of the test: 84408 changes - 5,16 MB
 const cfgMaxRequestChanges = configConverter.get('maxRequestChanges');
-const cfgMaxRedeliveredCount = configConverter.get('maxRedeliveredCount')
+const cfgMaxRedeliveredCount = configConverter.get('maxRedeliveredCount');
 var cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
 const cfgForgottenFilesName = config.get('services.CoAuthoring.server.forgottenfilesname');
 
@@ -210,7 +210,7 @@ function* downloadFile(docId, uri, fileFrom) {
       try {
         let authorization;
         if (cfgTokenEnableRequestOutbox) {
-          authorization = utils.fillJwtForRequest();
+          authorization = utils.fillJwtForRequest({url: uri});
         }
         data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout * 1000, cfgDownloadMaxBytes, authorization);
         res = true;
