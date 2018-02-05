@@ -53,6 +53,7 @@ const ms = require('ms');
 const constants = require('./constants');
 const logger = require('./logger');
 const forwarded = require('forwarded');
+const mime = require('mime');
 
 var configIpFilter = config.get('services.CoAuthoring.ipfilter');
 var cfgIpFilterRules = configIpFilter.get('rules');
@@ -405,7 +406,7 @@ function _fillResponse(res, output, isJSON) {
   res.send(body);
 }
 
-function fillResponse(req, res, uri, error) {
+function fillResponse(req, res, uri, error, isJSON) {
   let output;
   if (constants.NO_ERROR != error) {
     output = {error: exports.mapAscServerErrorToOldError(error)};
@@ -413,7 +414,16 @@ function fillResponse(req, res, uri, error) {
     output = {fileUrl: uri, percent: (uri ? 100 : 0), endConvert: !!uri};
   }
   var accept = req.get('Accept');
-  let isJSON = accept && -1 !== accept.toLowerCase().indexOf('application/json');
+  if (accept) {
+    switch (mime.extension(accept)) {
+      case "json":
+        isJSON = true;
+        break;
+      case "xml":
+        isJSON = false;
+        break;
+    }
+  }
   _fillResponse(res, output, isJSON);
 }
 

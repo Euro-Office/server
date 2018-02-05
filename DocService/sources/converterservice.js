@@ -174,7 +174,7 @@ function parseIntParam(val){
   return (typeof val === 'string') ? parseInt(val) : val;
 }
 
-function convertRequest(req, res) {
+function convertRequest(req, res, isJson) {
   return co(function* () {
     var docId = 'convertRequest';
     try {
@@ -183,7 +183,7 @@ function convertRequest(req, res) {
       if(authRes.code === constants.NO_ERROR){
         params = authRes.params;
       } else {
-        utils.fillResponse(req, res, undefined, authRes.code);
+        utils.fillResponse(req, res, undefined, authRes.code, isJson);
         return;
       }
 
@@ -234,18 +234,24 @@ function convertRequest(req, res) {
 
       if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== cmd.getOutputFormat()) {
         var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req), fileTo);
-        utils.fillResponse(req, res, status.url, status.err);
+        utils.fillResponse(req, res, status.url, status.err, isJson);
       } else {
         var addresses = utils.forwarded(req);
         logger.error('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
-        utils.fillResponse(req, res, undefined, constants.UNKNOWN);
+        utils.fillResponse(req, res, undefined, constants.UNKNOWN, isJson);
       }
     }
     catch (e) {
       logger.error('Error convert: docId = %s\r\n%s', docId, e.stack);
-      utils.fillResponse(req, res, undefined, constants.UNKNOWN);
+      utils.fillResponse(req, res, undefined, constants.UNKNOWN, isJson);
     }
   });
+}
+function convertRequestJson(req, res) {
+  return convertRequest(req, res, true);
+}
+function convertRequestXml(req, res) {
+  return convertRequest(req, res, false);
 }
 
 function builderRequest(req, res) {
@@ -307,5 +313,6 @@ function builderRequest(req, res) {
 }
 
 exports.convertFromChanges = convertFromChanges;
-exports.convert = convertRequest;
+exports.convertJson = convertRequestJson;
+exports.convertXml = convertRequestXml;
 exports.builder = builderRequest;

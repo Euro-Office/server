@@ -199,8 +199,9 @@ if (cluster.isMaster) {
 			app.get('/' + fontsRoute + 'odttf/:fontname', fontService.getFont);
 		}
 
-		app.get('/ConvertService.ashx', utils.checkClientIp, rawFileParser, converterService.convert);
-		app.post('/ConvertService.ashx', utils.checkClientIp, rawFileParser, converterService.convert);
+		app.get('/ConvertService.ashx', utils.checkClientIp, rawFileParser, converterService.convertXml);
+		app.post('/ConvertService.ashx', utils.checkClientIp, rawFileParser, converterService.convertXml);
+		app.post('/converter', utils.checkClientIp, rawFileParser, converterService.convertJson);
 
 
 		app.get('/FileUploader.ashx', utils.checkClientIp, rawFileParser, fileUploaderService.uploadTempFile);
