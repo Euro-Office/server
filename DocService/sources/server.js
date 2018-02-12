@@ -228,6 +228,10 @@ if (cluster.isMaster) {
 		app.post('/downloadas/:docid', rawFileParser, canvasService.downloadAs);
 		app.get('/healthcheck', utils.checkClientIp, docsCoServer.healthCheck);
 
+		app.get('/baseurl', (req, res) => {
+			res.send(utils.getBaseUrlByRequest(req));
+	  });
+
 		app.post('/docbuilder', utils.checkClientIp, rawFileParser, (req, res) => {
 			const licenseInfo = docsCoServer.getLicenseInfo();
 			if (licenseInfo.type !== constants.LICENSE_RESULT.Success) {
