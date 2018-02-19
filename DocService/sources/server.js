@@ -125,7 +125,6 @@ if (cluster.isMaster) {
 	const docsCoServer = require('./DocsCoServer');
 	const canvasService = require('./canvasservice');
 	const converterService = require('./converterservice');
-	const fontService = require('./fontservice');
 	const fileUploaderService = require('./fileuploaderservice');
 	const constants = require('./../../Common/sources/constants');
 	const utils = require('./../../Common/sources/utils');
