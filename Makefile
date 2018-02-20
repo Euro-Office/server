@@ -82,7 +82,7 @@ WELCOME = $(OUTPUT)/$(WELCOME_DIR)/
 
 CORE_FONTS_DIR = core-fonts
 CORE_FONTS_FILES = ../$(CORE_FONTS_DIR)/**
-CORE_FONTS = $(OUTPUT)/$(CORE_FONTS_DIR)/
+CORE_FONTS = $(OUTPUT)/../$(CORE_FONTS_DIR)/
 
 .PHONY: all clean install uninstall build-date htmlfileinternal docbuilder
 
@@ -139,7 +139,7 @@ $(CORE_FONTS):
 		cp -r -t $(CORE_FONTS) $(CORE_FONTS_FILES)
 		
 clean:
-	rm -rf $(OUTPUT) $(GRUNT_FILES)
+	rm -rf $(OUTPUT) $(GRUNT_FILES) $(CORE_FONTS)
 
 install:
 	sudo adduser --quiet --home /var/www/onlyoffice --system --group onlyoffice
