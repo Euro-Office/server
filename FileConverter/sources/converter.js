@@ -39,6 +39,7 @@ var childProcess = require('child_process');
 var co = require('co');
 var config = require('config');
 var spawnAsync = require('@expo/spawn-async');
+const bytes = require('bytes');
 var configConverter = config.get('FileConverter.converter');
 
 var commonDefines = require('./../../Common/sources/commondefines');
@@ -61,6 +62,7 @@ var cfgDocbuilderPath = configConverter.get('docbuilderPath');
 var cfgDocbuilderAllFontsPath = configConverter.get('docbuilderAllFontsPath');
 var cfgArgs = configConverter.get('args');
 var cfgErrorFiles = configConverter.get('errorfiles');
+var cfgInputLimits = configConverter.get('inputLimits');
 const cfgStreamWriterBufferSize = configConverter.get('streamWriterBufferSize');
 //cfgMaxRequestChanges was obtained as a result of the test: 84408 changes - 5,16 MB
 const cfgMaxRequestChanges = configConverter.get('maxRequestChanges');
@@ -80,6 +82,7 @@ var exitCodesReturn = [constants.CONVERT_NEED_PARAMS, constants.CONVERT_CORRUPTE
 var exitCodesMinorError = [constants.CONVERT_NEED_PARAMS, constants.CONVERT_DRM, constants.CONVERT_PASSWORD];
 var exitCodesUpload = [constants.NO_ERROR, constants.CONVERT_CORRUPTED, constants.CONVERT_NEED_PARAMS,
   constants.CONVERT_DRM];
+let inputLimitsXmlCache;
 
 function TaskQueueDataConvert(task) {
   var cmd = task.getCmd();
@@ -133,6 +136,7 @@ TaskQueueDataConvert.prototype = {
     xml += this.serializeXmlProp('m_nDoctParams', this.doctParams);
     xml += this.serializeXmlProp('m_oTimestamp', this.timestamp.toISOString());
     xml += this.serializeXmlProp('m_bIsNoBase64', this.noBase64);
+    xml += this.serializeLimit();
     xml += '</TaskQueueDataConvert>';
     fs.writeFileSync(fsPath, xml, {encoding: 'utf8'});
     let hiddenXml;
@@ -169,6 +173,32 @@ TaskQueueDataConvert.prototype = {
     xml += '</m_oThumbnail>';
     return xml;
   },
+  serializeLimit: function() {
+    if (!inputLimitsXmlCache) {
+      var xml = '<m_oInputLimits>';
+      for (let i = 0; i < cfgInputLimits.length; ++i) {
+        let limit = cfgInputLimits[i];
+        if (limit.type && limit.zip) {
+          xml += '<m_oInputLimit';
+          xml += this.serializeXmlAttr('type', limit.type);
+          xml += '>';
+          xml += '<m_oZip';
+          if (limit.zip.compressed) {
+            xml += this.serializeXmlAttr('compressed', bytes.parse(limit.zip.compressed));
+          }
+          if (limit.zip.uncompressed) {
+            xml += this.serializeXmlAttr('uncompressed', bytes.parse(limit.zip.uncompressed));
+          }
+          xml += this.serializeXmlAttr('template', limit.zip.template);
+          xml += '/>';
+          xml += '</m_oInputLimit>';
+        }
+      }
+      xml += '</m_oInputLimits>';
+      inputLimitsXmlCache = xml;
+    }
+    return inputLimitsXmlCache;
+  },
   serializeXmlProp: function(name, value) {
     var xml = '';
     if (null != value) {
@@ -177,6 +207,15 @@ TaskQueueDataConvert.prototype = {
       xml += '</' + name + '>';
     } else {
       xml += '<' + name + ' xsi:nil="true" />';
+    }
+    return xml;
+  },
+  serializeXmlAttr: function(name, value) {
+    var xml = '';
+    if (null != value) {
+      xml += ' ' + name + '=\"';
+      xml += utils.encodeXml(value.toString());
+      xml += '\"';
     }
     return xml;
   }

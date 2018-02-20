@@ -189,7 +189,30 @@
 			"errorfiles": "",
 			"streamWriterBufferSize": 8388608,
 			"maxRequestChanges": 50000,
-			"maxRedeliveredCount": 2
+			"maxRedeliveredCount": 2,
+			"inputLimits": [
+				{
+				"type": "docx;dotx;docm;dotm",
+				"zip": {
+					"uncompressed": "50MB",
+					"template": "*.xml"
+				}
+				},
+				{
+				"type": "xlsx;xltx;xlsm;xltm",
+				"zip": {
+					"uncompressed": "300MB",
+					"template": "*.xml"
+				}
+				},
+				{
+				"type": "pptx;ppsx;potx;pptm;ppsm;potm",
+				"zip": {
+					"uncompressed": "50MB",
+					"template": "*.xml"
+				}
+				}
+			]
 		}
 	},
 	"FileStorage": {
