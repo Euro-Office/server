@@ -326,6 +326,7 @@ exports.mapAscServerErrorToOldError = function(error) {
     case constants.CONVERT_DEAD_LETTER :
       res = -2;
       break;
+    case constants.CONVERT_LIMITS :
     case constants.CONVERT_PASSWORD :
     case constants.CONVERT_DRM :
     case constants.CONVERT_NEED_PARAMS :
