@@ -1218,7 +1218,7 @@ exports.install = function(server, callbackFunction) {
             yield* getMessages(conn, data);
             break;
           case 'unLockDocument'    :
-            yield* checkEndAuthLock(data.unlock, data.isSave, docId, conn.user.id, conn);
+            yield* checkEndAuthLock(data.unlock, data.isSave, docId, conn.user.id, data.releaseLocks, data.deleteIndex, conn);
             break;
           case 'close':
             yield* closeDocument(conn, false);
@@ -1517,8 +1517,22 @@ exports.install = function(server, callbackFunction) {
     return participantsMap;
   }
 
-	function* checkEndAuthLock(unlock, isSave, docId, userId, currentConnection) {
+	function* checkEndAuthLock(unlock, isSave, docId, userId, releaseLocks, deleteIndex, conn) {
 		let result = false;
+
+		if (null != deleteIndex && -1 !== deleteIndex) {
+			let puckerIndex = yield* getChangesIndex(docId);
+			const deleteCount = puckerIndex - deleteIndex;
+			if (0 < deleteCount) {
+				puckerIndex -= deleteCount;
+				yield sqlBase.deleteChangesPromise(docId, deleteIndex);
+			} else if (0 > deleteCount) {
+				logger.error("Error checkEndAuthLock docid: %s ; deleteIndex: %s ; startIndex: %s ; deleteCount: %s", docId,
+					deleteIndex, puckerIndex, deleteCount);
+			}
+			yield* setChangesIndex(docId, puckerIndex);
+        }
+
 		if (unlock) {
 			const lockDocument = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyLockDoc + docId);
 			if (lockDocument && userId === JSON.parse(lockDocument).id) {
@@ -1537,17 +1551,22 @@ exports.install = function(server, callbackFunction) {
 		}
 
 		//Release locks
-		if (isSave) {
-			const userLocks = yield* getUserLocks(docId, currentConnection.sessionId);
-			if (0 < userLocks.length) {
-				sendReleaseLock(currentConnection, userLocks);
-				yield* publish(
-					{type: commonDefines.c_oPublishType.releaseLock, docId: docId, userId: userId, locks: userLocks},
-					docId, userId);
+		if (isSave && conn) {
+			if (releaseLocks) {
+				const userLocks = yield* getUserLocks(docId, conn.sessionId);
+				if (0 < userLocks.length) {
+					sendReleaseLock(conn, userLocks);
+					yield* publish({
+						type: commonDefines.c_oPublishType.releaseLock,
+						docId: docId,
+						userId: userId,
+						locks: userLocks
+					}, docId, userId);
+				}
 			}
 
 			// Автоматически снимаем lock сами
-			yield* unSaveLock(currentConnection, -1, -1);
+			yield* unSaveLock(conn, -1, -1);
 		}
 
 		return result;
@@ -2393,8 +2412,11 @@ exports.install = function(server, callbackFunction) {
         }
       }
 
-      //Release locks
-      const userLocks = yield* getUserLocks(docId, conn.sessionId);
+      let userLocks = [];
+      if (data.releaseLocks) {
+		  //Release locks
+		  userLocks = yield* getUserLocks(docId, conn.sessionId);
+      }
       // Для данного пользователя снимаем Lock с документа, если пришел флаг unlock
       const checkEndAuthLockRes = yield* checkEndAuthLock(data.unlock, false, docId, userId);
       if (!checkEndAuthLockRes) {
