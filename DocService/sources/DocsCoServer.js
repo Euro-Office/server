@@ -1618,11 +1618,14 @@ exports.install = function(server, callbackFunction) {
     connections = _.reject(connections, function(el) {
       return el.sessionId === sessionId;//Delete this connection
     });
-    // Кладем в массив, т.к. нам нужно отправлять данные для открытия/сохранения документа
-    connections.push(conn);
-    yield* updatePresence(conn.docId, conn.user.id, getConnectionInfo(conn));
+    //closing could happen during async action
+    if (constants.CONN_CLOSED !== conn.readyState) {
+      // Кладем в массив, т.к. нам нужно отправлять данные для открытия/сохранения документа
+      connections.push(conn);
+      yield* updatePresence(conn.docId, conn.user.id, getConnectionInfo(conn));
 
-    sendFileError(conn, errorId);
+      sendFileError(conn, errorId);
+    }
   }
 
   // Пересчет только для чужих Lock при сохранении на клиенте, который добавлял/удалял строки или столбцы
@@ -1993,13 +1996,16 @@ exports.install = function(server, callbackFunction) {
         connections = _.reject(connections, function(el) {
           return el.sessionId === data.sessionId;//Delete this connection
         });
-        // Кладем в массив, т.к. нам нужно отправлять данные для открытия/сохранения документа
-        connections.push(conn);
-        yield* updatePresence(docId, conn.user.id, getConnectionInfo(conn));
-        // Посылаем формальную авторизацию, чтобы подтвердить соединение
-        yield* sendAuthInfo(undefined, undefined, conn, undefined);
-        if (cmd) {
-          yield canvasService.openDocument(conn, cmd, upsertRes);
+        //closing could happen during async action
+        if (constants.CONN_CLOSED !== conn.readyState) {
+          // Кладем в массив, т.к. нам нужно отправлять данные для открытия/сохранения документа
+          connections.push(conn);
+          yield* updatePresence(docId, conn.user.id, getConnectionInfo(conn));
+          // Посылаем формальную авторизацию, чтобы подтвердить соединение
+          yield* sendAuthInfo(undefined, undefined, conn, undefined);
+          if (cmd) {
+            yield canvasService.openDocument(conn, cmd, upsertRes);
+          }
         }
         return;
       }
