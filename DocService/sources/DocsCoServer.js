@@ -141,6 +141,7 @@ const cfgForceSaveInterval = ms(config.get('autoAssembly.interval'));
 const cfgForceSaveStep = ms(config.get('autoAssembly.step'));
 const cfgQueueRetentionPeriod = configCommon.get('queue.retentionPeriod');
 const cfgForgottenFiles = config.get('server.forgottenfiles');
+const cfgMaxRequestChanges = config.get('server.maxRequestChanges');
 
 const redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
 const redisKeyPresenceHash = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_HASH;
@@ -2002,7 +2003,7 @@ exports.install = function(server, callbackFunction) {
           connections.push(conn);
           yield* updatePresence(docId, conn.user.id, getConnectionInfo(conn));
           // Посылаем формальную авторизацию, чтобы подтвердить соединение
-          yield* sendAuthInfo(undefined, undefined, conn, undefined);
+          yield* sendAuthInfo(conn, undefined);
           if (cmd) {
             yield canvasService.openDocument(conn, cmd, upsertRes);
           }
@@ -2052,15 +2053,19 @@ exports.install = function(server, callbackFunction) {
               yield* sendFileErrorAuth(conn, data.sessionId, 'Other error');
               return;
             }
-
-            var objChangesDocument = yield* getDocumentChanges(docId);
+            var puckerIndex = yield* getChangesIndex(docId);
             var bIsSuccessRestore = true;
-            if (objChangesDocument && 0 < objChangesDocument.arrChanges.length) {
+            if (puckerIndex > 0) {
+              let objChangesDocument = yield* getDocumentChanges(docId, puckerIndex - 1, puckerIndex);
               var change = objChangesDocument.arrChanges[objChangesDocument.getLength() - 1];
-              if (change['change']) {
-                if (change['user'] !== curUserId) {
-                  bIsSuccessRestore = 0 === (((data['lastOtherSaveTime'] - change['time']) / 1000) >> 0);
+              if (change) {
+                if (change['change']) {
+                  if (change['user'] !== curUserId) {
+                    bIsSuccessRestore = 0 === (((data['lastOtherSaveTime'] - change['time']) / 1000) >> 0);
+                  }
                 }
+              } else {
+                bIsSuccessRestore = false;
               }
             }
 
@@ -2165,12 +2170,10 @@ exports.install = function(server, callbackFunction) {
         };
         sendData(conn, sendObject);//Or 0 if fails
       } else {
-        let objChangesDocument;
         if (!bIsRestore) {
-          objChangesDocument = yield* getDocumentChanges(docId);
+          yield* sendAuthChanges(conn.docId, [conn]);
         }
-        yield* sendAuthInfo(objChangesDocument && objChangesDocument.arrChanges, objChangesDocument &&
-            objChangesDocument.getLength(), conn, participantsMap, hasForgotten);
+        yield* sendAuthInfo(conn, participantsMap, hasForgotten);
       }
       yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, userId: tmpUser.id, participantsTimestamp: participantsTimestamp, participants: participantsMap, waitAuthUserId: waitAuthUserId}, docId, tmpUser.id);
     } else {
@@ -2180,7 +2183,23 @@ exports.install = function(server, callbackFunction) {
     return res;
   }
 
-  function* sendAuthInfo(objChangesDocument, changesIndex, conn, participantsMap, opt_hasForgotten) {
+  function* sendAuthChanges(docId, connections) {
+    let index = 0;
+    let changes;
+    do {
+      let objChangesDocument = yield getDocumentChanges(docId, index, index + cfgMaxRequestChanges);
+      changes = objChangesDocument.arrChanges;
+      const sendObject = {
+        type: 'authChanges',
+        changes: changes
+      };
+      for (let i = 0; i < connections.length; ++i) {
+        sendData(connections[i], sendObject);//Or 0 if fails
+      }
+      index += cfgMaxRequestChanges;
+    } while (changes && cfgMaxRequestChanges === changes.length);
+  }
+  function* sendAuthInfo(conn, participantsMap, opt_hasForgotten) {
     const docId = conn.docId;
     let docLock;
     if(EditorTypes.document == conn.editorType){
@@ -2209,8 +2228,6 @@ exports.install = function(server, callbackFunction) {
       participants: participantsMap,
       messages: allMessagesParsed,
       locks: docLock,
-      changes: objChangesDocument,
-      changesIndex: changesIndex,
       indexUser: conn.user.indexUser,
       hasForgotten: opt_hasForgotten,
       jwt: cfgTokenEnableBrowser ? {token: fillJwtByConnection(conn), expires: cfgTokenSessionExpires} : undefined,
@@ -2821,10 +2838,10 @@ exports.install = function(server, callbackFunction) {
             }
             participants = getParticipants(data.docId, true, data.userId, true);
             if(participants.length > 0) {
-              objChangesDocument = yield* getDocumentChanges(data.docId);
+              yield* sendAuthChanges(data.docId, participants);
               for (i = 0; i < participants.length; ++i) {
                 participant = participants[i];
-                yield* sendAuthInfo(objChangesDocument.arrChanges, objChangesDocument.getLength(), participant, data.participantsMap);
+                yield* sendAuthInfo(participant, data.participantsMap);
               }
             }
             break;
