@@ -968,7 +968,7 @@ function* bindEvents(docId, callback, baseUrl, opt_userAction, opt_userData) {
     if (null !== oCallbackUrl) {
       let filterStatus = yield* utils.checkHostFilter(oCallbackUrl.host);
       if (filterStatus > 0) {
-        logger.error('checkIpFilter error: docId = %s;url = %s', docId, callback);
+        logger.warn('checkIpFilter error: docId = %s;url = %s', docId, callback);
         //todo add new error type
         oCallbackUrl = null;
       }
@@ -1044,7 +1044,7 @@ function checkJwt(docId, token, type) {
       break;
   }
   if (undefined == secret) {
-    logger.error('empty secret: docId = %s token = %s', docId, token);
+    logger.warn('empty secret: docId = %s token = %s', docId, token);
   }
   try {
     res.decoded = jwt.verify(token, secret);
@@ -1608,7 +1608,7 @@ exports.install = function(server, callbackFunction) {
   }
 
   function sendFileError(conn, errorId) {
-    logger.error('error description: docId = %s errorId = %s', conn.docId, errorId);
+    logger.warn('error description: docId = %s errorId = %s', conn.docId, errorId);
     conn.isCiriticalError = true;
     sendData(conn, {type: 'error', description: errorId});
   }
@@ -3107,7 +3107,7 @@ exports.commandFromServer = function (req, res) {
             if ('1' !== params.status) {
               //запрос saved выполняется синхронно, поэтому заполняем переменную чтобы проверить ее после sendServerRequest
               yield utils.promiseRedis(redisClient, redisClient.setex, redisKeySaved + docId, cfgExpSaved, params.status);
-              logger.error('saved corrupted id = %s status = %s conv = %s', docId, params.status, params.conv);
+              logger.warn('saved corrupted id = %s status = %s conv = %s', docId, params.status, params.conv);
             } else {
               logger.info('saved id = %s status = %s conv = %s', docId, params.status, params.conv);
             }

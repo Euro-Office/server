@@ -552,7 +552,7 @@ function* commandImgurls(conn, cmd, outputData) {
       outputUrls.push(outputUrl);
     }
   } else {
-    logger.error('error commandImgurls: docId = %s access deny', docId);
+    logger.warn('error commandImgurls: docId = %s access deny', docId);
     errorCode = errorCode.UPLOAD;
   }
   if (constants.NO_ERROR !== errorCode && 0 == outputUrls.length) {
@@ -773,7 +773,7 @@ function* commandSfcCallback(cmd, isSfcm) {
       }
     }
   } else {
-    logger.error('Empty Callback commandSfcCallback: docId = %s', docId);
+    logger.warn('Empty Callback commandSfcCallback: docId = %s', docId);
     storeForgotten = true;
   }
   if (storeForgotten && (!isError || isErrorCorrupted)) {
@@ -929,10 +929,10 @@ exports.downloadAs = function(req, res) {
             docId = doc.key;
             cmd.setDocId(doc.key);
           } else {
-            logger.error('Error downloadAs jwt: docId = %s\r\n%s', docId, 'access deny');
+            logger.warn('Error downloadAs jwt: docId = %s\r\n%s', docId, 'access deny');
           }
         } else {
-          logger.error('Error downloadAs jwt: docId = %s\r\n%s', docId, checkJwtRes.description);
+          logger.warn('Error downloadAs jwt: docId = %s\r\n%s', docId, checkJwtRes.description);
         }
         if (!isValidJwt) {
           res.sendStatus(400);

@@ -237,7 +237,7 @@ function convertRequest(req, res, isJson) {
         utils.fillResponse(req, res, status.url, status.err, isJson);
       } else {
         var addresses = utils.forwarded(req);
-        logger.error('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
+        logger.warn('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
         utils.fillResponse(req, res, undefined, constants.UNKNOWN, isJson);
       }
     }

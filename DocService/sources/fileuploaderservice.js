@@ -97,10 +97,10 @@ function checkJwtUpload(docId, errorName, token){
         res.userid = edit.user.id;
       }
     } else {
-      logger.error('Error %s jwt: docId = %s\r\n%s', errorName, docId, 'access deny');
+      logger.warn('Error %s jwt: docId = %s\r\n%s', errorName, docId, 'access deny');
     }
   } else {
-    logger.error('Error %s jwt: docId = %s\r\n%s', errorName, docId, checkJwtRes.description);
+    logger.warn('Error %s jwt: docId = %s\r\n%s', errorName, docId, checkJwtRes.description);
   }
   return res;
 }
