@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -237,7 +237,7 @@ function convertRequest(req, res, isJson) {
         utils.fillResponse(req, res, status.url, status.err, isJson);
       } else {
         var addresses = utils.forwarded(req);
-        logger.error('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
+        logger.warn('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
         utils.fillResponse(req, res, undefined, constants.UNKNOWN, isJson);
       }
     }

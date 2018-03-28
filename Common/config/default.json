@@ -61,7 +61,8 @@
 				"savetimeoutdelay": 5000,
 				"edit_singleton": false,
 				"forgottenfiles": "forgotten",
-				"forgottenfilesname": "output"
+				"forgottenfilesname": "output",
+				"maxRequestChanges": 20000
 			},
 			"requestDefaults": {
 				"headers": {
@@ -161,7 +162,7 @@
 				},
 				"session": {
 					"algorithm": "HS256",
-					"expires": "10m"
+					"expires": "30d"
 				}
 			},
 			"plugins": {
@@ -188,7 +189,6 @@
 			"args": "",
 			"errorfiles": "",
 			"streamWriterBufferSize": 8388608,
-			"maxRequestChanges": 50000,
 			"maxRedeliveredCount": 2,
 			"inputLimits": [
 				{

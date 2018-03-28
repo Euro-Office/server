@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -65,7 +65,7 @@ var cfgErrorFiles = configConverter.get('errorfiles');
 var cfgInputLimits = configConverter.get('inputLimits');
 const cfgStreamWriterBufferSize = configConverter.get('streamWriterBufferSize');
 //cfgMaxRequestChanges was obtained as a result of the test: 84408 changes - 5,16 MB
-const cfgMaxRequestChanges = configConverter.get('maxRequestChanges');
+const cfgMaxRequestChanges = config.get('services.CoAuthoring.server.maxRequestChanges');
 const cfgMaxRedeliveredCount = configConverter.get('maxRedeliveredCount');
 var cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
 const cfgForgottenFilesName = config.get('services.CoAuthoring.server.forgottenfilesname');

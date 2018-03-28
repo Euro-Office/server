@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -258,29 +258,40 @@ function downloadUrlPromise(uri, optTimeout, optLimit, opt_Authorization) {
       options.headers = {};
       options.headers[cfgTokenOutboxHeader] = cfgTokenOutboxPrefix + opt_Authorization;
     }
+    let sizeLimit = optLimit || Number.MAX_VALUE;
+    let bufferLength = 0;
 
-    baseRequest.get(options, function (err, response, body) {
+    function onSizeError(msg){
+      this.abort();
+      let error = new Error(msg);
+      error.code = 'EMSGSIZE';
+      this.emit('error', error);
+    }
+    baseRequest.get(options, function(err, response, body) {
       if (err) {
         reject(err);
       } else {
-        var correctSize = (!optLimit || body.length < optLimit);
-        if (response.statusCode == 200 && correctSize) {
+        if (response.statusCode === 200) {
           var contentLength = response.headers['content-length'];
           if (contentLength && body.length !== (contentLength - 0)) {
             logger.warn('downloadUrlPromise body size mismatch: uri=%s; content-length=%s; body.length=%d', uri, contentLength, body.length);
           }
           resolve(body);
         } else {
-          if (!correctSize) {
-            var e = new Error('Error response: statusCode:' + response.statusCode + ' ;body.length:' + body.length);
-            e.code = 'EMSGSIZE';
-            reject(e);
-          } else {
-            reject(new Error('Error response: statusCode:' + response.statusCode + ' ;body:\r\n' + body));
-          }
+          reject(new Error('Error response: statusCode:' + response.statusCode + ' ;body:\r\n' + body));
         }
       }
-    })
+    }).on('response', function(response) {
+      var contentLength = response.headers['content-length'];
+      if (contentLength && (contentLength - 0) > sizeLimit) {
+        onSizeError.call(this, 'Error response: content-length:' + contentLength);
+      }
+    }).on('data', function(chunk) {
+      bufferLength += chunk.length;
+      if (bufferLength > sizeLimit) {
+        onSizeError.call(this, 'Error response body.length');
+      }
+    });
   });
 }
 function postRequestPromise(uri, postData, optTimeout, opt_Authorization) {
