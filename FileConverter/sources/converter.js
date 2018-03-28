@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -39,6 +39,7 @@ var childProcess = require('child_process');
 var co = require('co');
 var config = require('config');
 var spawnAsync = require('@expo/spawn-async');
+const bytes = require('bytes');
 var configConverter = config.get('FileConverter.converter');
 
 var commonDefines = require('./../../Common/sources/commondefines');
@@ -61,10 +62,11 @@ var cfgDocbuilderPath = configConverter.get('docbuilderPath');
 var cfgDocbuilderAllFontsPath = configConverter.get('docbuilderAllFontsPath');
 var cfgArgs = configConverter.get('args');
 var cfgErrorFiles = configConverter.get('errorfiles');
+var cfgInputLimits = configConverter.get('inputLimits');
 const cfgStreamWriterBufferSize = configConverter.get('streamWriterBufferSize');
 //cfgMaxRequestChanges was obtained as a result of the test: 84408 changes - 5,16 MB
-const cfgMaxRequestChanges = configConverter.get('maxRequestChanges');
-const cfgMaxRedeliveredCount = configConverter.get('maxRedeliveredCount')
+const cfgMaxRequestChanges = config.get('services.CoAuthoring.server.maxRequestChanges');
+const cfgMaxRedeliveredCount = configConverter.get('maxRedeliveredCount');
 var cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
 const cfgForgottenFilesName = config.get('services.CoAuthoring.server.forgottenfilesname');
 
@@ -76,10 +78,11 @@ var TEMP_PREFIX = 'ASC_CONVERT';
 var queue = null;
 var clientStatsD = statsDClient.getClient();
 var exitCodesReturn = [constants.CONVERT_NEED_PARAMS, constants.CONVERT_CORRUPTED, constants.CONVERT_DRM,
-  constants.CONVERT_PASSWORD];
+  constants.CONVERT_PASSWORD, constants.CONVERT_LIMITS];
 var exitCodesMinorError = [constants.CONVERT_NEED_PARAMS, constants.CONVERT_DRM, constants.CONVERT_PASSWORD];
 var exitCodesUpload = [constants.NO_ERROR, constants.CONVERT_CORRUPTED, constants.CONVERT_NEED_PARAMS,
   constants.CONVERT_DRM];
+let inputLimitsXmlCache;
 
 function TaskQueueDataConvert(task) {
   var cmd = task.getCmd();
@@ -109,7 +112,7 @@ function TaskQueueDataConvert(task) {
 }
 TaskQueueDataConvert.prototype = {
   serialize: function(fsPath) {
-    var xml = '\ufeff<?xml version="1.0" encoding="utf-8"?>';
+    let xml = '\ufeff<?xml version="1.0" encoding="utf-8"?>';
     xml += '<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"';
     xml += ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">';
     xml += this.serializeXmlProp('m_sKey', this.key);
@@ -131,11 +134,18 @@ TaskQueueDataConvert.prototype = {
       xml += this.serializeThumbnail(this.thumbnail);
     }
     xml += this.serializeXmlProp('m_nDoctParams', this.doctParams);
-    xml += this.serializeXmlProp('m_sPassword', this.password);
     xml += this.serializeXmlProp('m_oTimestamp', this.timestamp.toISOString());
     xml += this.serializeXmlProp('m_bIsNoBase64', this.noBase64);
+    xml += this.serializeLimit();
     xml += '</TaskQueueDataConvert>';
     fs.writeFileSync(fsPath, xml, {encoding: 'utf8'});
+    let hiddenXml;
+    if (undefined !== this.password) {
+      hiddenXml = '<TaskQueueDataConvert>';
+      hiddenXml += this.serializeXmlProp('m_sPassword', this.password);
+      hiddenXml += '</TaskQueueDataConvert>';
+    }
+    return hiddenXml;
   },
   serializeMailMerge: function(data) {
     var xml = '<m_oMailMergeSend>';
@@ -163,6 +173,32 @@ TaskQueueDataConvert.prototype = {
     xml += '</m_oThumbnail>';
     return xml;
   },
+  serializeLimit: function() {
+    if (!inputLimitsXmlCache) {
+      var xml = '<m_oInputLimits>';
+      for (let i = 0; i < cfgInputLimits.length; ++i) {
+        let limit = cfgInputLimits[i];
+        if (limit.type && limit.zip) {
+          xml += '<m_oInputLimit';
+          xml += this.serializeXmlAttr('type', limit.type);
+          xml += '>';
+          xml += '<m_oZip';
+          if (limit.zip.compressed) {
+            xml += this.serializeXmlAttr('compressed', bytes.parse(limit.zip.compressed));
+          }
+          if (limit.zip.uncompressed) {
+            xml += this.serializeXmlAttr('uncompressed', bytes.parse(limit.zip.uncompressed));
+          }
+          xml += this.serializeXmlAttr('template', limit.zip.template);
+          xml += '/>';
+          xml += '</m_oInputLimit>';
+        }
+      }
+      xml += '</m_oInputLimits>';
+      inputLimitsXmlCache = xml;
+    }
+    return inputLimitsXmlCache;
+  },
   serializeXmlProp: function(name, value) {
     var xml = '';
     if (null != value) {
@@ -171,6 +207,15 @@ TaskQueueDataConvert.prototype = {
       xml += '</' + name + '>';
     } else {
       xml += '<' + name + ' xsi:nil="true" />';
+    }
+    return xml;
+  },
+  serializeXmlAttr: function(name, value) {
+    var xml = '';
+    if (null != value) {
+      xml += ' ' + name + '=\"';
+      xml += utils.encodeXml(value.toString());
+      xml += '\"';
     }
     return xml;
   }
@@ -204,7 +249,7 @@ function* downloadFile(docId, uri, fileFrom) {
       try {
         let authorization;
         if (cfgTokenEnableRequestOutbox) {
-          authorization = utils.fillJwtForRequest();
+          authorization = utils.fillJwtForRequest({url: uri});
         }
         data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout * 1000, cfgDownloadMaxBytes, authorization);
         res = true;
@@ -220,7 +265,7 @@ function* downloadFile(docId, uri, fileFrom) {
       }
     }
     if (res) {
-      logger.debug('downloadFile complete(id=%s)', docId);
+      logger.debug('downloadFile complete filesize=%d (id=%s)', data.length, docId);
       fs.writeFileSync(fileFrom, data);
     }
   } else {
@@ -572,8 +617,11 @@ function* ExecuteTask(task) {
       if (!isBuilder) {
         processPath = cfgX2tPath;
         let paramsFile = path.join(tempDirs.temp, 'params.xml');
-        dataConvert.serialize(paramsFile);
+        let hiddenXml = dataConvert.serialize(paramsFile);
         childArgs.push(paramsFile);
+        if (hiddenXml) {
+          childArgs.push(hiddenXml);
+        }
       } else {
         fs.mkdirSync(path.join(tempDirs.result, 'output'));
         processPath = cfgDocbuilderPath;
@@ -589,11 +637,16 @@ function* ExecuteTask(task) {
         timeoutId = setTimeout(function() {
           isTimeout = true;
           timeoutId = undefined;
+          //close stdio streams to enable emit 'close' event even if HtmlFileInternal is hung-up
+          childRes.stdin.end();
+          childRes.stdout.destroy();
+          childRes.stderr.destroy();
           childRes.kill();
         }, waitMS);
         childRes = yield spawnAsyncPromise;
       } catch (err) {
-        logger.error('error spawnAsync(id=%s)\r\n%s', cmd.getDocId(), err.stack);
+        let fLog = null === err.status ? logger.error : logger.debug;
+        fLog.call(logger, 'error spawnAsync(id=%s)\r\n%s', cmd.getDocId(), err.stack);
         childRes = err;
       }
       if (undefined !== timeoutId) {

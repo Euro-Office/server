@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -884,6 +884,16 @@ const c_oAscForceSaveTypes = {
   Button: 1,
   Timeout: 2
 };
+const c_oAscUrlTypes = {
+  Session: 0,
+  Temporary: 1
+};
+const c_oAscSecretType = {
+  Browser: 0,
+  Inbox: 1,
+  Outbox: 2,
+  Session: 3
+};
 
 const buildVersion = '4.1.2';
 const buildNumber = 37;
@@ -904,5 +914,7 @@ exports.c_oAscCodePageUtf8 = c_oAscCodePageUtf8;
 exports.c_oAscUserAction = c_oAscUserAction;
 exports.c_oAscServerCommandErrors = c_oAscServerCommandErrors;
 exports.c_oAscForceSaveTypes = c_oAscForceSaveTypes;
+exports.c_oAscUrlTypes = c_oAscUrlTypes;
+exports.c_oAscSecretType = c_oAscSecretType;
 exports.buildVersion = buildVersion;
 exports.buildNumber = buildNumber;

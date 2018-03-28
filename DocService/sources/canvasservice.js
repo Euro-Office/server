@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -35,6 +35,7 @@
 var pathModule = require('path');
 var urlModule = require('url');
 var co = require('co');
+const ms = require('ms');
 var sqlBase = require('./baseConnector');
 var docsCoServer = require('./DocsCoServer');
 var taskResult = require('./taskresult');
@@ -59,7 +60,7 @@ var cfgRedisPrefix = config.get('services.CoAuthoring.redis.prefix');
 var cfgTokenEnableBrowser = config.get('services.CoAuthoring.token.enable.browser');
 const cfgForgottenFiles = config_server.get('forgottenfiles');
 const cfgForgottenFilesName = config_server.get('forgottenfilesname');
-const cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
+const cfgExpUpdateVersionStatus = ms(config.get('services.CoAuthoring.expire.updateVersionStatus'));
 
 var SAVE_TYPE_PART_START = 0;
 var SAVE_TYPE_PART = 1;
@@ -133,10 +134,15 @@ function* getOutputData(cmd, outputData, key, status, statusInfo, optConn, optAd
     case taskResult.FileStatus.Ok:
       if(taskResult.FileStatus.Ok == status) {
         outputData.setStatus('ok');
-      } else if(taskResult.FileStatus.SaveVersion == status) {
+      } else if (taskResult.FileStatus.SaveVersion == status ||
+        (taskResult.FileStatus.UpdateVersion === status &&
+        Date.now() - statusInfo * 60000 > cfgExpUpdateVersionStatus)) {
         if ((optConn && optConn.user.view) || optConn.isCloseCoAuthoring) {
           outputData.setStatus('updateversion');
         } else {
+          if (taskResult.FileStatus.UpdateVersion === status) {
+            logger.warn("UpdateVersion expired: docId = %s", docId);
+          }
           var updateMask = new taskResult.TaskResultData();
           updateMask.key = docId;
           updateMask.status = status;
@@ -159,28 +165,35 @@ function* getOutputData(cmd, outputData, key, status, statusInfo, optConn, optAd
         var strPath = key + '/' + cmd.getOutputPath();
         if (optConn) {
           var contentDisposition = cmd.getInline() ? constants.CONTENT_DISPOSITION_INLINE : constants.CONTENT_DISPOSITION_ATTACHMENT;
-          outputData.setData(yield storage.getSignedUrl(optConn.baseUrl, strPath, null, cmd.getTitle(), contentDisposition));
+          let url = yield storage.getSignedUrl(optConn.baseUrl, strPath, commonDefines.c_oAscUrlTypes.Temporary,
+                                               cmd.getTitle(),
+                                               contentDisposition);
+          outputData.setData(url);
         } else if (optAdditionalOutput) {
           optAdditionalOutput.needUrlKey = strPath;
           optAdditionalOutput.needUrlMethod = 2;
+          optAdditionalOutput.needUrlType = commonDefines.c_oAscUrlTypes.Temporary;
         }
       } else {
         if (optConn) {
-          outputData.setData(yield storage.getSignedUrls(optConn.baseUrl, key));
+          outputData.setData(yield storage.getSignedUrls(optConn.baseUrl, key, commonDefines.c_oAscUrlTypes.Session));
         } else if (optAdditionalOutput) {
           optAdditionalOutput.needUrlKey = key;
           optAdditionalOutput.needUrlMethod = 0;
+          optAdditionalOutput.needUrlType = commonDefines.c_oAscUrlTypes.Session;
         }
       }
       break;
     case taskResult.FileStatus.NeedParams:
       outputData.setStatus('needparams');
-      var settingsPath = key + '/' + 'settings.json';
+      var settingsPath = key + '/' + 'origin.' + cmd.getFormat();
       if (optConn) {
-        outputData.setData(yield storage.getSignedUrl(optConn.baseUrl, settingsPath));
+        let url = yield storage.getSignedUrl(optConn.baseUrl, settingsPath, commonDefines.c_oAscUrlTypes.Temporary);
+        outputData.setData(url);
       } else if (optAdditionalOutput) {
         optAdditionalOutput.needUrlKey = settingsPath;
         optAdditionalOutput.needUrlMethod = 1;
+        optAdditionalOutput.needUrlType = commonDefines.c_oAscUrlTypes.Temporary;
       }
       break;
     case taskResult.FileStatus.NeedPassword:
@@ -526,7 +539,7 @@ function* commandImgurls(conn, cmd, outputData) {
           strLocalPath += 'image' + imageIndex + '.' + formatStr;
           var strPath = cmd.getDocId() + '/' + strLocalPath;
           yield storage.putObject(strPath, data, data.length);
-          var imgUrl = yield storage.getSignedUrl(conn.baseUrl, strPath);
+          var imgUrl = yield storage.getSignedUrl(conn.baseUrl, strPath, commonDefines.c_oAscUrlTypes.Session);
           outputUrl = {url: imgUrl, path: strLocalPath};
         }
       }
@@ -539,7 +552,7 @@ function* commandImgurls(conn, cmd, outputData) {
       outputUrls.push(outputUrl);
     }
   } else {
-    logger.error('error commandImgurls: docId = %s access deny', docId);
+    logger.warn('error commandImgurls: docId = %s access deny', docId);
     errorCode = errorCode.UPLOAD;
   }
   if (constants.NO_ERROR !== errorCode && 0 == outputUrls.length) {
@@ -561,7 +574,8 @@ function* commandPathUrls(conn, cmd, outputData) {
   let listImages = cmd.getData().map(function callback(currentValue) {
     return docId + '/' + currentValue;
   });
-  let urls = yield storage.getSignedUrlsArrayByArray(conn.baseUrl, listImages, undefined, contentDisposition);
+  let urls = yield storage.getSignedUrlsArrayByArray(conn.baseUrl, listImages, commonDefines.c_oAscUrlTypes.Session,
+                                                     contentDisposition);
   outputData.setStatus('ok');
   outputData.setData(urls);
 }
@@ -569,7 +583,8 @@ function* commandPathUrl(conn, cmd, outputData) {
   var contentDisposition = cmd.getInline() ? constants.CONTENT_DISPOSITION_INLINE :
     constants.CONTENT_DISPOSITION_ATTACHMENT;
   var strPath = cmd.getDocId() + '/' + cmd.getData();
-  var url = yield storage.getSignedUrl(conn.baseUrl, strPath, null, cmd.getTitle(), contentDisposition);
+  var url = yield storage.getSignedUrl(conn.baseUrl, strPath, commonDefines.c_oAscUrlTypes.Temporary, cmd.getTitle(),
+                                       contentDisposition);
   var errorCode = constants.NO_ERROR;
   if (constants.NO_ERROR !== errorCode) {
     outputData.setStatus('err');
@@ -586,6 +601,18 @@ function* commandSaveFromOrigin(cmd, outputData) {
   yield* docsCoServer.addTask(queueData, constants.QUEUE_PRIORITY_LOW);
   outputData.setStatus('ok');
   outputData.setData(cmd.getSaveKey());
+}
+function checkAuthorizationLength(authorization, data){
+  //todo it is stub (remove in future versions)
+  //8kb(https://stackoverflow.com/questions/686217/maximum-on-http-header-values) - 1kb(for other header)
+  let res = authorization.length < 7168;
+  if (!res) {
+    logger.warn('authorization too long: docId = %s; length=%d', data.getKey(), authorization.length);
+    data.setChangeUrl(undefined);
+    //for backward compatibility. remove this when Community is ready
+    data.setChangeHistory({});
+  }
+  return res;
 }
 function* commandSfcCallback(cmd, isSfcm) {
   var docId = cmd.getDocId();
@@ -651,12 +678,15 @@ function* commandSfcCallback(cmd, isSfcm) {
           //don't send history info because changes isn't from file in storage
           var data = yield storage.getObject(savePathHistory);
           outputSfc.setChangeHistory(JSON.parse(data.toString('utf-8')));
-          outputSfc.setChangeUrl(yield storage.getSignedUrl(getRes.baseUrl, savePathChanges));
+          let changeUrl = yield storage.getSignedUrl(getRes.baseUrl, savePathChanges,
+                                                     commonDefines.c_oAscUrlTypes.Temporary);
+          outputSfc.setChangeUrl(changeUrl);
         } else {
           //for backward compatibility. remove this when Community is ready
           outputSfc.setChangeHistory({});
         }
-        outputSfc.setUrl(yield storage.getSignedUrl(getRes.baseUrl, savePathDoc));
+        let url = yield storage.getSignedUrl(getRes.baseUrl, savePathDoc, commonDefines.c_oAscUrlTypes.Temporary);
+        outputSfc.setUrl(url);
       } catch (e) {
         logger.error('Error commandSfcCallback: docId = %s\r\n%s', docId, e.stack);
       }
@@ -680,8 +710,9 @@ function* commandSfcCallback(cmd, isSfcm) {
           outputSfc.setLastSave(new Date(forceSave.getTime()).toISOString());
         }
         try {
-          yield* docsCoServer.sendServerRequest(docId, uri, outputSfc);
-          isSfcmSuccess = true;
+          let replyStr = yield* docsCoServer.sendServerRequest(docId, uri, outputSfc, checkAuthorizationLength);
+          let replyData = docsCoServer.parseReplyData(docId, replyStr);
+          isSfcmSuccess = replyData && commonDefines.c_oAscServerCommandErrors.NoError == replyData.error;
         } catch (err) {
           logger.error('sendServerRequest error: docId = %s;url = %s;data = %j\r\n%s', docId, uri, outputSfc, err.stack);
         }
@@ -702,25 +733,12 @@ function* commandSfcCallback(cmd, isSfcm) {
         updateMask.statusInfo = cmd.getData();
         var updateIfTask = new taskResult.TaskResultData();
         updateIfTask.status = taskResult.FileStatus.UpdateVersion;
-        updateIfTask.statusInfo = constants.NO_ERROR;
+        updateIfTask.statusInfo = Math.floor(Date.now() / 60000);//minutes
         var updateIfRes = yield taskResult.updateIf(updateIfTask, updateMask);
         if (updateIfRes.affectedRows > 0) {
           var replyStr = null;
           try {
-            //todo stub (remove in future versions)
-            var authorization;
-            if (cfgTokenEnableRequestOutbox) {
-              authorization = utils.fillJwtForRequest(outputSfc);
-              if (authorization.length > 7168) {//8kb(https://stackoverflow.com/questions/686217/maximum-on-http-header-values) - 1kb(for other header)
-                logger.warn('authorization too long: docId = %s; length=%d', docId, authorization.length);
-                outputSfc.setChangeUrl(undefined);
-                //for backward compatibility. remove this when Community is ready
-                outputSfc.setChangeHistory({});
-                authorization = utils.fillJwtForRequest(outputSfc);
-                logger.warn('authorization reduced to: docId = %s; length=%d', docId, authorization.length);
-              }
-            }
-            replyStr = yield* docsCoServer.sendServerRequest(docId, uri, outputSfc, authorization);
+            replyStr = yield* docsCoServer.sendServerRequest(docId, uri, outputSfc, checkAuthorizationLength);
           } catch (err) {
             replyStr = null;
             logger.error('sendServerRequest error: docId = %s;url = %s;data = %j\r\n%s', docId, uri, outputSfc, err.stack);
@@ -755,7 +773,7 @@ function* commandSfcCallback(cmd, isSfcm) {
       }
     }
   } else {
-    logger.error('Empty Callback commandSfcCallback: docId = %s', docId);
+    logger.warn('Empty Callback commandSfcCallback: docId = %s', docId);
     storeForgotten = true;
   }
   if (storeForgotten && (!isError || isErrorCorrupted)) {
@@ -803,7 +821,8 @@ function* commandSendMMCallback(cmd) {
     outputMailMerge.setTo(fieldRes[1]);
     outputMailMerge.setRecordIndex(recordIndexStart + i);
     var pathRes = /path=["'](.*?)["']/.exec(file);
-    var signedUrl = yield storage.getSignedUrl(mailMergeSendData.getBaseUrl(), saveKey + '/' + pathRes[1]);
+    var signedUrl = yield storage.getSignedUrl(mailMergeSendData.getBaseUrl(), saveKey + '/' + pathRes[1],
+                                               commonDefines.c_oAscUrlTypes.Temporary);
     outputSfc.setUrl(signedUrl);
     var uri = mailMergeSendData.getUrl();
     var replyStr = null;
@@ -902,7 +921,7 @@ exports.downloadAs = function(req, res) {
 
       if (cfgTokenEnableBrowser) {
         var isValidJwt = false;
-        var checkJwtRes = docsCoServer.checkJwt(docId, cmd.getJwt(), true);
+        var checkJwtRes = docsCoServer.checkJwt(docId, cmd.getJwt(), commonDefines.c_oAscSecretType.Session);
         if (checkJwtRes.decoded) {
           var doc = checkJwtRes.decoded.document;
           if (!doc.permissions || (false !== doc.permissions.download || false !== doc.permissions.print)) {
@@ -910,10 +929,10 @@ exports.downloadAs = function(req, res) {
             docId = doc.key;
             cmd.setDocId(doc.key);
           } else {
-            logger.error('Error downloadAs jwt: docId = %s\r\n%s', docId, 'access deny');
+            logger.warn('Error downloadAs jwt: docId = %s\r\n%s', docId, 'access deny');
           }
         } else {
-          logger.error('Error downloadAs jwt: docId = %s\r\n%s', docId, checkJwtRes.description);
+          logger.warn('Error downloadAs jwt: docId = %s\r\n%s', docId, checkJwtRes.description);
         }
         if (!isValidJwt) {
           res.sendStatus(400);
@@ -1013,7 +1032,7 @@ exports.receiveTask = function(data, opt_dataRaw) {
         if (updateRes.affectedRows > 0) {
           var outputData = new OutputData(cmd.getCommand());
           var command = cmd.getCommand();
-          var additionalOutput = {needUrlKey: null, needUrlMethod: null};
+          var additionalOutput = {needUrlKey: null, needUrlMethod: null, needUrlType: null};
           if ('open' == command || 'reopen' == command) {
             //yield utils.sleep(5000);
             yield* getOutputData(cmd, outputData, cmd.getDocId(), updateTask.status,
@@ -1034,9 +1053,11 @@ exports.receiveTask = function(data, opt_dataRaw) {
             logger.debug('Send receiveTask: docId = %s %s', docId, JSON.stringify(outputData));
             var output = new OutputDataWrap('documentOpen', outputData);
             yield* docsCoServer.publish({
-              type: commonDefines.c_oPublishType.receiveTask, cmd: cmd, output: output,
-              needUrlKey: additionalOutput.needUrlKey, needUrlMethod: additionalOutput.needUrlMethod
-            });
+                                          type: commonDefines.c_oPublishType.receiveTask, cmd: cmd, output: output,
+                                          needUrlKey: additionalOutput.needUrlKey,
+                                          needUrlMethod: additionalOutput.needUrlMethod,
+                                          needUrlType: additionalOutput.needUrlType
+                                        });
           }
         }
         if (opt_dataRaw) {

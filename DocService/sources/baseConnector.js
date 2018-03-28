@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -208,7 +208,7 @@ exports.getChangesPromise = function (docId, optStartIndex, optEndIndex, opt_tim
   });
 };
 exports.checkStatusFile = function (docId, callbackFunction) {
-	var sqlCommand = "SELECT status FROM " + tableResult + " WHERE id='" + docId + "';";
+	var sqlCommand = "SELECT status, status_info FROM " + tableResult + " WHERE id='" + docId + "';";
 	baseConnector.sqlQuery(sqlCommand, callbackFunction);
 };
 exports.checkStatusFilePromise = function (docId) {

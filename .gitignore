@@ -3,6 +3,7 @@ Common/config/local.json
 license.lic
 App_Data/
 */node_modules
+FileConverter/bin/AllFonts.js
 FileConverter/bin/*.dll
 FileConverter/bin/*.dylib
 FileConverter/bin/*.exe
@@ -10,6 +11,8 @@ FileConverter/bin/x2t
 FileConverter/bin/*.S
 FileConverter/bin/font_selection.bin
 FileConverter/bin/HtmlFileInternal
+FileConverter/bin/core.zip
+FileConverter/bin/core
 DocService/npm-debug.log
 build
 node_modules

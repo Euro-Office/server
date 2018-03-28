@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -45,7 +45,6 @@ var FileStatus = {
   Ok: 1,
   WaitQueue: 2,
   NeedParams: 3,
-  Convert: 4,
   Err: 5,
   ErrToReload: 6,
   SaveVersion: 7,

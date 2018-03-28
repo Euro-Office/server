@@ -1,5 +1,5 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2017
+ * (c) Copyright Ascensio System SIA 2010-2018
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -46,8 +46,6 @@ var formatChecker = require('./../../Common/sources/formatchecker');
 var statsDClient = require('./../../Common/sources/statsdclient');
 var storageBase = require('./../../Common/sources/storage-base');
 
-var cfgTokenEnableRequestInbox = config.get('services.CoAuthoring.token.enable.request.inbox');
-
 var CONVERT_ASYNC_DELAY = 1000;
 
 var clientStatsD = statsDClient.getClient();
@@ -61,7 +59,7 @@ function* getConvertStatus(cmd, selectRes, baseUrl, opt_fileTo) {
       case taskResult.FileStatus.Ok:
         status.end = true;
         if (opt_fileTo) {
-          status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + opt_fileTo);
+          status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + opt_fileTo, commonDefines.c_oAscUrlTypes.Temporary);
         }
         break;
       case taskResult.FileStatus.Err:
@@ -176,42 +174,17 @@ function parseIntParam(val){
   return (typeof val === 'string') ? parseInt(val) : val;
 }
 
-function convertRequest(req, res) {
+function convertRequest(req, res, isJson) {
   return co(function* () {
     var docId = 'convertRequest';
     try {
-      var params;
-      if (req.body && Buffer.isBuffer(req.body)) {
-        params = JSON.parse(req.body.toString('utf8'));
+      let params;
+      let authRes = docsCoServer.getRequestParams(docId, req);
+      if(authRes.code === constants.NO_ERROR){
+        params = authRes.params;
       } else {
-        params = req.query;
-      }
-      if (cfgTokenEnableRequestInbox) {
-        var authError = constants.VKEY;
-        var checkJwtRes = docsCoServer.checkJwtHeader(docId, req);
-        if (checkJwtRes) {
-          if (checkJwtRes.decoded) {
-            if (!utils.isEmptyObject(checkJwtRes.decoded.payload)) {
-              Object.assign(params, checkJwtRes.decoded.payload);
-              authError = constants.NO_ERROR;
-            } else if (checkJwtRes.decoded.payloadhash) {
-              if (docsCoServer.checkJwtPayloadHash(docId, checkJwtRes.decoded.payloadhash, req.body, checkJwtRes.token)) {
-                authError = constants.NO_ERROR;
-              }
-            } else if (!utils.isEmptyObject(checkJwtRes.decoded.query)) {
-              Object.assign(params, checkJwtRes.decoded.query);
-              authError = constants.NO_ERROR;
-            }
-          } else {
-            if (constants.JWT_EXPIRED_CODE == checkJwtRes.code) {
-              authError = constants.VKEY_KEY_EXPIRE;
-            }
-          }
-        }
-        if (authError !== constants.NO_ERROR) {
-          utils.fillResponse(req, res, undefined, authError);
-          return;
-        }
+        utils.fillResponse(req, res, undefined, authRes.code, isJson);
+        return;
       }
 
       var cmd = new commonDefines.InputCommand();
@@ -261,48 +234,42 @@ function convertRequest(req, res) {
 
       if (constants.AVS_OFFICESTUDIO_FILE_UNKNOWN !== cmd.getOutputFormat()) {
         var status = yield* convertByCmd(cmd, async, utils.getBaseUrlByRequest(req), fileTo);
-        utils.fillResponse(req, res, status.url, status.err);
+        utils.fillResponse(req, res, status.url, status.err, isJson);
       } else {
         var addresses = utils.forwarded(req);
-        logger.error('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
-        utils.fillResponse(req, res, undefined, constants.UNKNOWN);
+        logger.warn('Error convert unknown outputtype: query = %j from = %s docId = %s', params, addresses, docId);
+        utils.fillResponse(req, res, undefined, constants.UNKNOWN, isJson);
       }
     }
     catch (e) {
       logger.error('Error convert: docId = %s\r\n%s', docId, e.stack);
-      utils.fillResponse(req, res, undefined, constants.UNKNOWN);
+      utils.fillResponse(req, res, undefined, constants.UNKNOWN, isJson);
     }
   });
+}
+function convertRequestJson(req, res) {
+  return convertRequest(req, res, true);
+}
+function convertRequestXml(req, res) {
+  return convertRequest(req, res, false);
 }
 
 function builderRequest(req, res) {
   return co(function* () {
     let docId = 'builderRequest';
     try {
-      let params = req.query;
+      let authRes;
+      if (!utils.isEmptyObject(req.query)) {
+        //todo this is a stub for compatibility. remove in future version
+        authRes = docsCoServer.getRequestParams(docId, req, true, true);
+      } else {
+        authRes = docsCoServer.getRequestParams(docId, req);
+      }
+
+      let params = authRes.params;
+      let error = authRes.code;
       let urls;
       let end = false;
-      let error = constants.NO_ERROR;
-      if (cfgTokenEnableRequestInbox) {
-        error = constants.VKEY;
-        let checkJwtRes = docsCoServer.checkJwtHeader(docId, req);
-        if (checkJwtRes) {
-          if (checkJwtRes.decoded) {
-            error = constants.NO_ERROR;
-            if (!utils.isEmptyObject(checkJwtRes.decoded.query)) {
-              Object.assign(params, checkJwtRes.decoded.query);
-            }
-            if (checkJwtRes.decoded.payloadhash &&
-              !docsCoServer.checkJwtPayloadHash(docId, checkJwtRes.decoded.payloadhash, req.body, checkJwtRes.token)) {
-              error = constants.VKEY;
-            }
-          } else {
-            if (constants.JWT_EXPIRED_CODE === checkJwtRes.code) {
-              error = constants.VKEY_KEY_EXPIRE;
-            }
-          }
-        }
-      }
       if (error === constants.NO_ERROR &&
         (params.key || params.url || (req.body && Buffer.isBuffer(req.body) && req.body.length > 0))) {
         docId = params.key;
@@ -329,7 +296,8 @@ function builderRequest(req, res) {
         end = status.end;
         error = status.err;
         if (end) {
-          urls = yield storageBase.getSignedUrls(utils.getBaseUrlByRequest(req), docId + '/output');
+          urls = yield storageBase.getSignedUrls(utils.getBaseUrlByRequest(req), docId + '/output',
+                                                 commonDefines.c_oAscUrlTypes.Temporary);
         }
       } else if (error === constants.NO_ERROR) {
         error = constants.UNKNOWN;
@@ -345,5 +313,6 @@ function builderRequest(req, res) {
 }
 
 exports.convertFromChanges = convertFromChanges;
-exports.convert = convertRequest;
+exports.convertJson = convertRequestJson;
+exports.convertXml = convertRequestXml;
 exports.builder = builderRequest;
