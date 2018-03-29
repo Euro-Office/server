@@ -55,7 +55,6 @@
 				"limits_tempfile_upload": 104857600,
 				"limits_image_size": 26214400,
 				"limits_image_download_timeout": 120,
-				"editor_settings_spellchecker_url": "/spellchecker",
 				"callbackRequestTimeout": 120,
 				"healthcheckfilepath": "../public/healthcheck.docx",
 				"savetimeoutdelay": 5000,
@@ -168,6 +167,13 @@
 			"plugins": {
 				"uri": "/sdkjs-plugins",
 				"autostart": []
+			},
+			"editor":{
+				"spellcheckerUrl": "/spellchecker",
+				"reconnection":{
+					"attempts": 50,
+					"delay": "2s"
+				}
 			}
 		}
 	},

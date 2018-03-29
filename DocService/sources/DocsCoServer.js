@@ -100,7 +100,8 @@ const pubsubRedis = require('./pubsubRedis');
 const pubsubService = require('./' + config.get('pubsub.name'));
 const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const rabbitMQCore = require('./../../Common/sources/rabbitMQCore');
-const cfgSpellcheckerUrl = config.get('server.editor_settings_spellchecker_url');
+let cfgEditor = JSON.parse(JSON.stringify(config.get('editor')));
+cfgEditor['reconnection']['delay'] = ms(cfgEditor['reconnection']['delay']);
 const cfgCallbackRequestTimeout = config.get('server.callbackRequestTimeout');
 //The waiting time to document assembly when all out(not 0 in case of F5 in the browser)
 const cfgAscSaveTimeOutDelay = config.get('server.savetimeoutdelay');
@@ -2217,10 +2218,11 @@ exports.install = function(server, callbackFunction) {
       indexUser: conn.user.indexUser,
       hasForgotten: opt_hasForgotten,
       jwt: (!bIsRestore && cfgTokenEnableBrowser) ? fillJwtByConnection(conn) : undefined,
-      g_cAscSpellCheckUrl: cfgSpellcheckerUrl,
+      g_cAscSpellCheckUrl: cfgEditor["spellcheckerUrl"],
       buildVersion: commonDefines.buildVersion,
       buildNumber: commonDefines.buildNumber,
-      licenseType: conn.licenseType
+      licenseType: conn.licenseType,
+      settings: cfgEditor
     };
     sendData(conn, sendObject);//Or 0 if fails
   }

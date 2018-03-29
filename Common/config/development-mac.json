@@ -12,7 +12,6 @@
       "server": {
         "port": 8080,
         "sockjsUrl": "/office/vendor/sockjs/sockjs.min.js",
-        "editor_settings_spellchecker_url": "",
         "static_content": {
           "/sdkjs": {
             "path": "../../../sdkjs"
@@ -36,6 +35,9 @@
         "dbPort": 3306,
         "dbUser": "root",
         "dbPass": "onlyoffice"
+      },
+      "editor": {
+        "spellcheckerUrl": ""
       }
     }
   },
