@@ -9,6 +9,8 @@ GRUNT_FILES = Gruntfile.js.out
 PRODUCT_VERSION ?= 0.0.0
 BUILD_NUMBER ?= 0
 
+DOCUMENT_ROOT ?= /var/www/onlyoffice/documentserver
+
 ifeq ($(OS),Windows_NT)
     PLATFORM := win
     EXEC_EXT := .exe
@@ -168,11 +170,15 @@ install:
 	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libicudata.so.55 /lib/libicudata.so.55
 	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libicuuc.so.55 /lib/libicuuc.so.55
 
-	sudo -u onlyoffice "/var/www/onlyoffice/documentserver/server/tools/AllFontsGen"\
-		"/usr/share/fonts"\
-		"/var/www/onlyoffice/documentserver/sdkjs/common/AllFonts.js"\
-		"/var/www/onlyoffice/documentserver/sdkjs/common/Images"\
-		"/var/www/onlyoffice/documentserver/server/FileConverter/bin/font_selection.bin"
+	sudo -u onlyoffice "${DOCUMENT_ROOT}/server/tools/AllFontsGen"\
+		--input="${DOCUMENT_ROOT}/core-fonts"\
+		--allfonts-web="${DOCUMENT_ROOT}/sdkjs/common/AllFonts.js"\
+		--allfonts="${DOCUMENT_ROOT}/server/FileConverter/bin/AllFonts.js"\
+		--images="${DOCUMENT_ROOT}/sdkjs/common/Images"\
+		--selection="${DOCUMENT_ROOT}/server/FileConverter/bin/font_selection.bin"\
+		--output-web="${DOCUMENT_ROOT}/fonts"\
+		--use-system="true"
+
 uninstall:
 	sudo userdel onlyoffice
 	
