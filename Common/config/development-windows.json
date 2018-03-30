@@ -13,6 +13,9 @@
         "port": 8001,
         "sockjsUrl": "/web-apps/vendor/sockjs/sockjs.min.js",
         "static_content": {
+          "/fonts": {
+            "path": "../../../fonts"
+          },
           "/sdkjs": {
             "path": "../../../sdkjs"
           },
@@ -24,9 +27,6 @@
           },
           "/sdkjs-plugins": {
             "path": "../../../sdkjs-plugins"
-          },
-          "/fonts": {
-            "path": "../../../fonts"
           }
         }
       },

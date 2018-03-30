@@ -12,6 +12,10 @@
       "server": {
         "sockjsUrl": "/web-apps/vendor/sockjs/sockjs.min.js",
         "static_content": {
+          "/fonts": {
+            "path": "/var/www/onlyoffice/documentserver/fonts",
+            "options": {"maxAge": "7d"}
+          },
           "/sdkjs": {
             "path": "/var/www/onlyoffice/documentserver/sdkjs",
             "options": {"maxAge": "7d"}
