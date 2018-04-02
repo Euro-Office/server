@@ -51,7 +51,6 @@
 				"port": 8000,
 				"workerpercpu": 1,
 				"mode": "development",
-				"sockjsUrl": "",
 				"limits_tempfile_upload": 104857600,
 				"limits_image_size": 26214400,
 				"limits_image_download_timeout": 120,
@@ -174,6 +173,10 @@
 					"attempts": 50,
 					"delay": "2s"
 				}
+			},
+			"sockjs": {
+				"sockjs_url": "",
+				"websocket": true
 			}
 		}
 	},
