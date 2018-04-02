@@ -123,7 +123,7 @@ const cfgExpSessionIdle = ms(config.get('expire.sessionidle'));
 const cfgExpSessionAbsolute = ms(config.get('expire.sessionabsolute'));
 const cfgExpSessionCloseCommand = ms(config.get('expire.sessionclosecommand'));
 const cfgExpUpdateVersionStatus = ms(config.get('expire.updateVersionStatus'));
-const cfgSockjsUrl = config.get('server.sockjsUrl');
+const cfgSockjs = config.get('sockjs');
 const cfgTokenEnableBrowser = config.get('token.enable.browser');
 const cfgTokenEnableRequestInbox = config.get('token.enable.request.inbox');
 const cfgTokenEnableRequestOutbox = config.get('token.enable.request.outbox');
@@ -1149,8 +1149,7 @@ exports.getRequestParams = getRequestParams;
 exports.checkJwtHeader = checkJwtHeader;
 exports.checkJwtPayloadHash = checkJwtPayloadHash;
 exports.install = function(server, callbackFunction) {
-  var sockjs_opts = {sockjs_url: cfgSockjsUrl},
-    sockjs_echo = sockjs.createServer(sockjs_opts),
+  var sockjs_echo = sockjs.createServer(cfgSockjs),
     urlParse = new RegExp("^/doc/([" + constants.DOC_ID_PATTERN + "]*)/c.+", 'i');
 
   sockjs_echo.on('connection', function(conn) {
