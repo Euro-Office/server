@@ -38,7 +38,7 @@ const logger = require('./../../Common/sources/logger');
 const utils = require('./../../Common/sources/utils');
 const fs = require('fs');
 const co = require('co');
-const cfgSockjsUrl = require('config').get('services.CoAuthoring.server.sockjsUrl');
+const cfgSockjs = require('config').get('services.CoAuthoring.sockjs');
 const languages = require('./languages');
 const allLanguages = languages.allLanguages;
 const path = require('path');
@@ -92,8 +92,7 @@ exports.install = function (server, callbackFunction) {
 		});
 	});
 
-	const sockjs_opts = {sockjs_url: cfgSockjsUrl};
-	const sockjs_echo = sockjs.createServer(sockjs_opts);
+	const sockjs_echo = sockjs.createServer(cfgSockjs);
 
 	sockjs_echo.on('connection', function (conn) {
 		if (!conn) {
