@@ -638,6 +638,14 @@ function* commandSfcCallback(cmd, isSfcm) {
     statusOk = docsCoServer.c_oAscServerStatus.MustSave;
     statusErr = docsCoServer.c_oAscServerStatus.Corrupted;
   }
+  let updateMask = new taskResult.TaskResultData();
+  updateMask.key = docId;
+  updateMask.status = taskResult.FileStatus.SaveVersion;
+  updateMask.statusInfo = cmd.getData();
+  let updateIfTask = new taskResult.TaskResultData();
+  updateIfTask.status = taskResult.FileStatus.UpdateVersion;
+  updateIfTask.statusInfo = Math.floor(Date.now() / 60000);//minutes
+  let updateIfRes;
   if (getRes) {
     logger.debug('Callback commandSfcCallback: docId = %s callback = %s', docId, getRes.server.href);
     var outputSfc = new commonDefines.OutputSfcData();
@@ -727,15 +735,10 @@ function* commandSfcCallback(cmd, isSfcm) {
         var lastSaveDate = lastSave ? new Date(lastSave.time) : new Date();
         outputSfc.setLastSave(lastSaveDate.toISOString());
         outputSfc.setNotModified(notModified);
-        var updateMask = new taskResult.TaskResultData();
-        updateMask.key = docId;
-        updateMask.status = taskResult.FileStatus.SaveVersion;
-        updateMask.statusInfo = cmd.getData();
-        var updateIfTask = new taskResult.TaskResultData();
-        updateIfTask.status = taskResult.FileStatus.UpdateVersion;
-        updateIfTask.statusInfo = Math.floor(Date.now() / 60000);//minutes
-        var updateIfRes = yield taskResult.updateIf(updateIfTask, updateMask);
+        updateIfRes = yield taskResult.updateIf(updateIfTask, updateMask);
         if (updateIfRes.affectedRows > 0) {
+          updateMask.status = updateIfTask.status;
+          updateMask.statusInfo = updateIfTask.statusInfo;
           var replyStr = null;
           try {
             replyStr = yield* docsCoServer.sendServerRequest(docId, uri, outputSfc, checkAuthorizationLength);
@@ -756,25 +759,32 @@ function* commandSfcCallback(cmd, isSfcm) {
             requestRes = (null == savedVal || '1' === savedVal);
           }
           if (requestRes) {
+            updateIfTask = undefined;
             yield docsCoServer.cleanDocumentOnExitPromise(docId, true);
             if (isOpenFromForgotten) {
               //remove forgotten file in cache
               yield cleanupCache(docId);
             }
           } else {
-            var updateTask = new taskResult.TaskResultData();
-            updateTask.key = docId;
-            updateTask.status = taskResult.FileStatus.Ok;
-            updateTask.statusInfo = constants.NO_ERROR;
-            yield taskResult.update(updateTask);
             storeForgotten = true;
           }
+        } else {
+          updateIfTask = undefined;
         }
       }
     }
   } else {
     logger.warn('Empty Callback commandSfcCallback: docId = %s', docId);
     storeForgotten = true;
+  }
+  if (undefined !== updateIfTask && !isSfcm) {
+    logger.debug('commandSfcCallback restore FileStatus.Ok status: docId = %s', docId);
+    updateIfTask.status = taskResult.FileStatus.Ok;
+    updateIfTask.statusInfo = constants.NO_ERROR;
+    updateIfRes = yield taskResult.updateIf(updateIfTask, updateMask);
+    if (!(updateIfRes.affectedRows > 0)) {
+      logger.debug('commandSfcCallback restore FileStatus.Ok status failed: docId = %s', docId);
+    }
   }
   if (storeForgotten && (!isError || isErrorCorrupted)) {
     try {

@@ -10,8 +10,11 @@
   "services": {
     "CoAuthoring": {
       "server": {
-        "sockjsUrl": "/web-apps/vendor/sockjs/sockjs.min.js",
         "static_content": {
+          "/fonts": {
+            "path": "../../../fonts",
+            "options": {"maxAge": "7d"}
+          },
           "/sdkjs": {
             "path": "../../../sdkjs",
             "options": {"maxAge": "7d"}
@@ -32,6 +35,9 @@
       },
       "utils": {
         "utils_common_fontdir": "C:\\Windows\\Fonts"
+      },
+      "sockjs": {
+        "sockjs_url": "/web-apps/vendor/sockjs/sockjs.min.js"
       }
     }
   },

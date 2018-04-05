@@ -11,9 +11,10 @@
     "CoAuthoring": {
       "server": {
         "port": 8080,
-        "sockjsUrl": "/office/vendor/sockjs/sockjs.min.js",
-        "editor_settings_spellchecker_url": "",
         "static_content": {
+          "/fonts": {
+            "path": "../../../fonts"
+          },
           "/sdkjs": {
             "path": "../../../sdkjs"
           },
@@ -36,6 +37,12 @@
         "dbPort": 3306,
         "dbUser": "root",
         "dbPass": "onlyoffice"
+      },
+      "editor": {
+        "spellcheckerUrl": ""
+      },
+      "sockjs": {
+        "sockjs_url": "/office/vendor/sockjs/sockjs.min.js"
       }
     }
   },
