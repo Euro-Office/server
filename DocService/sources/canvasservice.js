@@ -126,7 +126,7 @@ OutputData.prototype = {
   }
 };
 
-function* getOutputData(cmd, outputData, key, status, statusInfo, optConn, optAdditionalOutput) {
+function* getOutputData(cmd, outputData, key, status, statusInfo, optConn, optAdditionalOutput, opt_bIsRestore) {
   var docId = cmd.getDocId();
   switch (status) {
     case taskResult.FileStatus.SaveVersion:
@@ -135,7 +135,7 @@ function* getOutputData(cmd, outputData, key, status, statusInfo, optConn, optAd
       if(taskResult.FileStatus.Ok == status) {
         outputData.setStatus('ok');
       } else if (taskResult.FileStatus.SaveVersion == status ||
-        (taskResult.FileStatus.UpdateVersion === status &&
+        (!opt_bIsRestore && taskResult.FileStatus.UpdateVersion === status &&
         Date.now() - statusInfo * 60000 > cfgExpUpdateVersionStatus)) {
         if ((optConn && optConn.user.view) || optConn.isCloseCoAuthoring) {
           outputData.setStatus('updateversion');
@@ -296,7 +296,7 @@ function commandOpenStartPromise(docId, cmd, opt_updateUserIndex, opt_documentCa
 
   return taskResult.upsert(task, opt_updateUserIndex);
 }
-function* commandOpen(conn, cmd, outputData, opt_upsertRes) {
+function* commandOpen(conn, cmd, outputData, opt_upsertRes, opt_bIsRestore) {
   var upsertRes;
   if (opt_upsertRes) {
     upsertRes = opt_upsertRes;
@@ -308,7 +308,7 @@ function* commandOpen(conn, cmd, outputData, opt_upsertRes) {
   let bCreate = upsertRes.affectedRows == 1;
   let needAddTask = bCreate;
   if (!bCreate) {
-    needAddTask = yield* commandOpenFillOutput(conn, cmd, outputData);
+    needAddTask = yield* commandOpenFillOutput(conn, cmd, outputData, opt_bIsRestore);
   }
   if (needAddTask) {
     let updateMask = new taskResult.TaskResultData();
@@ -346,11 +346,11 @@ function* commandOpen(conn, cmd, outputData, opt_upsertRes) {
       }
       yield* docsCoServer.addTask(dataQueue, priority);
     } else {
-      yield* commandOpenFillOutput(conn, cmd, outputData);
+      yield* commandOpenFillOutput(conn, cmd, outputData, opt_bIsRestore);
     }
   }
 }
-function* commandOpenFillOutput(conn, cmd, outputData) {
+function* commandOpenFillOutput(conn, cmd, outputData, opt_bIsRestore) {
   let needAddTask = false;
   let selectRes = yield taskResult.select(cmd.getDocId());
   if (selectRes.length > 0) {
@@ -358,7 +358,7 @@ function* commandOpenFillOutput(conn, cmd, outputData) {
     if (taskResult.FileStatus.None === row.status) {
       needAddTask = true;
     } else {
-      yield* getOutputData(cmd, outputData, cmd.getDocId(), row.status, row.status_info, conn);
+      yield* getOutputData(cmd, outputData, cmd.getDocId(), row.status, row.status_info, conn, undefined, opt_bIsRestore);
     }
   }
   return needAddTask;
@@ -862,7 +862,7 @@ function* commandSendMMCallback(cmd) {
   logger.debug('End commandSendMMCallback: docId = %s', docId);
 }
 
-exports.openDocument = function(conn, cmd, opt_upsertRes) {
+exports.openDocument = function(conn, cmd, opt_upsertRes, opt_bIsRestore) {
   return co(function* () {
     var outputData;
     var docId = conn ? conn.docId : 'null';
@@ -875,7 +875,7 @@ exports.openDocument = function(conn, cmd, opt_upsertRes) {
       outputData = new OutputData(cmd.getCommand());
       switch (cmd.getCommand()) {
         case 'open':
-          yield* commandOpen(conn, cmd, outputData, opt_upsertRes);
+          yield* commandOpen(conn, cmd, outputData, opt_upsertRes, opt_bIsRestore);
           break;
         case 'reopen':
           yield* commandReopen(cmd);

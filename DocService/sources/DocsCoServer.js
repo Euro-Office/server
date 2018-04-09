@@ -1991,7 +1991,7 @@ exports.install = function(server, callbackFunction) {
           // Посылаем формальную авторизацию, чтобы подтвердить соединение
           yield* sendAuthInfo(conn, bIsRestore, undefined);
           if (cmd) {
-            yield canvasService.openDocument(conn, cmd, upsertRes);
+            yield canvasService.openDocument(conn, cmd, upsertRes, bIsRestore);
           }
         }
         return;
@@ -2010,12 +2010,7 @@ exports.install = function(server, callbackFunction) {
             var status = result && result.length > 0 ? result[0]['status'] : null;
             if (taskResult.FileStatus.Ok === status) {
               // Все хорошо, статус обновлять не нужно
-            } else if (taskResult.FileStatus.SaveVersion === status ||
-              (taskResult.FileStatus.UpdateVersion === status &&
-              Date.now() - result[0]['status_info'] * 60000 > cfgExpUpdateVersionStatus)) {
-              if (taskResult.FileStatus.UpdateVersion === status) {
-                logger.warn("UpdateVersion expired: docId = %s", docId);
-              }
+            } else if (taskResult.FileStatus.SaveVersion === status) {
               // Обновим статус файла (идет сборка, нужно ее остановить)
               var updateMask = new taskResult.TaskResultData();
               updateMask.key = docId;
@@ -2078,7 +2073,7 @@ exports.install = function(server, callbackFunction) {
         conn.sessionId = conn.id;
         const endAuthRes = yield* endAuth(conn, false, data.documentCallbackUrl);
         if (endAuthRes && cmd) {
-          yield canvasService.openDocument(conn, cmd, upsertRes);
+          yield canvasService.openDocument(conn, cmd, upsertRes, bIsRestore);
         }
       }
     }
