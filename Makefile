@@ -48,8 +48,8 @@ FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/v8/out.gn/$(TARGET)/icudtl.dat
 endif
 
 ifeq ($(PLATFORM),win)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icudt55$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icuuc55$(SHARED_EXT)
+FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icudt*$(SHARED_EXT)
+FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icuuc*$(SHARED_EXT)
 FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/v8/out.gn/$(TARGET)/release/icudtl.dat
 endif
 
