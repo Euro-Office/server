@@ -60,7 +60,8 @@
 				"edit_singleton": false,
 				"forgottenfiles": "forgotten",
 				"forgottenfilesname": "output",
-				"maxRequestChanges": 20000
+				"maxRequestChanges": 20000,
+				"openProtectedFile": true
 			},
 			"requestDefaults": {
 				"headers": {

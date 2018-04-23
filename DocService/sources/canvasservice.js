@@ -60,6 +60,7 @@ var cfgRedisPrefix = config.get('services.CoAuthoring.redis.prefix');
 var cfgTokenEnableBrowser = config.get('services.CoAuthoring.token.enable.browser');
 const cfgForgottenFiles = config_server.get('forgottenfiles');
 const cfgForgottenFilesName = config_server.get('forgottenfilesname');
+const cfgOpenProtectedFile = config_server.get('openProtectedFile');
 const cfgExpUpdateVersionStatus = ms(config.get('services.CoAuthoring.expire.updateVersionStatus'));
 
 var SAVE_TYPE_PART_START = 0;
@@ -259,7 +260,13 @@ function getUpdateResponse(cmd) {
     updateTask.status = taskResult.FileStatus.ErrToReload;
   } else if (constants.CONVERT_NEED_PARAMS == statusInfo) {
     updateTask.status = taskResult.FileStatus.NeedParams;
-  } else if (constants.CONVERT_DRM == statusInfo || constants.CONVERT_PASSWORD == statusInfo) {
+  } else if (constants.CONVERT_DRM == statusInfo) {
+    if (cfgOpenProtectedFile) {
+      updateTask.status = taskResult.FileStatus.NeedPassword;
+    } else {
+      updateTask.status = taskResult.FileStatus.Err;
+    }
+  } else if (constants.CONVERT_PASSWORD == statusInfo) {
     updateTask.status = taskResult.FileStatus.NeedPassword;
   } else if (constants.CONVERT_DEAD_LETTER == statusInfo) {
     updateTask.status = taskResult.FileStatus.ErrToReload;
@@ -364,28 +371,35 @@ function* commandOpenFillOutput(conn, cmd, outputData, opt_bIsRestore) {
   return needAddTask;
 }
 function* commandReopen(cmd) {
-  let updateMask = new taskResult.TaskResultData();
-  updateMask.key = cmd.getDocId();
-  updateMask.status = undefined !== cmd.getPassword() ? taskResult.FileStatus.NeedPassword : taskResult.FileStatus.NeedParams;
+  let res = true;
+  let isPassword = undefined !== cmd.getPassword();
+  if (!isPassword || cfgOpenProtectedFile) {
+    let updateMask = new taskResult.TaskResultData();
+    updateMask.key = cmd.getDocId();
+    updateMask.status = isPassword ? taskResult.FileStatus.NeedPassword : taskResult.FileStatus.NeedParams;
 
-  var task = new taskResult.TaskResultData();
-  task.key = cmd.getDocId();
-  task.status = taskResult.FileStatus.WaitQueue;
-  task.statusInfo = constants.NO_ERROR;
+    var task = new taskResult.TaskResultData();
+    task.key = cmd.getDocId();
+    task.status = taskResult.FileStatus.WaitQueue;
+    task.statusInfo = constants.NO_ERROR;
 
-  var upsertRes = yield taskResult.updateIf(task, updateMask);
-  if (upsertRes.affectedRows > 0) {
-    //add task
-    cmd.setUrl(null);//url may expire
-    cmd.setSaveKey(cmd.getDocId());
-    cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
-    cmd.setEmbeddedFonts(false);
-    var dataQueue = new commonDefines.TaskQueueData();
-    dataQueue.setCmd(cmd);
-    dataQueue.setToFile('Editor.bin');
-    dataQueue.setFromSettings(true);
-    yield* docsCoServer.addTask(dataQueue, constants.QUEUE_PRIORITY_HIGH);
+    var upsertRes = yield taskResult.updateIf(task, updateMask);
+    if (upsertRes.affectedRows > 0) {
+      //add task
+      cmd.setUrl(null);//url may expire
+      cmd.setSaveKey(cmd.getDocId());
+      cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_CANVAS);
+      cmd.setEmbeddedFonts(false);
+      var dataQueue = new commonDefines.TaskQueueData();
+      dataQueue.setCmd(cmd);
+      dataQueue.setToFile('Editor.bin');
+      dataQueue.setFromSettings(true);
+      yield* docsCoServer.addTask(dataQueue, constants.QUEUE_PRIORITY_HIGH);
+    }
+  } else {
+    res = false;
   }
+  return res;
 }
 function* commandSave(cmd, outputData) {
   var completeParts = yield* saveParts(cmd, "Editor.bin");
@@ -873,12 +887,13 @@ exports.openDocument = function(conn, cmd, opt_upsertRes, opt_bIsRestore) {
       }
       logger.debug('Start command: docId = %s %s', docId, JSON.stringify(cmd));
       outputData = new OutputData(cmd.getCommand());
+      let res = true;
       switch (cmd.getCommand()) {
         case 'open':
           yield* commandOpen(conn, cmd, outputData, opt_upsertRes, opt_bIsRestore);
           break;
         case 'reopen':
-          yield* commandReopen(cmd);
+          res = yield* commandReopen(cmd);
           break;
         case 'imgurl':
         case 'imgurls':
@@ -891,9 +906,12 @@ exports.openDocument = function(conn, cmd, opt_upsertRes, opt_bIsRestore) {
           yield* commandPathUrls(conn, cmd, outputData);
           break;
         default:
-          outputData.setStatus('err');
-          outputData.setData(constants.UNKNOWN);
+          res = false;
           break;
+      }
+      if(!res){
+        outputData.setStatus('err');
+        outputData.setData(constants.UNKNOWN);
       }
       if(clientStatsD) {
         clientStatsD.timing('coauth.openDocument.' + cmd.getCommand(), new Date() - startDate);
