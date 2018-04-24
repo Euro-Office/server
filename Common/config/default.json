@@ -185,7 +185,7 @@
 	},
 	"FileConverter": {
 		"converter": {
-			"maxDownloadBytes": 100000000,
+			"maxDownloadBytes": 104857600,
 			"downloadTimeout": 120,
 			"downloadAttemptMaxCount": 3,
 			"downloadAttemptDelay": 1000,
