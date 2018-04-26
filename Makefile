@@ -48,8 +48,8 @@ FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/v8/out.gn/$(TARGET)/icudtl.dat
 endif
 
 ifeq ($(PLATFORM),win)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icudt55$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icuuc55$(SHARED_EXT)
+FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icudt*$(SHARED_EXT)
+FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icuuc*$(SHARED_EXT)
 FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/v8/out.gn/$(TARGET)/release/icudtl.dat
 endif
 
@@ -168,8 +168,8 @@ install:
 	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libPdfWriter.so /lib/libPdfWriter.so
 	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libXpsFile.so /lib/libXpsFile.so
 	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libUnicodeConverter.so /lib/libUnicodeConverter.so
-	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libicudata.so.55 /lib/libicudata.so.55
-	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libicuuc.so.55 /lib/libicuuc.so.55
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libicudata.so.60 /lib/libicudata.so.60
+	sudo ln -s /var/www/onlyoffice/documentserver/server/FileConverter/bin/libicuuc.so.60 /lib/libicuuc.so.60
 
 	sudo -u onlyoffice "${DOCUMENT_ROOT}/server/tools/AllFontsGen"\
 		--input="${DOCUMENT_ROOT}/core-fonts"\
@@ -191,8 +191,8 @@ uninstall:
 	sudo unlink /lib/libPdfWriter.so
 	sudo unlink /lib/libXpsFile.so
 	sudo unlink /lib/libUnicodeConverter.so
-	sudo unlink /lib/libicudata.so.55
-	sudo unlink /lib/libicuuc.so.55
+	sudo unlink /lib/libicudata.so.60
+	sudo unlink /lib/libicuuc.so.60
 
 	sudo rm -rf /var/www/onlyoffice/documentserver
 	sudo rm -rf /var/log/onlyoffice/documentserver
