@@ -1354,7 +1354,7 @@ exports.install = function(server, callbackFunction) {
         bHasChanges = puckerIndex > 0;
 
         let needSendStatus = true;
-        if (conn.crypted) {
+        if (conn.encrypted) {
           let selectRes = yield taskResult.select(docId);
           if (selectRes.length > 0) {
             var row = selectRes[0];
@@ -1833,6 +1833,9 @@ exports.install = function(server, callbackFunction) {
           openCmd.url = doc.url;
         }
       }
+      if (null != doc.ds_encrypted) {
+        data.encrypted = doc.ds_encrypted;
+      }
     }
     if (decoded.editorConfig) {
       var edit = decoded.editorConfig;
@@ -1871,7 +1874,7 @@ exports.install = function(server, callbackFunction) {
         }
       }
     }
-    data.crypted = decoded.crypted;
+
     //issuer for secret
     if (decoded.iss) {
       data.iss = decoded.iss;
@@ -1901,6 +1904,7 @@ exports.install = function(server, callbackFunction) {
     var doc = payload.document;
     doc.key = conn.docId;
     doc.permissions = conn.permissions;
+    doc.ds_encrypted = conn.encrypted;
     var edit = payload.editorConfig;
     //todo
     //edit.callbackUrl = callbackUrl;
@@ -1912,7 +1916,6 @@ exports.install = function(server, callbackFunction) {
     //no standart
     edit.ds_view = conn.user.view;
     edit.ds_isCloseCoAuthoring = conn.isCloseCoAuthoring;
-    edit.crypted = conn.crypted;
 
     var options = {algorithm: cfgTokenSessionAlgorithm, expiresIn: cfgTokenSessionExpires / 1000};
     var secret = utils.getSecretByElem(cfgSecretSession);
@@ -1978,7 +1981,7 @@ exports.install = function(server, callbackFunction) {
       if (data.sessionTimeIdle >= 0) {
         conn.sessionTimeLastAction = new Date().getTime() - data.sessionTimeIdle;
       }
-      conn.crypted = data.crypted;
+      conn.encrypted = data.encrypted;
 
       const c_LR = constants.LICENSE_RESULT;
       conn.licenseType = c_LR.Success;

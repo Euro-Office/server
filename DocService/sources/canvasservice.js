@@ -628,7 +628,7 @@ function checkAuthorizationLength(authorization, data){
   }
   return res;
 }
-function* commandSfcCallback(cmd, isSfcm, isCrypted) {
+function* commandSfcCallback(cmd, isSfcm, isEncrypted) {
   var docId = cmd.getDocId();
   logger.debug('Start commandSfcCallback: docId = %s', docId);
   var saveKey = cmd.getSaveKey();
@@ -643,6 +643,7 @@ function* commandSfcCallback(cmd, isSfcm, isCrypted) {
   var forceSaveType = forceSave ? forceSave.getType() : commonDefines.c_oAscForceSaveTypes.Command;
   var isSfcmSuccess = false;
   let storeForgotten = false;
+  let replyStr;
   var statusOk;
   var statusErr;
   if (isSfcm) {
@@ -654,7 +655,7 @@ function* commandSfcCallback(cmd, isSfcm, isCrypted) {
   }
   let updateMask = new taskResult.TaskResultData();
   updateMask.key = docId;
-  if (!isCrypted) {
+  if (!isEncrypted) {
     updateMask.status = taskResult.FileStatus.SaveVersion;
     updateMask.statusInfo = cmd.getData();
   } else {
@@ -668,7 +669,7 @@ function* commandSfcCallback(cmd, isSfcm, isCrypted) {
     logger.debug('Callback commandSfcCallback: docId = %s callback = %s', docId, getRes.server.href);
     var outputSfc = new commonDefines.OutputSfcData();
     outputSfc.setKey(docId);
-    outputSfc.setCrypted(isCrypted);
+    outputSfc.setEncrypted(isEncrypted);
     var users = [];
     let isOpenFromForgotten = false;
     //setUserId - set from changes in convert
@@ -701,7 +702,7 @@ function* commandSfcCallback(cmd, isSfcm, isCrypted) {
           isSendHistory = !isOpenFromForgotten;
           logger.debug('commandSfcCallback forgotten no empty: docId = %s isSendHistory = %s', docId, isSendHistory);
         }
-        if (isSendHistory && !isCrypted) {
+        if (isSendHistory && !isEncrypted) {
           //don't send history info because changes isn't from file in storage
           var data = yield storage.getObject(savePathHistory);
           outputSfc.setChangeHistory(JSON.parse(data.toString('utf-8')));
@@ -737,7 +738,7 @@ function* commandSfcCallback(cmd, isSfcm, isCrypted) {
           outputSfc.setLastSave(new Date(forceSave.getTime()).toISOString());
         }
         try {
-          let replyStr = yield* docsCoServer.sendServerRequest(docId, uri, outputSfc, checkAuthorizationLength);
+          replyStr = yield* docsCoServer.sendServerRequest(docId, uri, outputSfc, checkAuthorizationLength);
           let replyData = docsCoServer.parseReplyData(docId, replyStr);
           isSfcmSuccess = replyData && commonDefines.c_oAscServerCommandErrors.NoError == replyData.error;
         } catch (err) {
@@ -746,9 +747,9 @@ function* commandSfcCallback(cmd, isSfcm, isCrypted) {
       }
     } else {
       //if anybody in document stop save
-      var hasEditors = yield* docsCoServer.hasEditors(docId);
-      logger.debug('hasEditors commandSfcCallback: docId = %s hasEditors = %d', docId, hasEditors);
-      if (!hasEditors || isCrypted) {
+      let hvals = yield docsCoServer.getAllPresencePromise(docId);
+      logger.debug('commandSfcCallback presence: docId = %s count = %d', docId, hvals.length);
+      if (0 === hvals.length || (isEncrypted && 1 === hvals.length)) {
         let lastSave = yield* docsCoServer.getLastSave(docId);
         let notModified = yield* docsCoServer.getLastForceSave(docId, lastSave);
         var lastSaveDate = lastSave ? new Date(lastSave.time) : new Date();
@@ -758,11 +759,9 @@ function* commandSfcCallback(cmd, isSfcm, isCrypted) {
         if (updateIfRes.affectedRows > 0) {
           updateMask.status = updateIfTask.status;
           updateMask.statusInfo = updateIfTask.statusInfo;
-          var replyStr = null;
           try {
             replyStr = yield* docsCoServer.sendServerRequest(docId, uri, outputSfc, checkAuthorizationLength);
           } catch (err) {
-            replyStr = null;
             logger.error('sendServerRequest error: docId = %s;url = %s;data = %j\r\n%s', docId, uri, outputSfc, err.stack);
           }
           var requestRes = false;
@@ -822,7 +821,7 @@ function* commandSfcCallback(cmd, isSfcm, isCrypted) {
     yield utils.promiseRedis(redisClient, redisClient.srem, keyRedis, docId);
   }
   logger.debug('End commandSfcCallback: docId = %s', docId);
-  return !isError;
+  return replyStr;
 }
 function* commandSendMMCallback(cmd) {
   var docId = cmd.getDocId();
@@ -1028,9 +1027,14 @@ exports.saveFile = function(req, res) {
         let checkJwtRes = docsCoServer.checkJwt(docId, cmd.getJwt(), commonDefines.c_oAscSecretType.Session);
         if (checkJwtRes.decoded) {
           let doc = checkJwtRes.decoded.document;
-          isValidJwt = true;
-          docId = doc.key;
-          cmd.setDocId(doc.key);
+          var edit = checkJwtRes.decoded.editorConfig;
+          if (doc.ds_encrypted && !edit.ds_view && !edit.ds_isCloseCoAuthoring) {
+            isValidJwt = true;
+            docId = doc.key;
+            cmd.setDocId(doc.key);
+          } else {
+            logger.warn('Error saveFile jwt: docId = %s\r\n%s', docId, 'access deny');
+          }
         } else {
           logger.warn('Error saveFile jwt: docId = %s\r\n%s', docId, checkJwtRes.description);
         }
@@ -1042,9 +1046,13 @@ exports.saveFile = function(req, res) {
       cmd.setStatusInfo(constants.NO_ERROR);
       yield* addRandomKeyTaskCmd(cmd);
       yield storage.putObject(cmd.getSaveKey() + '/' + cmd.getOutputPath(), req.body, req.body.length);
-      let sfcRes = yield* commandSfcCallback(cmd, false, true);
-      res.sendStatus(sfcRes ? 200 : 400);
-      logger.debug('End saveFile: docId = %s %s', docId, sfcRes);
+      let replyStr = yield* commandSfcCallback(cmd, false, true);
+      if (replyStr) {
+        utils.fillResponseSimple(res, replyStr, 'application/json');
+      } else {
+        res.sendStatus(400);
+      }
+      logger.debug('End saveFile: docId = %s %s', docId, replyStr);
       if (clientStatsD) {
         clientStatsD.timing('coauth.saveFile', new Date() - startDate);
       }
