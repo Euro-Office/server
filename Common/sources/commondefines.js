@@ -633,7 +633,7 @@ function OutputSfcData() {
   this['lastsave'] = undefined;
   this['notmodified'] = undefined;
   this['forcesavetype'] = undefined;
-  this['crypted'] = undefined;
+  this['encrypted'] = undefined;
 }
 OutputSfcData.prototype.getKey = function() {
   return this['key'];
@@ -707,11 +707,11 @@ OutputSfcData.prototype.getForceSaveType = function() {
 OutputSfcData.prototype.setForceSaveType = function(v) {
   this['forcesavetype'] = v;
 };
-OutputSfcData.prototype.getCrypted = function() {
-  return this['crypted']
+OutputSfcData.prototype.getEncrypted = function() {
+  return this['encrypted']
 };
-OutputSfcData.prototype.setCrypted = function(v) {
-  this['crypted'] = v;
+OutputSfcData.prototype.setEncrypted = function(v) {
+  this['encrypted'] = v;
 };
 
 function OutputMailMerge(mailMergeSendData) {

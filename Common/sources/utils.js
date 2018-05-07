@@ -402,6 +402,12 @@ function fillXmlResponse(val) {
   return xml;
 }
 
+function fillResponseSimple(res, str, contentType) {
+  let body = new Buffer(str, 'utf-8');
+  res.setHeader('Content-Type', contentType + '; charset=UTF-8');
+  res.setHeader('Content-Length', body.length);
+  res.send(body);
+}
 function _fillResponse(res, output, isJSON) {
   let data;
   let contentType;
@@ -412,10 +418,7 @@ function _fillResponse(res, output, isJSON) {
     data = fillXmlResponse(output);
     contentType = 'text/xml';
   }
-  let body = new Buffer(data, 'utf-8');
-  res.setHeader('Content-Type', contentType + '; charset=UTF-8');
-  res.setHeader('Content-Length', body.length);
-  res.send(body);
+  fillResponseSimple(res, data, contentType);
 }
 
 function fillResponse(req, res, uri, error, isJSON) {
@@ -439,6 +442,7 @@ function fillResponse(req, res, uri, error, isJSON) {
   _fillResponse(res, output, isJSON);
 }
 
+exports.fillResponseSimple = fillResponseSimple;
 exports.fillResponse = fillResponse;
 
 function fillResponseBuilder(res, key, urls, end, error) {
