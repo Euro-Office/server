@@ -895,7 +895,7 @@ exports.openDocument = function(conn, cmd, opt_upsertRes, opt_bIsRestore) {
       let res = true;
       switch (cmd.getCommand()) {
         case 'open':
-          if (!conn.crypted) {
+          if (!conn.encrypted) {
             yield* commandOpen(conn, cmd, outputData, opt_upsertRes, opt_bIsRestore);
           }
           break;
