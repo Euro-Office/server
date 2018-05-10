@@ -69,6 +69,7 @@ var cfgSignatureSecretOutbox = config.get('services.CoAuthoring.secret.outbox');
 var cfgVisibilityTimeout = config.get('queue.visibilityTimeout');
 var cfgQueueRetentionPeriod = config.get('queue.retentionPeriod');
 var cfgRequestDefaults = config.get('services.CoAuthoring.requestDefaults');
+const cfgTokenOutboxInBody = config.get('services.CoAuthoring.token.outbox.inBody');
 
 var ANDROID_SAFE_FILENAME = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-+,@£$€!½§~\'=()[]{}0123456789';
 
@@ -747,9 +748,14 @@ function getSecret(docId, secretElem, opt_iss, opt_token) {
 }
 exports.getSecret = getSecret;
 function fillJwtForRequest(opt_payload) {
-  let data = {};
-  if(opt_payload){
-    data.payload = opt_payload;
+  let data;
+  if (cfgTokenOutboxInBody) {
+    data = opt_payload || {};
+  } else {
+    data = {};
+    if(opt_payload){
+      data.payload = opt_payload;
+    }
   }
 
   let options = {algorithm: cfgTokenOutboxAlgorithm, expiresIn: cfgTokenOutboxExpires};

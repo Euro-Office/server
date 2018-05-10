@@ -1101,7 +1101,7 @@ function getRequestParams(docId, req, opt_isNotInBody, opt_tokenAssign) {
       if (checkJwtRes.decoded) {
         res.code = constants.NO_ERROR;
         if (cfgTokenInboxInBody && !opt_tokenAssign) {
-          res.params = checkJwtRes.decoded.payload || {};
+          res.params = checkJwtRes.decoded;
         } else {
           //for compatibility
           if (!utils.isEmptyObject(checkJwtRes.decoded.payload)) {
