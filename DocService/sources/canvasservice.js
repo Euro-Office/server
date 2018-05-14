@@ -747,9 +747,9 @@ function* commandSfcCallback(cmd, isSfcm, isEncrypted) {
       }
     } else {
       //if anybody in document stop save
-      let hvals = yield docsCoServer.getAllPresencePromise(docId);
-      logger.debug('commandSfcCallback presence: docId = %s count = %d', docId, hvals.length);
-      if (0 === hvals.length || (isEncrypted && 1 === hvals.length)) {
+      let editorsCount = yield docsCoServer.getEditorsCountPromise(docId);
+      logger.debug('commandSfcCallback presence: docId = %s count = %d', docId, editorsCount);
+      if (0 === editorsCount || (isEncrypted && 1 === editorsCount)) {
         let lastSave = yield* docsCoServer.getLastSave(docId);
         let notModified = yield* docsCoServer.getLastForceSave(docId, lastSave);
         var lastSaveDate = lastSave ? new Date(lastSave.time) : new Date();
