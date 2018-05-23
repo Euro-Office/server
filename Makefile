@@ -165,7 +165,7 @@ install:
 		${DOCUMENT_ROOT}/server/FileConverter/bin \
 		-maxdepth 1 \
 		-name *$(SHARED_EXT) \
-		-exec sh -c 'ln -sf {} /lib/$(basename {})' \;
+		-exec sh -c 'ln -sf {} /lib/$$(basename {})' \;
 
 	sudo -u onlyoffice "${DOCUMENT_ROOT}/server/tools/AllFontsGen"\
 		--input="${DOCUMENT_ROOT}/core-fonts"\
@@ -180,7 +180,7 @@ uninstall:
 	sudo userdel onlyoffice
 	
 	# Unlink installed shared libs
-	find /lib -type l | while IFS= read -r lnk; do if (readlink "$lnk" | grep -q '^${DOCUMENT_ROOT}/server/FileConverter/bin/'); then rm "$lnk"; fi; done
+	find /lib -type l | while IFS= read -r lnk; do if (readlink "$$lnk" | grep -q '^${DOCUMENT_ROOT}/server/FileConverter/bin/'); then rm "$$lnk"; fi; done
 
 	sudo rm -rf /var/www/onlyoffice/documentserver
 	sudo rm -rf /var/log/onlyoffice/documentserver
