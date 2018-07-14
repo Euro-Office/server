@@ -1395,7 +1395,7 @@ exports.install = function(server, callbackFunction) {
 
         //Давайдосвиданья!
         //Release locks
-        userLocks = yield* getUserLocks(docId, conn.sessionId);
+        userLocks = yield* getUserLocks(docId, conn.user.id);
         if (0 < userLocks.length) {
           //todo на close себе ничего не шлем
           //sendReleaseLock(conn, userLocks);
@@ -1485,13 +1485,13 @@ exports.install = function(server, callbackFunction) {
       yield utils.promiseRedis(multi, multi.exec);
     }
   }
-  function* getUserLocks(docId, sessionId) {
+  function* getUserLocks(docId, userId) {
     var userLocks = [], i;
     var toCache = [];
     var docLock = yield* getAllLocks(docId);
     for (i = 0; i < docLock.length; ++i) {
       var elem = docLock[i];
-      if (elem.sessionId === sessionId) {
+      if (elem.user === userId) {
         userLocks.push(elem);
       } else {
         toCache.push(JSON.stringify(elem));
@@ -1557,7 +1557,7 @@ exports.install = function(server, callbackFunction) {
 		//Release locks
 		if (isSave && conn) {
 			if (releaseLocks) {
-				const userLocks = yield* getUserLocks(docId, conn.sessionId);
+				const userLocks = yield* getUserLocks(docId, userId);
 				if (0 < userLocks.length) {
 					sendReleaseLock(conn, userLocks);
 					yield* publish({
@@ -2303,7 +2303,7 @@ exports.install = function(server, callbackFunction) {
       var toCache = [];
       for (i = 0; i < arrayBlocks.length; ++i) {
         var block = arrayBlocks[i];
-        var elem = {time: Date.now(), user: userId, block: block, sessionId: conn.sessionId};
+        var elem = {time: Date.now(), user: userId, block: block};
         documentLocks[block] = elem;
         toCache.push(JSON.stringify(elem));
       }
@@ -2328,7 +2328,7 @@ exports.install = function(server, callbackFunction) {
       var toCache = [];
       for (i = 0; i < arrayBlocks.length; ++i) {
         var block = arrayBlocks[i];
-        var elem = {time: Date.now(), user: userId, block: block, sessionId: conn.sessionId};
+        var elem = {time: Date.now(), user: userId, block: block};
         documentLocks.push(elem);
         toCache.push(JSON.stringify(elem));
       }
@@ -2353,7 +2353,7 @@ exports.install = function(server, callbackFunction) {
       var toCache = [];
       for (i = 0; i < arrayBlocks.length; ++i) {
         var block = arrayBlocks[i];
-        var elem = {time: Date.now(), user: userId, block: block, sessionId: conn.sessionId};
+        var elem = {time: Date.now(), user: userId, block: block};
         documentLocks.push(elem);
         toCache.push(JSON.stringify(elem));
       }
@@ -2443,7 +2443,7 @@ exports.install = function(server, callbackFunction) {
       let userLocks = [];
       if (data.releaseLocks) {
 		  //Release locks
-		  userLocks = yield* getUserLocks(docId, conn.sessionId);
+		  userLocks = yield* getUserLocks(docId, userId);
       }
       // Для данного пользователя снимаем Lock с документа, если пришел флаг unlock
       const checkEndAuthLockRes = yield* checkEndAuthLock(data.unlock, false, docId, userId);
