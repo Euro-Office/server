@@ -1804,7 +1804,7 @@ exports.install = function(server, callbackFunction) {
     if (permissions && mode) {
       //as in web-apps/apps/documenteditor/main/app/controller/Main.js
       return ((permissions.edit !== false || permissions.review === true) && mode !== 'view') ||
-        permissions.comment === true;
+        permissions.comment === true || permissions.fillForms === true;
     } else {
       return def;
     }
