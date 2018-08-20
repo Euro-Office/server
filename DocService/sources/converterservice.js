@@ -32,6 +32,7 @@
 
 'use strict';
 
+const path = require('path');
 var config = require('config');
 var co = require('co');
 var taskResult = require('./taskresult');
@@ -59,7 +60,8 @@ function* getConvertStatus(cmd, selectRes, baseUrl, opt_fileTo) {
       case taskResult.FileStatus.Ok:
         status.end = true;
         if (opt_fileTo) {
-          status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + opt_fileTo, commonDefines.c_oAscUrlTypes.Temporary);
+          status.url = yield storage.getSignedUrl(baseUrl, docId + '/' + opt_fileTo,
+                                                  commonDefines.c_oAscUrlTypes.Temporary, cmd.getTitle());
         }
         break;
       case taskResult.FileStatus.Err:
@@ -193,6 +195,7 @@ function convertRequest(req, res, isJson) {
       cmd.setEmbeddedFonts(false);//params.embeddedfonts'];
       cmd.setFormat(params.filetype);
       var outputtype = params.outputtype || '';
+      let outputExt = outputtype;
       docId = 'conv_' + params.key + '_' + outputtype;
       cmd.setDocId(docId);
       var fileTo = constants.OUTPUT_NAME + '.' + outputtype;
@@ -227,8 +230,11 @@ function convertRequest(req, res, isJson) {
         cmd.setThumbnail(thumbnailData);
         cmd.setOutputFormat(constants.AVS_OFFICESTUDIO_FILE_IMAGE);
         if (false == thumbnailData.getFirst()) {
-          cmd.setTitle(constants.OUTPUT_NAME + '.zip');
+          outputExt = 'zip';
         }
+      }
+      if (params.title) {
+        cmd.setTitle(path.basename(params.title, path.extname(params.title)) + '.' + outputExt);
       }
       var async = (typeof params.async === 'string') ? 'true' == params.async : params.async;
 
