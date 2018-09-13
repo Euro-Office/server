@@ -93,6 +93,10 @@ WELCOME_DIR = welcome
 WELCOME_FILES = $(WELCOME_DIR)/**
 WELCOME = $(OUTPUT)/$(WELCOME_DIR)/
 
+INFO_DIR = info
+INFO_FILES = $(INFO_DIR)/**
+INFO = $(OUTPUT)/$(INFO_DIR)/
+
 CORE_FONTS_DIR = core-fonts
 CORE_FONTS_FILES = ../$(CORE_FONTS_DIR)/**
 CORE_FONTS = $(OUTPUT)/../$(CORE_FONTS_DIR)/
@@ -100,7 +104,7 @@ CORE_FONTS = $(OUTPUT)/../$(CORE_FONTS_DIR)/
 .PHONY: all clean install uninstall build-date htmlfileinternal docbuilder
 
 .NOTPARALLEL:
-all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(CORE_FONTS) $(LICENSE) $(WELCOME) build-date
+all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(CORE_FONTS) $(LICENSE) $(WELCOME) $(INFO) build-date
 
 ext: htmlfileinternal docbuilder
 
@@ -146,6 +150,10 @@ $(GRUNT_FILES):
 $(WELCOME):
 	mkdir -p $(WELCOME) && \
 		cp -r -t $(WELCOME) $(WELCOME_FILES)
+
+$(INFO):
+	mkdir -p $(INFO) && \
+		cp -r -t $(INFO) $(INFO_FILES)
 
 $(CORE_FONTS):
 	mkdir -p $(CORE_FONTS) && \

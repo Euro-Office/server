@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ONLYOFFICE™</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=IE8"/>
+    <link href="../welcome/img/favicon.ico" rel="icon" type="image/x-icon">
+
+    <style type="text/css">
+        html {
+            height: 100%;
+        }
+
+        body {
+            height: 100%;
+            min-width: 600px;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Open Sans', sans-serif;
+            font-size: 12px;
+            color: #333333;
+        }
+
+        header {
+            background: #3D4A6B;
+            height: 80px;
+            margin: 0 auto;
+            min-width: 600px;
+            width: auto;
+        }
+
+        table {
+            table-layout: fixed;
+            border-spacing: 0;
+        }
+
+        td {
+            padding-left: 0;
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+
+        .main-panel {
+            margin: 80px auto 16px;
+            width: 600px;
+        }
+
+        .header0 {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .header1 {
+            font-size: 20px;
+        }
+
+        .header2 {
+            font-size: 16px;
+        }
+
+        #doc-server-wait {
+            text-align: center;
+        }
+        #doc-server-err > div {
+            display: inline-block;
+            vertical-align: middle;
+            text-align: left;
+        }
+
+        #status-err-icon {
+            display: inline-block;
+            vertical-align: middle;
+            text-align: left;
+            width:48px;
+            height: 48px;
+            margin-right: 15px;
+            background: url(../welcome/img/icon-cross.png) center no-repeat;
+        }
+
+        #status-err-help {
+            font-size: 18px;
+            font-weight: normal;
+            margin-top: 5px;
+        }
+        .hidden {
+            display: none !important;
+            visibility: hidden;
+        }
+        .critical {
+            color: #ff0000;
+            font-weight: bold;
+        }
+        .warning {
+            color: #ff8a00;
+            font-weight: bold;
+        }
+        .td-caption {
+            font-weight: bold;
+        }
+        .td-center {
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <header></header>
+    <div class="main-panel">
+        <div class="header0" id="doc-server-wait">Please, wait...</div>
+        <div class="hidden" id="doc-server-ok">
+            <div class="header1">Document Server information page</div>
+            <br/>
+            <div class="header2">License</div>
+            <table>
+                <tr>
+                    <td width="280px" class="td-caption">Valid:</td>
+                    <td width="420px">until</td>
+                </tr>
+                <tr>
+                    <td class="td-caption">Limit to concurent connections:</td>
+                    <td>100</td>
+                </tr>
+            </table>
+            <br/>
+            <br/>
+            <br/>
+            <div class="header2">Number Concurent Connections</div>
+            <br/>
+            <table width="600px">
+                <tr class="td-caption">
+                    <td></td>
+                    <td class="td-center">Last Hour</td>
+                    <td class="td-center">Last 24 Hours</td>
+                    <td class="td-center">Last Week</td>
+                    <td class="td-center">Last Month</td>
+                </tr>
+                <tr>
+                    <td class="td-caption">Maximum:</td>
+                    <td id="cell-hour-max" class="td-center">90</td>
+                    <td id="cell-day-max" class="td-center">120</td>
+                    <td id="cell-week-max" class="td-center">50</td>
+                    <td id="cell-month-max" class="td-center">200</td>
+                </tr>
+                <tr>
+                    <td class="td-caption">Minimum:</td>
+                    <td id="cell-hour-min" class="td-center">90</td>
+                    <td id="cell-day-min" class="td-center">120</td>
+                    <td id="cell-week-min" class="td-center">50</td>
+                    <td id="cell-month-min" class="td-center">200</td>
+                </tr>
+                <tr>
+                    <td class="td-caption">Average:</td>
+                    <td id="cell-hour-avr" class="td-center">90</td>
+                    <td id="cell-day-avr" class="td-center">120</td>
+                    <td id="cell-week-avr" class="td-center">50</td>
+                    <td id="cell-month-avr" class="td-center">200</td>
+                </tr>
+            </table>
+        </div>
+        <div class="hidden header0" id="doc-server-err">
+            <div id="status-err-icon"></div>
+            <div>
+                <div>Something went wrong during installation</div>
+                <div id="status-err-help">Make sure that you have followed the <a href="http://helpcenter.onlyoffice.com/server/document.aspx" target="_blank">installation instructions</a></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        var _createXMLHTTPObject = function() {
+            var xmlhttp;
+            try {
+                xmlhttp = new ActiveXObject("Msxml2.XMLHTTP");
+            }
+            catch (e) {
+                try {
+                    xmlhttp = new ActiveXObject("Microsoft.XMLHTTP");
+                }
+                catch (E) {
+                    xmlhttp = false;
+                }
+            }
+            if (!xmlhttp && typeof XMLHttpRequest != 'undefined') {
+                xmlhttp = new XMLHttpRequest();
+            }
+            return xmlhttp;
+        };
+        function fillInfo(info) {
+            return 3;
+        }
+        function fillConnections(info, connectionsLimit) {
+            for (var precision in info.connectionsStat) {
+                for (var agregate in info.connectionsStat[precision].edit) {
+                    var value = info.connectionsStat[precision].edit[agregate];
+                    var elem = document.getElementById('cell-' + precision + '-' + agregate);
+                    elem.innerText = value;
+                    if (value >= connectionsLimit) {
+                        elem.classList.add("critical");
+                    } else if (value >= connectionsLimit * 0.7) {
+                        elem.classList.add("warning");
+                    }
+                }
+            }
+        }
+
+        (function(){
+            try {
+                var xhrObj = _createXMLHTTPObject();
+                if (xhrObj) {
+                    var index_html = window["location"]["href"];
+                    var healthcheck_url = index_html.substring(0, index_html.lastIndexOf("/") + 1) + 'info.json';
+                    xhrObj.open('GET', healthcheck_url);
+                    xhrObj.onreadystatechange = function() {
+                        if (xhrObj.readyState == 4) {
+							document.getElementById('doc-server-wait').classList.add("hidden");
+                            if (xhrObj.status == 200) {
+								document.getElementById('doc-server-ok').classList.remove("hidden");
+                                var info = JSON.parse(xhrObj.responseText);
+                                var connectionsLimit = fillInfo(info);
+                                fillConnections(info, connectionsLimit);
+                            } else {
+								document.getElementById('doc-server-err').classList.remove("hidden");
+                            }
+                        }
+                    };
+                    xhrObj.send('');
+                }
+            }
+            catch (e) {}
+        })();
+        
+    </script>
+</body>
+</html>

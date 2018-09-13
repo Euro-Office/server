@@ -30,6 +30,10 @@
           "/welcome": {
             "path": "../../welcome",
             "options": {"maxAge": "7d"}
+          },
+          "/info": {
+            "path": "../../info",
+            "options": {"maxAge": "7d"}
           }
         }
       },

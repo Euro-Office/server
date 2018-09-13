@@ -27,6 +27,10 @@
             "path": "/var/www/onlyoffice/documentserver/server/welcome",
             "options": {"maxAge": "7d"}
           },
+          "/info": {
+            "path": "/var/www/onlyoffice/documentserver/server/info",
+            "options": {"maxAge": "7d"}
+          },
           "/sdkjs-plugins": {
             "path": "/var/www/onlyoffice/documentserver/sdkjs-plugins",
             "options": {"maxAge": "7d"}
