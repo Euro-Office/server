@@ -117,7 +117,7 @@
                 </tr>
                 <tr>
                     <td class="td-caption">Limit to concurent connections:</td>
-                    <td>100</td>
+                    <td id="license-limit">100</td>
                 </tr>
             </table>
             <br/>
@@ -183,18 +183,21 @@
             }
             return xmlhttp;
         };
-        function fillInfo(info) {
-            return 3;
+        function fillInfo(licenseInfo) {
+			var elem = document.getElementById('license-limit');
+			var limit = licenseInfo.usersCount || licenseInfo.connections;
+			elem.innerText = limit;
+			return limit;
         }
-        function fillConnections(info, connectionsLimit) {
+        function fillConnections(info, limit) {
             for (var precision in info.connectionsStat) {
                 for (var agregate in info.connectionsStat[precision].edit) {
                     var value = info.connectionsStat[precision].edit[agregate];
                     var elem = document.getElementById('cell-' + precision + '-' + agregate);
                     elem.innerText = value;
-                    if (value >= connectionsLimit) {
+                    if (value >= limit) {
                         elem.classList.add("critical");
-                    } else if (value >= connectionsLimit * 0.7) {
+                    } else if (value >= limit * 0.7) {
                         elem.classList.add("warning");
                     }
                 }
@@ -214,8 +217,7 @@
                             if (xhrObj.status == 200) {
 								document.getElementById('doc-server-ok').classList.remove("hidden");
                                 var info = JSON.parse(xhrObj.responseText);
-                                var connectionsLimit = fillInfo(info);
-                                fillConnections(info, connectionsLimit);
+                                fillConnections(info, fillInfo(info.licenseInfo));
                             } else {
 								document.getElementById('doc-server-err').classList.remove("hidden");
                             }

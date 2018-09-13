@@ -3115,8 +3115,8 @@ exports.healthCheck = function(req, res) {
 exports.licenseInfo = function(req, res) {
   return co(function*() {
     let isError = false;
-    let output = {connectionsStat: {}};
-    Object.assign(output, licenseInfo);
+    let output = {connectionsStat: {}, licenseInfo: {}};
+    Object.assign(output.licenseInfo, licenseInfo);
     try {
       logger.debug('licenseInfo start');
       var precisionSum = {};
