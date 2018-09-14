@@ -3115,7 +3115,11 @@ exports.healthCheck = function(req, res) {
 exports.licenseInfo = function(req, res) {
   return co(function*() {
     let isError = false;
-    let output = {connectionsStat: {}, licenseInfo: {}};
+    let output = {
+		connectionsStat: {}, licenseInfo: {}, serverInfo: {
+			buildVersion: commonDefines.buildVersion, buildNumber: commonDefines.buildNumber,
+		}
+	};
     Object.assign(output.licenseInfo, licenseInfo);
     try {
       logger.debug('licenseInfo start');
