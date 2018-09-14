@@ -182,7 +182,7 @@ const FORCE_SAVE_EXPIRATION = Math.min(Math.max(cfgForceSaveInterval, MIN_SAVE_E
                                        cfgQueueRetentionPeriod * 1000);
 const HEALTH_CHECK_KEY_MAX = 10000;
 
-const PRECISION = [{name: 'hour', val: ms('1h')}, {name: 'day', val: ms('1d')}, {name: 'week', val: ms('1w')},
+const PRECISION = [{name: 'hour', val: ms('1h')}, {name: 'day', val: ms('1d')}, {name: 'week', val: ms('7d')},
   {name: 'month', val: ms('31d')},
 ];
 
