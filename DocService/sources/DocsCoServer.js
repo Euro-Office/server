@@ -429,6 +429,8 @@ CRecalcIndex.prototype = {
 
 function sendData(conn, data) {
   conn.write(JSON.stringify(data));
+  const type = data ? data.type : null;
+  logger.debug('sendData: docId = %s;type = %s', conn.docId, type);
 }
 function sendDataWarning(conn, msg) {
   sendData(conn, {type: "warning", message: msg});
@@ -2520,6 +2522,7 @@ exports.install = function(server, callbackFunction) {
       isSaveLock = false;
       const saveLock = yield utils.promiseRedis(redisClient, redisClient.expire, redisKeySaveLock + conn.docId, cfgExpSaveLock);
     }
+    logger.debug("isSaveLock: docId = %s; isSaveLock: %s", conn.docId, isSaveLock);
 
     // Отправляем только тому, кто спрашивал (всем отправлять нельзя)
     sendData(conn, {type: "saveLock", saveLock: isSaveLock});
@@ -2532,6 +2535,8 @@ exports.install = function(server, callbackFunction) {
     if (null === saveLock || conn.user.id == saveLock) {
       yield utils.promiseRedis(redisClient, redisClient.del, redisKeySaveLock + conn.docId);
       sendData(conn, {type: 'unSaveLock', index: index, time: time});
+    } else {
+      logger.warn("unSaveLock failure: docId = %s; conn.user.id: %s; saveLock: %s", conn.docId, conn.user.id, saveLock);
     }
   }
 
