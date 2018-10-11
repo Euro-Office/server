@@ -144,6 +144,7 @@ const cfgQueueRetentionPeriod = configCommon.get('queue.retentionPeriod');
 const cfgForgottenFiles = config.get('server.forgottenfiles');
 const cfgMaxRequestChanges = config.get('server.maxRequestChanges');
 const cfgWarningLimitPercents = configCommon.get('license.warning_limit_percents') / 100;
+const cfgErrorFiles = configCommon.get('FileConverter.converter.errorfiles');
 
 const redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
 const redisKeyPresenceHash = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_HASH;
@@ -1245,6 +1246,9 @@ exports.install = function(server, callbackFunction) {
             break;
           case 'changesError':
             logger.error("changesError: docId = %s %s", docId, data.stack);
+            if (cfgErrorFiles) {
+              storage.copyPath(docId, cfgErrorFiles + '/browser/' + docId);
+            }
             break;
           case 'extendSession' :
             conn.sessionIsSendWarning = false;
