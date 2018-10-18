@@ -22,6 +22,7 @@
     "node-cache": "^4.1.0",
     "node-statsd": "^0.1.1",
     "request": "^2.74.0",
+    "rhea": "^0.3.3",
     "uri-js": "^3.0.2"
   }
 }

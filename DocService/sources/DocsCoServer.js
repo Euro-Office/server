@@ -100,6 +100,7 @@ const pubsubRedis = require('./pubsubRedis');
 const pubsubService = require('./' + config.get('pubsub.name'));
 const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const rabbitMQCore = require('./../../Common/sources/rabbitMQCore');
+const activeMQCore = require('./../../Common/sources/activeMQCore');
 let cfgEditor = JSON.parse(JSON.stringify(config.get('editor')));
 cfgEditor['reconnection']['delay'] = ms(cfgEditor['reconnection']['delay']);
 const cfgCallbackRequestTimeout = config.get('server.callbackRequestTimeout');
@@ -3083,8 +3084,13 @@ exports.healthCheck = function(req, res) {
         throw new Error('redis disconnected');
       }
       //rabbitMQ
-      let conn = yield rabbitMQCore.connetPromise(false, function() {});
-      yield rabbitMQCore.closePromise(conn);
+      if (constants.USE_RABBIT_MQ) {
+        let conn = yield rabbitMQCore.connetPromise(false, function() {});
+        yield rabbitMQCore.closePromise(conn);
+      } else {
+        let conn = yield activeMQCore.connetPromise(false, function() {});
+        yield activeMQCore.closePromise(conn);
+      }
       //storage
       const clusterId = cluster.isWorker ? cluster.worker.id : '';
       const tempName = 'hc_' + os.hostname() + '_' + clusterId + '_' + Math.round(Math.random() * HEALTH_CHECK_KEY_MAX);
