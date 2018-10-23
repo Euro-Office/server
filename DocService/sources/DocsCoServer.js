@@ -2999,7 +2999,7 @@ exports.install = function(server, callbackFunction) {
         ['rpush', redisKeyEditorConnections, JSON.stringify({time: now, edit: countEdit, view: countView})]
       ]);
     let multiRes = yield utils.promiseRedis(multi, multi.exec);
-    if (multiRes.length > 1 && JSON.parse(multiRes[0]).time > now - PRECISION[PRECISION.length - 1].val) {
+    if (multiRes.length > 1 && multiRes[0] && JSON.parse(multiRes[0]).time > now - PRECISION[PRECISION.length - 1].val) {
       yield utils.promiseRedis(redisClient, redisClient.lpush, redisKeyEditorConnections, multiRes[0]);
     }
   }
