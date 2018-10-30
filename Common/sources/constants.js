@@ -37,6 +37,7 @@ exports.CHAR_DELIMITER = String.fromCharCode(5);
 exports.OUTPUT_NAME = 'output';
 exports.ONLY_OFFICE_URL_PARAM = 'ooname';
 exports.DISPLAY_PREFIX = 'display';
+exports.CHANGES_NAME = 'changes';
 
 exports.RIGHTS = {
   None    : 0,

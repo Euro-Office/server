@@ -369,7 +369,7 @@ function* concatFiles(source) {
 
 function* processChanges(tempDirs, cmd) {
   let res = constants.NO_ERROR;
-  let changesDir = path.join(tempDirs.source, 'changes');
+  let changesDir = path.join(tempDirs.source, constants.CHANGES_NAME);
   fs.mkdirSync(changesDir);
   let indexFile = 0;
   let changesAuthor = null;
@@ -429,7 +429,7 @@ function* processChanges(tempDirs, cmd) {
 }
 
 function* streamCreate(docId, changesDir, indexFile, opt_options) {
-  let fileName = 'changes' + indexFile + '.json';
+  let fileName = constants.CHANGES_NAME + indexFile + '.json';
   let filePath = path.join(changesDir, fileName);
   let writeStream = yield utils.promiseCreateWriteStream(filePath, opt_options);
   writeStream.on('error', function(err) {

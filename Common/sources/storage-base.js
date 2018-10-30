@@ -51,6 +51,13 @@ exports.uploadObject = function(strPath, filePath) {
 exports.copyObject = function(sourceKey, destinationKey) {
   return storage.copyObject(sourceKey, destinationKey);
 };
+exports.copyPath = function(sourcePath, destinationPath) {
+  return exports.listObjects(getStoragePath(sourcePath)).then(function(list) {
+    return Promise.all(list.map(function(curValue) {
+      return exports.copyObject(curValue, destinationPath + '/' + exports.getRelativePath(sourcePath, curValue));
+    }));
+  });
+};
 exports.listObjects = function(strPath) {
   return storage.listObjects(getStoragePath(strPath)).catch(function(e) {
     logger.error('storage.listObjects:\r\n%s', e.stack);

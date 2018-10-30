@@ -144,6 +144,7 @@ const cfgQueueRetentionPeriod = configCommon.get('queue.retentionPeriod');
 const cfgForgottenFiles = config.get('server.forgottenfiles');
 const cfgMaxRequestChanges = config.get('server.maxRequestChanges');
 const cfgWarningLimitPercents = configCommon.get('license.warning_limit_percents') / 100;
+const cfgErrorFiles = configCommon.get('FileConverter.converter.errorfiles');
 
 const redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
 const redisKeyPresenceHash = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_HASH;
@@ -429,6 +430,8 @@ CRecalcIndex.prototype = {
 
 function sendData(conn, data) {
   conn.write(JSON.stringify(data));
+  const type = data ? data.type : null;
+  logger.debug('sendData: docId = %s;type = %s', conn.docId, type);
 }
 function sendDataWarning(conn, msg) {
   sendData(conn, {type: "warning", message: msg});
@@ -1243,6 +1246,11 @@ exports.install = function(server, callbackFunction) {
             break;
           case 'changesError':
             logger.error("changesError: docId = %s %s", docId, data.stack);
+            if (cfgErrorFiles) {
+              let destDir = cfgErrorFiles + '/browser/' + docId;
+              yield storage.copyPath(docId, destDir);
+              yield* saveErrorChanges(docId, destDir);
+            }
             break;
           case 'extendSession' :
             conn.sessionIsSendWarning = false;
@@ -2194,6 +2202,28 @@ exports.install = function(server, callbackFunction) {
     return res;
   }
 
+  function* saveErrorChanges(docId, destDir) {
+    let index = 0;
+    let indexChunk = 1;
+    let changes;
+    let changesPrefix = destDir + '/' + constants.CHANGES_NAME + '/' + constants.CHANGES_NAME + '.json.';
+    do {
+      changes = yield sqlBase.getChangesPromise(docId, index, index + cfgMaxRequestChanges);
+      if (changes.length > 0) {
+        let changesJSON = indexChunk > 1 ? ',[' : '[';
+        changesJSON += changes[0].change_data;
+        for (let i = 1; i < changes.length; ++i) {
+          changesJSON += ',';
+          changesJSON += changes[i].change_data;
+        }
+        changesJSON += ']\r\n';
+        let buffer = new Buffer(changesJSON, 'utf8');
+        yield storage.putObject(changesPrefix + (indexChunk++).toString().padStart(3, '0'), buffer, buffer.length);
+      }
+      index += cfgMaxRequestChanges;
+    } while (changes && cfgMaxRequestChanges === changes.length);
+  }
+
   function* sendAuthChanges(docId, connections) {
     let index = 0;
     let changes;
@@ -2520,6 +2550,7 @@ exports.install = function(server, callbackFunction) {
       isSaveLock = false;
       const saveLock = yield utils.promiseRedis(redisClient, redisClient.expire, redisKeySaveLock + conn.docId, cfgExpSaveLock);
     }
+    logger.debug("isSaveLock: docId = %s; isSaveLock: %s", conn.docId, isSaveLock);
 
     // Отправляем только тому, кто спрашивал (всем отправлять нельзя)
     sendData(conn, {type: "saveLock", saveLock: isSaveLock});
@@ -2532,6 +2563,8 @@ exports.install = function(server, callbackFunction) {
     if (null === saveLock || conn.user.id == saveLock) {
       yield utils.promiseRedis(redisClient, redisClient.del, redisKeySaveLock + conn.docId);
       sendData(conn, {type: 'unSaveLock', index: index, time: time});
+    } else {
+      logger.warn("unSaveLock failure: docId = %s; conn.user.id: %s; saveLock: %s", conn.docId, conn.user.id, saveLock);
     }
   }
 
@@ -2966,7 +2999,7 @@ exports.install = function(server, callbackFunction) {
         ['rpush', redisKeyEditorConnections, JSON.stringify({time: now, edit: countEdit, view: countView})]
       ]);
     let multiRes = yield utils.promiseRedis(multi, multi.exec);
-    if (multiRes.length > 1 && JSON.parse(multiRes[0]).time > now - PRECISION[PRECISION.length - 1].val) {
+    if (multiRes.length > 1 && multiRes[0] && JSON.parse(multiRes[0]).time > now - PRECISION[PRECISION.length - 1].val) {
       yield utils.promiseRedis(redisClient, redisClient.lpush, redisKeyEditorConnections, multiRes[0]);
     }
   }
