@@ -46,7 +46,7 @@
     }
   },
   "license": {
-    "license_file": "/var/www/onlyoffice/Data/license.lic",
+    "license_file": "/var/www/onlyoffice/documentserver/../Data/license.lic",
     "warning_limit_percents": "70"
   },
   "FileConverter": {
