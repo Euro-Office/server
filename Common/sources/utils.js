@@ -431,7 +431,7 @@ function fillResponse(req, res, uri, error, isJSON) {
   }
   var accept = req.get('Accept');
   if (accept) {
-    switch (mime.extension(accept)) {
+    switch (mime.getExtension(accept)) {
       case "json":
         isJSON = true;
         break;
