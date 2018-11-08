@@ -1246,7 +1246,7 @@ exports.install = function(server, callbackFunction) {
             break;
           case 'changesError':
             logger.error("changesError: docId = %s %s", docId, data.stack);
-            if (cfgErrorFiles) {
+            if (cfgErrorFiles && docId) {
               let destDir = cfgErrorFiles + '/browser/' + docId;
               yield storage.copyPath(docId, destDir);
               yield* saveErrorChanges(docId, destDir);
