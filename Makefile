@@ -83,7 +83,7 @@ HTML_FILE_INTERNAL_FILES += ../core/build/lib/$(TARGET)/HtmlFileInternal$(EXEC_E
 HTML_FILE_INTERNAL_FILES += ../core/Common/3dParty/cef/$(TARGET)/build/**
 
 SPELLCHECKER_DICTIONARIES := $(OUTPUT)/SpellChecker/dictionaries
-SPELLCHECKER_DICTIONARY_FILES += ../dictionaries/**
+SPELLCHECKER_DICTIONARY_FILES += ../dictionaries/*_*
 
 SCHEMA_DIR = schema
 SCHEMA_FILES = $(SCHEMA_DIR)/**
