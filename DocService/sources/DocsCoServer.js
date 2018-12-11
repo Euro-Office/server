@@ -1246,7 +1246,7 @@ exports.install = function(server, callbackFunction) {
             break;
           case 'changesError':
             logger.error("changesError: docId = %s %s", docId, data.stack);
-            if (cfgErrorFiles) {
+            if (cfgErrorFiles && docId) {
               let destDir = cfgErrorFiles + '/browser/' + docId;
               yield storage.copyPath(docId, destDir);
               yield* saveErrorChanges(docId, destDir);
@@ -1568,20 +1568,19 @@ exports.install = function(server, callbackFunction) {
 		}
 
 		//Release locks
-		if (isSave && conn) {
-			if (releaseLocks) {
-				const userLocks = yield* getUserLocks(docId, userId);
-				if (0 < userLocks.length) {
-					sendReleaseLock(conn, userLocks);
-					yield* publish({
-						type: commonDefines.c_oPublishType.releaseLock,
-						docId: docId,
-						userId: userId,
-						locks: userLocks
-					}, docId, userId);
-				}
+		if (releaseLocks && conn) {
+			const userLocks = yield* getUserLocks(docId, userId);
+			if (0 < userLocks.length) {
+				sendReleaseLock(conn, userLocks);
+				yield* publish({
+					type: commonDefines.c_oPublishType.releaseLock,
+					docId: docId,
+					userId: userId,
+					locks: userLocks
+				}, docId, userId);
 			}
-
+		}
+		if (isSave && conn) {
 			// Автоматически снимаем lock сами
 			yield* unSaveLock(conn, -1, -1);
 		}

@@ -136,7 +136,7 @@ exports.putObject = function(strPath, buffer, contentLength) {
   return new Promise(function(resolve, reject) {
     //todo рассмотреть Expires
     var params = {Bucket: cfgBucketName, Key: getFilePath(strPath), Body: buffer,
-      ContentLength: contentLength, ContentType: mime.lookup(strPath)};
+      ContentLength: contentLength, ContentType: mime.getType(strPath)};
     s3Client.putObject(params, function(err, data) {
       if (err) {
         reject(err);

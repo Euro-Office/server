@@ -24,30 +24,48 @@
 
         header {
             background: #3D4A6B;
-            height: 80px;
+            height: 44px;
             margin: 0 auto;
             min-width: 600px;
             width: auto;
+            padding-top: 4px;
         }
 
         header img {
-            margin: 20px 0 0 16px;
+            margin: 8px 0 0 24px;
         }
 
         table {
             table-layout: fixed;
             border-spacing: 0;
+            margin-bottom: 40px;
         }
 
         td {
+            padding-left: 15px;
+            padding-bottom: 16px;
+            vertical-align: top;
+        }
+
+        .td-caption {
+            font-size: 16px;
+            padding-bottom: 4px;
+        }
+
+        .td-value {
+            font-size: 32px;
+            line-height: 28px;
+            padding-bottom: 8px;
+        }
+
+        .td-separator {
             padding-left: 0;
-            padding-top: 10px;
-            padding-bottom: 10px;
+            padding-right: 24px;
         }
 
         .main-panel {
             margin: 80px auto 16px;
-            width: 600px;
+            width: 672px;
         }
 
         .header0 {
@@ -56,12 +74,7 @@
         }
         .header1 {
             font-size: 20px;
-            padding-bottom: 20px;
-        }
-
-        .header2 {
-            font-size: 16px;
-            padding: 30px 0 5px 0;
+            padding-bottom: 30px;
         }
 
         #doc-server-wait {
@@ -94,18 +107,15 @@
         }
         .critical {
             color: #ff0000;
-            font-weight: bold;
         }
-        .warning {
-            color: #ff8a00;
-            font-weight: bold;
+
+        .separator {
+            vertical-align: top;
+            width: 100%;
+            height: 0;
+            border-top: 1px solid #dadada;
         }
-        .td-caption {
-            font-weight: bold;
-        }
-        .td-center {
-            text-align: center;
-        }
+
     </style>
 </head>
 <body>
@@ -116,61 +126,69 @@
         <div class="header0" id="doc-server-wait">Please, wait...</div>
         <div class="hidden" id="doc-server-ok">
             <div class="header1">Document Server information</div>
-            <div class="header2">Build</div>
-            <table>
+            <table width="672px">
                 <tr>
-                    <td width="120px" class="td-caption">Type:</td>
-                    <td width="500px" id="build-type"></td>
+                    <td class="td-caption">Build</td>
+                    <td class="td-caption">License</td>
+                    <td class="td-caption" id="limit-type">Connections limit</td>
                 </tr>
                 <tr>
-                    <td class="td-caption">Date:</td>
-                    <td id="build-date"></td>
+                    <td class="td-separator"><div class="separator"></div></td>
+                    <td class="td-separator"><div class="separator"></div></td>
+                    <td class="td-separator"><div class="separator"></div></td>
                 </tr>
                 <tr>
-                    <td class="td-caption">Version:</td>
-                    <td id="build-version"></td>
-                </tr>
-            </table>
-            <div class="header2">License</div>
-            <table>
-                <tr>
-                    <td width="280px" class="td-caption" id="lic-valid-type">Valid:</td>
-                    <td width="500px">until <span id="lic-valid"></span></td>
+                    <td id="build-type">Type:</td>
+                    <td><span id="lic-valid-type">Valid: </span><span id="lic-valid"></span></td>
+                    <td rowspan="3" id="lic-limit" class="td-value"></td>
                 </tr>
                 <tr>
-                    <td class="td-caption" id="limit-type">Concurrent users limit:</td>
-                    <td id="lic-limit"></td>
-                </tr>
-            </table>
-            <div class="header2">Number Concurrent Connections</div>
-            <table width="600px">
-                <tr class="td-caption">
+                    <td id="build-version">Version:</td>
                     <td></td>
-                    <td class="td-center">Last Hour</td>
-                    <td class="td-center">Last 24 Hours</td>
-                    <td class="td-center">Last Week</td>
-                    <td class="td-center">Last Month</td>
                 </tr>
                 <tr>
-                    <td class="td-caption">Maximum:</td>
-                    <td id="cell-hour-max" class="td-center">0</td>
-                    <td id="cell-day-max" class="td-center">0</td>
-                    <td id="cell-week-max" class="td-center">0</td>
-                    <td id="cell-month-max" class="td-center">0</td>
+                    <td id="build-date">Release date:</td>
+                    <td></td>
+                </tr>
+            </table>
+            <table>
+                <tr>
+                    <td colspan="4" class="td-caption">Peaks</td>
                 </tr>
                 <tr>
-                    <td class="td-caption">Minimum:</td>
-                    <td id="cell-hour-min" class="td-center">0</td>
-                    <td id="cell-day-min" class="td-center">0</td>
-                    <td id="cell-week-min" class="td-center">0</td>
-                    <td id="cell-month-min" class="td-center">0</td>
+                    <td class="td-separator" colspan="4"><div class="separator"></div></td>
                 </tr>
                 <tr>
-                    <td class="td-caption">Average:</td>
-                    <td id="cell-hour-avr" class="td-center">0</td>
-                    <td id="cell-day-avr" class="td-center">0</td>
-                    <td id="cell-week-avr" class="td-center">0</td>
-                    <td id="cell-month-avr" class="td-center">0</td>
+                    <td id="cell-hour-max" class="td-value" width="150">0</td>
+                    <td id="cell-day-max" class="td-value" width="150">0</td>
+                    <td id="cell-week-max" class="td-value" width="150">0</td>
+                    <td id="cell-month-max" class="td-value" width="224">0</td>
+                </tr>
+                <tr>
+                    <td>Last Hour</td>
+                    <td>24 Hours</td>
+                    <td>Week</td>
+                    <td>Month</td>
+                </tr>
+            </table>
+            <table>
+                <tr>
+                    <td colspan="4" class="td-caption">Average</td>
+                </tr>
+                <tr>
+                    <td class="td-separator" colspan="4"><div class="separator"></div></td>
+                </tr>
+                <tr>
+                    <td id="cell-hour-avr" class="td-value" width="150">0</td>
+                    <td id="cell-day-avr" class="td-value" width="150">0</td>
+                    <td id="cell-week-avr" class="td-value" width="150">0</td>
+                    <td id="cell-month-avr" class="td-value" width="224">0</td>
+                </tr>
+                <tr>
+                    <td>Last Hour</td>
+                    <td>24 Hours</td>
+                    <td>Week</td>
+                    <td>Month</td>
                 </tr>
             </table>
         </div>
@@ -203,23 +221,23 @@
         };
         function fillInfo(licenseInfo, serverInfo) {
             var elem = document.getElementById('build-type');
-            elem.innerText = (licenseInfo.packageType == 0) ? 'Open source' : ((licenseInfo.packageType == 1) ? 'Integration' : 'Developer');
+            elem.innerText = 'Type: ' + ((licenseInfo.packageType == 0) ? 'Open source' : ((licenseInfo.packageType == 1) ? 'Integration Edition' : 'Developer Edition'));
 
             elem = document.getElementById('build-date');
             var builddate = new Date(licenseInfo.buildDate);
-            elem.innerText = builddate.toLocaleDateString();
+            elem.innerText = 'Release date: ' + builddate.toLocaleDateString();
 
             elem = document.getElementById('build-version');
-            elem.innerText = serverInfo.buildVersion + '.' + serverInfo.buildNumber;
+            elem.innerText = 'Version: ' + serverInfo.buildVersion + '.' + serverInfo.buildNumber;
 
             elem = document.getElementById('limit-type');
-            elem.innerText = (licenseInfo.usersCount>0) ? 'Concurrent users limit:' : 'Concurrent connections limit:';
+            elem.innerText = (licenseInfo.usersCount>0) ? 'Users limit' : 'Connections limit' ;
 
             elem = document.getElementById('lic-limit');
 			elem.innerText = (licenseInfo.usersCount || licenseInfo.connections);
 
             elem = document.getElementById('lic-valid-type');
-            elem.innerText = (licenseInfo.mode == 1) ? 'Valid:' : 'Updates available:';
+            elem.innerText = (licenseInfo.mode == 1) ? 'Valid: ' : 'Updates available: ';
 
             var licdate = new Date(licenseInfo.endDate);
             elem = document.getElementById('lic-valid');
@@ -234,11 +252,11 @@
                 for (var agregate in info.connectionsStat[precision].edit) {
                     var value = info.connectionsStat[precision].edit[agregate];
                     var elem = document.getElementById('cell-' + precision + '-' + agregate);
-                    elem.innerText = value;
-                    if (value >= limit) {
-                        elem.classList.add("critical");
-                    } else if (value >= limit * 0.7) {
-                        elem.classList.add("warning");
+                    if (elem) {
+                        elem.innerText = value;
+                        if (value >= limit) {
+                            elem.classList.add("critical");
+                        }
                     }
                 }
             }
