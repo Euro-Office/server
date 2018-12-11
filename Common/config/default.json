@@ -7,7 +7,9 @@
 	},
 	"log": {
 		"filePath": "",
-		"options": { "reloadSecs": 60 }
+		"options": {
+			"replaceConsole": true
+		}
 	},
 	"queue": {
 		"visibilityTimeout": 300,

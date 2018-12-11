@@ -157,7 +157,7 @@ if (cluster.isMaster) {
 				const urlParsed = urlModule.parse(req.url);
 				if (urlParsed && urlParsed.pathname) {
 					const filename = decodeURIComponent(path.basename(urlParsed.pathname));
-					sendFileOptions.headers['Content-Type'] = mime.lookup(filename);
+					sendFileOptions.headers['Content-Type'] = mime.getType(filename);
 				}
 				const realUrl = req.url.substring(0, index);
 				res.sendFile(realUrl, sendFileOptions, (err) => {
