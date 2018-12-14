@@ -9,6 +9,16 @@ GRUNT_FILES = Gruntfile.js.out
 PRODUCT_VERSION ?= 0.0.0
 BUILD_NUMBER ?= 0
 
+PUBLISHER_NAME ?= Ascensio System SIA
+PUBLISHER_URL ?= https://www.onlyoffice.com/
+
+GRUNT_ENV += PRODUCT_VERSION=$(PRODUCT_VERSION)
+GRUNT_ENV += BUILD_NUMBER=$(BUILD_NUMBER)
+GRUNT_ENV += PUBLISHER_NAME="$(PUBLISHER_NAME)"
+GRUNT_ENV += PUBLISHER_URL="$(PUBLISHER_URL)"
+
+BRANDING_DIR ?= ./branding
+
 DOCUMENT_ROOT ?= /var/www/onlyoffice/documentserver
 
 ifeq ($(OS),Windows_NT)
@@ -73,7 +83,7 @@ HTML_FILE_INTERNAL_FILES += ../core/build/lib/$(TARGET)/HtmlFileInternal$(EXEC_E
 HTML_FILE_INTERNAL_FILES += ../core/Common/3dParty/cef/$(TARGET)/build/**
 
 SPELLCHECKER_DICTIONARIES := $(OUTPUT)/SpellChecker/dictionaries
-SPELLCHECKER_DICTIONARY_FILES += ../dictionaries/**
+SPELLCHECKER_DICTIONARY_FILES += ../dictionaries/*_*
 
 SCHEMA_DIR = schema
 SCHEMA_FILES = $(SCHEMA_DIR)/**
@@ -90,11 +100,11 @@ LICENSE_JS := $(OUTPUT)/Common/sources/license.js
 COMMON_DEFINES_JS := $(OUTPUT)/Common/sources/commondefines.js
 
 WELCOME_DIR = welcome
-WELCOME_FILES = $(WELCOME_DIR)/**
+WELCOME_FILES = $(BRANDING_DIR)/$(WELCOME_DIR)/**
 WELCOME = $(OUTPUT)/$(WELCOME_DIR)/
 
 INFO_DIR = info
-INFO_FILES = $(INFO_DIR)/**
+INFO_FILES = $(BRANDING_DIR)/$(INFO_DIR)/**
 INFO = $(OUTPUT)/$(INFO_DIR)/
 
 CORE_FONTS_DIR = core-fonts
@@ -144,7 +154,7 @@ $(LICENSE):
 $(GRUNT_FILES):
 	cd $(@D) && \
 		npm install && \
-		$(GRUNT) $(GRUNT_FLAGS)
+		$(GRUNT_ENV) $(GRUNT) $(GRUNT_FLAGS)
 	echo "Done" > $@
 
 $(WELCOME):

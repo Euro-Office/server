@@ -83,9 +83,9 @@ module.exports = function (grunt) {
         options: {
           position: 'top',
           banner: '/*\n' +
-                    ' * (c) Copyright Ascensio System Limited 2010-<%= grunt.template.today("yyyy") %>. All rights reserved\n' +
+                    ' * Copyright (C) ' + process.env['PUBLISHER_NAME'] + ' 2012-<%= grunt.template.today("yyyy") %>. All rights reserved\n' +
                     ' *\n' +
-                    ' * <%= pkg.homepage %> \n' +
+                    ' * ' + process.env['PUBLISHER_URL'] + ' \n' +
                     ' *\n' +
                     ' * Version: ' + process.env['PRODUCT_VERSION'] + ' (build:' + process.env['BUILD_NUMBER'] + ')\n' +
                     ' */\n',
