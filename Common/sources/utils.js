@@ -750,7 +750,9 @@ exports.getSecret = getSecret;
 function fillJwtForRequest(opt_payload) {
   let data;
   if (cfgTokenOutboxInBody) {
-    data = opt_payload || {};
+    //todo refuse prototypes in opt_payload(they are simple getter/setter).
+    //JSON.parse/stringify is more universal but Object.assign is enough for our inputs
+    data = Object.assign(Object.create(null), opt_payload);
   } else {
     data = {};
     if(opt_payload){
