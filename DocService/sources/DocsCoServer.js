@@ -100,6 +100,7 @@ const pubsubRedis = require('./pubsubRedis');
 const pubsubService = require('./' + config.get('pubsub.name'));
 const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const rabbitMQCore = require('./../../Common/sources/rabbitMQCore');
+const activeMQCore = require('./../../Common/sources/activeMQCore');
 let cfgEditor = JSON.parse(JSON.stringify(config.get('editor')));
 cfgEditor['reconnection']['delay'] = ms(cfgEditor['reconnection']['delay']);
 const cfgCallbackRequestTimeout = config.get('server.callbackRequestTimeout');
@@ -602,9 +603,6 @@ function* publish(data, optDocId, optUserId, opt_pubsub) {
 function* addTask(data, priority, opt_queue, opt_expiration) {
   var realQueue = opt_queue ? opt_queue : queue;
   yield realQueue.addTask(data, priority, opt_expiration);
-}
-function* removeResponse(data) {
-  yield queue.removeResponse(data);
 }
 
 function* getOriginalParticipantsId(docId) {
@@ -1145,7 +1143,6 @@ exports.createSaveTimerPromise = co.wrap(_createSaveTimer);
 exports.getAllPresencePromise = co.wrap(getAllPresence);
 exports.publish = publish;
 exports.addTask = addTask;
-exports.removeResponse = removeResponse;
 exports.hasEditors = hasEditors;
 exports.getEditorsCountPromise = co.wrap(getEditorsCount);
 exports.getCallback = getCallback;
@@ -3119,8 +3116,13 @@ exports.healthCheck = function(req, res) {
         throw new Error('redis disconnected');
       }
       //rabbitMQ
-      let conn = yield rabbitMQCore.connetPromise(false, function() {});
-      yield rabbitMQCore.closePromise(conn);
+      if (constants.USE_RABBIT_MQ) {
+        let conn = yield rabbitMQCore.connetPromise(false, function() {});
+        yield rabbitMQCore.closePromise(conn);
+      } else {
+        let conn = yield activeMQCore.connetPromise(false, function() {});
+        yield activeMQCore.closePromise(conn);
+      }
       //storage
       const clusterId = cluster.isWorker ? cluster.worker.id : '';
       const tempName = 'hc_' + os.hostname() + '_' + clusterId + '_' + Math.round(Math.random() * HEALTH_CHECK_KEY_MAX);

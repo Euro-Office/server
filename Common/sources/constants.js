@@ -230,3 +230,7 @@ exports.CONTENT_DISPOSITION_ATTACHMENT = 'attachment';
 exports.CONN_CLOSED = 3;
 
 exports.FILE_STATUS_UPDATE_VERSION = 'updateversion';
+
+exports.USE_RABBIT_MQ = true;
+exports.ACTIVEMQ_QUEUE_PREFIX = 'queue://';
+exports.ACTIVEMQ_TOPIC_PREFIX = 'topic://';

@@ -1135,7 +1135,7 @@ exports.saveFromChanges = function(docId, statusInfo, optFormat, opt_userId, opt
     }
   });
 };
-exports.receiveTask = function(data, opt_dataRaw) {
+exports.receiveTask = function(data) {
   return co(function* () {
     var docId = 'null';
     try {
@@ -1176,9 +1176,6 @@ exports.receiveTask = function(data, opt_dataRaw) {
                                           needUrlType: additionalOutput.needUrlType
                                         });
           }
-        }
-        if (opt_dataRaw) {
-          yield* docsCoServer.removeResponse(opt_dataRaw);
         }
         logger.debug('End receiveTask: docId = %s', docId);
       }

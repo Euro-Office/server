@@ -31,15 +31,20 @@
  */
 
 'use strict';
+var config = require('config');
 var events = require('events');
 var util = require('util');
 var co = require('co');
+var constants = require('./../../Common/sources/constants');
 var utils = require('./../../Common/sources/utils');
 var rabbitMQCore = require('./../../Common/sources/rabbitMQCore');
+var activeMQCore = require('./../../Common/sources/activeMQCore');
+const logger = require('./../../Common/sources/logger');
 
-var cfgRabbitExchangePubSub = require('config').get('rabbitmq.exchangepubsub');
+var cfgRabbitExchangePubSub = config.get('rabbitmq.exchangepubsub');
+var cfgActiveTopicPubSub = constants.ACTIVEMQ_TOPIC_PREFIX + config.get('activemq.topicpubsub');
 
-function init(pubsub, callback) {
+function initRabbit(pubsub, callback) {
   return co(function* () {
     var e = null;
     try {
@@ -75,6 +80,40 @@ function init(pubsub, callback) {
     }
   });
 }
+function initActive(pubsub, callback) {
+  return co(function*() {
+    var e = null;
+    try {
+      var conn = yield activeMQCore.connetPromise(true, function() {
+        clear(pubsub);
+        if (!pubsub.isClose) {
+          init(pubsub, null);
+        }
+      });
+      pubsub.connection = conn;
+      pubsub.channelPublish = yield activeMQCore.openSenderPromise(conn, cfgActiveTopicPubSub);
+
+      let receiver = yield activeMQCore.openReceiverPromise(conn, cfgActiveTopicPubSub, false);
+      //todo ?consumer.dispatchAsync=false&consumer.prefetchSize=1
+      receiver.add_credit(1);
+      receiver.on("message", function(context) {
+        if (context) {
+          pubsub.emit('message', context.message.body);
+        }
+
+        context.delivery.accept();
+        receiver.add_credit(1);
+      });
+      //process messages received while reconnection time
+      repeat(pubsub);
+    } catch (err) {
+      e = err;
+    }
+    if (callback) {
+      callback(e);
+    }
+  });
+}
 function clear(pubsub) {
   pubsub.channelPublish = null;
   pubsub.exchangePublish = null;
@@ -86,8 +125,30 @@ function repeat(pubsub) {
   }
   pubsub.publishStore.length = 0;
 }
-function publish(pubsub, data) {
+function publishRabbit(pubsub, data) {
   pubsub.channelPublish.publish(pubsub.exchangePublish, '', data);
+}
+function publishActive(pubsub, data) {
+  pubsub.channelPublish.send({durable: true, body: data});
+}
+function closeRabbit(conn) {
+  return rabbitMQCore.closePromise(conn);
+}
+function closeActive(conn) {
+  return activeMQCore.closePromise(conn);
+}
+
+let init;
+let publish;
+let close;
+if (constants.USE_RABBIT_MQ) {
+  init = initRabbit;
+  publish = publishRabbit;
+  close = closeRabbit;
+} else {
+  init = initActive;
+  publish = publishActive;
+  close = closeActive;
 }
 
 function PubsubRabbitMQ() {
@@ -123,17 +184,8 @@ PubsubRabbitMQ.prototype.publish = function (message) {
   }
 };
 PubsubRabbitMQ.prototype.close = function() {
-  var t = this;
   this.isClose = true;
-  return new Promise(function(resolve, reject) {
-    t.connection.close(function(err) {
-      if (err) {
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
-  });
+  return close(this.connection);
 };
 
 module.exports = PubsubRabbitMQ;
