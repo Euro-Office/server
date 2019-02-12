@@ -506,7 +506,7 @@ function* commandImgurls(conn, cmd, outputData) {
       } else if (urlSource) {
         try {
           //todo stream
-          data = yield utils.downloadUrlPromise(urlSource, cfgImageDownloadTimeout * 1000, cfgImageSize);
+          data = yield utils.downloadUrlPromise(urlSource, cfgImageDownloadTimeout, cfgImageSize);
           urlParsed = urlModule.parse(urlSource);
         } catch (e) {
           data = undefined;

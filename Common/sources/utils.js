@@ -248,13 +248,20 @@ function getContentDispositionS3 (opt_filename, opt_useragent, opt_type) {
 }
 exports.getContentDisposition = getContentDisposition;
 exports.getContentDispositionS3 = getContentDispositionS3;
+function raiseError(ro, code, msg) {
+  ro.abort();
+  let error = new Error(msg);
+  error.code = code;
+  ro.emit('error', error);
+}
 function downloadUrlPromise(uri, optTimeout, optLimit, opt_Authorization) {
   return new Promise(function (resolve, reject) {
     //IRI to URI
     uri = URI.serialize(URI.parse(uri));
     var urlParsed = url.parse(uri);
     //if you expect binary data, you should set encoding: null
-    var options = {uri: urlParsed, encoding: null, timeout: optTimeout};
+    let connectionAndInactivity = optTimeout && optTimeout.connectionAndInactivity && ms(optTimeout.connectionAndInactivity);
+    var options = {uri: urlParsed, encoding: null, timeout: connectionAndInactivity};
     if (opt_Authorization) {
       options.headers = {};
       options.headers[cfgTokenOutboxHeader] = cfgTokenOutboxPrefix + opt_Authorization;
@@ -262,13 +269,12 @@ function downloadUrlPromise(uri, optTimeout, optLimit, opt_Authorization) {
     let sizeLimit = optLimit || Number.MAX_VALUE;
     let bufferLength = 0;
 
-    function onSizeError(msg){
-      this.abort();
-      let error = new Error(msg);
-      error.code = 'EMSGSIZE';
-      this.emit('error', error);
-    }
-    baseRequest.get(options, function(err, response, body) {
+    let executed = false;
+    let ro = baseRequest.get(options, function(err, response, body) {
+      if (executed) {
+        return;
+      }
+      executed = true;
       if (err) {
         reject(err);
       } else {
@@ -285,14 +291,19 @@ function downloadUrlPromise(uri, optTimeout, optLimit, opt_Authorization) {
     }).on('response', function(response) {
       var contentLength = response.headers['content-length'];
       if (contentLength && (contentLength - 0) > sizeLimit) {
-        onSizeError.call(this, 'Error response: content-length:' + contentLength);
+        raiseError(this, 'EMSGSIZE', 'Error response: content-length:' + contentLength);
       }
     }).on('data', function(chunk) {
       bufferLength += chunk.length;
       if (bufferLength > sizeLimit) {
-        onSizeError.call(this, 'Error response body.length');
+        raiseError(this, 'EMSGSIZE', 'Error response body.length');
       }
     });
+    if (optTimeout && optTimeout.wholeCycle) {
+      setTimeout(function() {
+        raiseError(ro, 'ETIMEDOUT', 'Error: whole request cycle timeout');
+      }, ms(optTimeout.wholeCycle));
+    }
   });
 }
 function postRequestPromise(uri, postData, optTimeout, opt_Authorization) {
@@ -304,9 +315,15 @@ function postRequestPromise(uri, postData, optTimeout, opt_Authorization) {
     if (opt_Authorization) {
       headers[cfgTokenOutboxHeader] = cfgTokenOutboxPrefix + opt_Authorization;
     }
-    var options = {uri: urlParsed, body: postData, encoding: 'utf8', headers: headers, timeout: optTimeout};
+    let connectionAndInactivity = optTimeout && optTimeout.connectionAndInactivity && ms(optTimeout.connectionAndInactivity);
+    var options = {uri: urlParsed, body: postData, encoding: 'utf8', headers: headers, timeout: connectionAndInactivity};
 
-    baseRequest.post(options, function(err, response, body) {
+    let executed = false;
+    let ro = baseRequest.post(options, function(err, response, body) {
+      if (executed) {
+        return;
+      }
+      executed = true;
       if (err) {
         reject(err);
       } else {
@@ -316,7 +333,12 @@ function postRequestPromise(uri, postData, optTimeout, opt_Authorization) {
           reject(new Error('Error response: statusCode:' + response.statusCode + ' ;body:\r\n' + body));
         }
       }
-    })
+    });
+    if (optTimeout && optTimeout.wholeCycle) {
+      setTimeout(function() {
+        raiseError(ro, 'ETIMEDOUT', 'Error whole request cycle timeout');
+      }, ms(optTimeout.wholeCycle));
+    }
   });
 }
 exports.postRequestPromise = postRequestPromise;

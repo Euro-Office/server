@@ -633,7 +633,7 @@ function* sendServerRequest(docId, uri, dataObject, opt_checkAuthorization) {
       logger.warn('authorization reduced to: docId = %s; length=%d', docId, auth.length);
     }
   }
-  let res = yield utils.postRequestPromise(uri, JSON.stringify(dataObject), cfgCallbackRequestTimeout * 1000, auth);
+  let res = yield utils.postRequestPromise(uri, JSON.stringify(dataObject), cfgCallbackRequestTimeout, auth);
   logger.debug('postData response: docId = %s;data = %s', docId, res);
   return res;
 }

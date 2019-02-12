@@ -260,7 +260,7 @@ function* downloadFile(docId, uri, fileFrom) {
         if (cfgTokenEnableRequestOutbox) {
           authorization = utils.fillJwtForRequest({url: uri});
         }
-        data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout * 1000, cfgDownloadMaxBytes, authorization);
+        data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout, cfgDownloadMaxBytes, authorization);
         res = true;
       } catch (err) {
         res = false;
