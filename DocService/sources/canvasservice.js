@@ -239,9 +239,7 @@ function getSaveTask(cmd) {
   cmd.setData(null);
   var queueData = new commonDefines.TaskQueueData();
   queueData.setCmd(cmd);
-  let formatStr = formatChecker.getStringFromFormat(cmd.getOutputFormat());
-  formatStr = formatStr ? '.' + formatStr : '';
-  queueData.setToFile(constants.OUTPUT_NAME + formatStr);
+  queueData.setToFile(constants.OUTPUT_NAME + '.' + formatChecker.getStringFromFormat(cmd.getOutputFormat()));
   //todo paid
   //if (cmd.vkey) {
   //  bool
