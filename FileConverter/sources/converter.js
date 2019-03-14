@@ -654,10 +654,11 @@ function* ExecuteTask(task) {
       let timeoutId;
       try {
         let spawnOptions = cfgSpawnOptions;
-        if (authorProps.lastModifiedBy) {
-          if (!spawnOptions.env) {
-            spawnOptions.env = Object.assign({}, process.env);
-          }
+        if (authorProps.lastModifiedBy && authorProps.modified) {
+          //copy to avoid modification of global cfgSpawnOptions
+          spawnOptions = Object.assign({}, cfgSpawnOptions);
+          spawnOptions.env = Object.assign({}, spawnOptions.env || process.env);
+
           spawnOptions.env['LAST_MODIFIED_BY'] = authorProps.lastModifiedBy;
           spawnOptions.env['MODIFIED'] = authorProps.modified;
         }
