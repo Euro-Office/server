@@ -1379,6 +1379,18 @@ exports.install = function(server, callbackFunction) {
             }
           }
         }
+        //Давайдосвиданья!
+        //Release locks
+        userLocks = yield* getUserLocks(docId, conn.user.id);
+        if (0 < userLocks.length) {
+          //todo на close себе ничего не шлем
+          //sendReleaseLock(conn, userLocks);
+          yield* publish({type: commonDefines.c_oPublishType.releaseLock, docId: docId, userId: conn.user.id, locks: userLocks}, docId, conn.user.id);
+        }
+
+        // Для данного пользователя снимаем Lock с документа
+        yield* checkEndAuthLock(true, false, docId, conn.user.id);
+
         // Если у нас нет пользователей, то удаляем все сообщения
         if (!bHasEditors) {
           // На всякий случай снимаем lock
@@ -1403,18 +1415,6 @@ exports.install = function(server, callbackFunction) {
         } else if (needSendStatus) {
           yield* sendStatusDocument(docId, c_oAscChangeBase.No, new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, tmpUser.idOriginal));
         }
-
-        //Давайдосвиданья!
-        //Release locks
-        userLocks = yield* getUserLocks(docId, conn.user.id);
-        if (0 < userLocks.length) {
-          //todo на close себе ничего не шлем
-          //sendReleaseLock(conn, userLocks);
-          yield* publish({type: commonDefines.c_oPublishType.releaseLock, docId: docId, userId: conn.user.id, locks: userLocks}, docId, conn.user.id);
-        }
-
-        // Для данного пользователя снимаем Lock с документа
-        yield* checkEndAuthLock(true, false, docId, conn.user.id);
       }
     }
   }
