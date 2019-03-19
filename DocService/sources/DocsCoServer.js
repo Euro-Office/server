@@ -152,7 +152,6 @@ const redisKeySaveLock = cfgRedisPrefix + constants.REDIS_KEY_SAVE_LOCK;
 const redisKeyPresenceHash = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_HASH;
 const redisKeyPresenceSet = cfgRedisPrefix + constants.REDIS_KEY_PRESENCE_SET;
 const redisKeyLocks = cfgRedisPrefix + constants.REDIS_KEY_LOCKS;
-const redisKeyChangeIndex = cfgRedisPrefix + constants.REDIS_KEY_CHANGES_INDEX;
 const redisKeyLockDoc = cfgRedisPrefix + constants.REDIS_KEY_LOCK_DOCUMENT;
 const redisKeyMessage = cfgRedisPrefix + constants.REDIS_KEY_MESSAGE;
 const redisKeyDocuments = cfgRedisPrefix + constants.REDIS_KEY_DOCUMENTS;
@@ -688,14 +687,9 @@ function* getCallback(id) {
 }
 function* getChangesIndex(docId) {
   var res = 0;
-  var redisRes = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyChangeIndex + docId);
-  if (null != redisRes) {
-    res = parseInt(redisRes);
-  } else {
-    var getRes = yield sqlBase.getChangesIndexPromise(docId);
-    if (getRes && getRes.length > 0 && null != getRes[0]['change_id']) {
-      res = getRes[0]['change_id'] + 1;
-    }
+  var getRes = yield sqlBase.getChangesIndexPromise(docId);
+  if (getRes && getRes.length > 0 && null != getRes[0]['change_id']) {
+    res = getRes[0]['change_id'] + 1;
   }
   return res;
 }
@@ -997,7 +991,7 @@ function* bindEvents(docId, callback, baseUrl, opt_userAction, opt_userData) {
 function* cleanDocumentOnExit(docId, deleteChanges) {
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
   var redisArgs = [redisClient, redisClient.del, redisKeyLocks + docId,
-      redisKeyMessage + docId, redisKeyChangeIndex + docId, redisKeyForceSave + docId, redisKeyLastSave + docId];
+      redisKeyMessage + docId, redisKeyForceSave + docId, redisKeyLastSave + docId];
   utils.promiseRedis.apply(this, redisArgs);
   //remove changes
   if (deleteChanges) {
@@ -1535,18 +1529,17 @@ exports.install = function(server, callbackFunction) {
 	function* checkEndAuthLock(unlock, isSave, docId, userId, releaseLocks, deleteIndex, conn) {
 		let result = false;
 
-		if (null != deleteIndex && -1 !== deleteIndex) {
-			let puckerIndex = yield* getChangesIndex(docId);
-			const deleteCount = puckerIndex - deleteIndex;
-			if (0 < deleteCount) {
-				puckerIndex -= deleteCount;
-				yield sqlBase.deleteChangesPromise(docId, deleteIndex);
-			} else if (0 > deleteCount) {
-				logger.error("Error checkEndAuthLock docid: %s ; deleteIndex: %s ; startIndex: %s ; deleteCount: %s", docId,
-					deleteIndex, puckerIndex, deleteCount);
-			}
-			yield* setChangesIndex(docId, puckerIndex);
-        }
+    if (null != deleteIndex && -1 !== deleteIndex) {
+      let puckerIndex = yield* getChangesIndex(docId);
+      const deleteCount = puckerIndex - deleteIndex;
+      if (0 < deleteCount) {
+        puckerIndex -= deleteCount;
+        yield sqlBase.deleteChangesPromise(docId, deleteIndex);
+      } else if (0 > deleteCount) {
+        logger.error("Error checkEndAuthLock docid: %s ; deleteIndex: %s ; startIndex: %s ; deleteCount: %s", docId,
+                     deleteIndex, puckerIndex, deleteCount);
+      }
+    }
 
 		if (unlock) {
 			const lockDocument = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyLockDoc + docId);
@@ -2407,10 +2400,6 @@ exports.install = function(server, callbackFunction) {
     });
   }
 
-  function* setChangesIndex(docId, index) {
-    yield utils.promiseRedis(redisClient, redisClient.setex, redisKeyChangeIndex + docId, cfgExpChangeIndex, index);
-  }
-
   // Для Excel необходимо делать пересчет lock-ов при добавлении/удалении строк/столбцов
   function* saveChanges(conn, data) {
     const docId = conn.docId, userId = conn.user.id;
@@ -2452,7 +2441,6 @@ exports.install = function(server, callbackFunction) {
       puckerIndex += arrNewDocumentChanges.length;
       yield sqlBase.insertChangesPromise(arrNewDocumentChanges, docId, startIndex, conn.user);
     }
-    yield* setChangesIndex(docId, puckerIndex);
     const changesIndex = (-1 === deleteIndex && data.startSaveChanges) ? startIndex : -1;
     if (data.endSaveChanges) {
       // Для Excel нужно пересчитать индексы для lock-ов
