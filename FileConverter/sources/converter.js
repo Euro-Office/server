@@ -696,8 +696,8 @@ function* ExecuteTask(task) {
     curDate = new Date();
   }
   if (tempDirs) {
-    //deleteFolderRecursive(tempDirs.temp);
-    logger.debug('deleteFolderRecursive %s (id=%s)', tempDirs.temp, dataConvert.key);
+    deleteFolderRecursive(tempDirs.temp);
+    logger.debug('deleteFolderRecursive (id=%s)', dataConvert.key);
     if(clientStatsD) {
       clientStatsD.timing('conv.deleteFolderRecursive', new Date() - curDate);
       curDate = new Date();
