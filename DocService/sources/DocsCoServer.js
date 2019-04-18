@@ -176,7 +176,7 @@ let connections = []; // Активные соединения
 let lockDocumentsTimerId = {};//to drop connection that can't unlockDocument
 let pubsub;
 let queue;
-let licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false, branding: false, plugins: false};
+let licenseInfo = {type: constants.LICENSE_RESULT.Error, light: false, branding: false, customization: false, plugins: false};
 let shutdownFlag = false;
 
 const MIN_SAVE_EXPIRATION = 60000;
@@ -2711,6 +2711,7 @@ exports.install = function(server, callbackFunction) {
 						buildVersion: commonDefines.buildVersion,
 						buildNumber: commonDefines.buildNumber,
 						branding: licenseInfo.branding,
+						customization: licenseInfo.customization,
 						plugins: licenseInfo.plugins
 					}
 				});
