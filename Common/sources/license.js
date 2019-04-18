@@ -97,7 +97,7 @@ exports.readLicense = function*() {
 
 			res.light = (true === oLicense['light'] || 'true' === oLicense['light']); // Someone who likes to put json string instead of bool
 			res.branding = (true === oLicense['branding'] || 'true' === oLicense['branding']); // Someone who likes to put json string instead of bool
-			res.connections = (!oLicense.hasOwnProperty('customization') || !!oLicense['customization']); // Check exist property for old licenses
+			res.customization = (!oLicense.hasOwnProperty('customization') || !!oLicense['customization']); // Check exist property for old licenses
 			res.plugins = true === oLicense['plugins'];
 			if (oLicense.hasOwnProperty('connections')) {
 				res.connections = oLicense['connections'] >> 0;
