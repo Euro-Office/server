@@ -85,6 +85,8 @@ function InputCommand(data) {
     this['nobase64'] = data['nobase64'];
     this['forgotten'] = data['forgotten'];
     this['isbuilder'] = data['isbuilder'];
+    this['status_info_in'] = data['status_info_in'];
+    this['attempt'] = data['attempt'];
     this['withAuthorization'] = data['withAuthorization'];
   } else {
     this['c'] = undefined;//string command
@@ -128,6 +130,8 @@ function InputCommand(data) {
     this['nobase64'] = true;
     this['forgotten'] = undefined;
     this['isbuilder'] = undefined;
+    this['status_info_in'] = undefined;
+    this['attempt'] = undefined;
     this['withAuthorization'] = undefined;
   }
 }
@@ -344,6 +348,18 @@ InputCommand.prototype = {
   },
   setIsBuilder: function(data) {
     this['isbuilder'] = data;
+  },
+  getStatusInfoIn: function() {
+    return this['status_info_in'];
+  },
+  setStatusInfoIn: function(data) {
+    this['status_info_in'] = data;
+  },
+  getAttempt: function() {
+    return this['attempt'];
+  },
+  setAttempt: function(data) {
+    this['attempt'] = data;
   },
   getWithAuthorization: function() {
     return this['withAuthorization'];

@@ -266,7 +266,7 @@ function* downloadFile(docId, uri, fileFrom) {
         res = false;
         logger.error('error downloadFile:url=%s;attempt=%d;code:%s;connect:%s;(id=%s)\r\n%s', uri, downloadAttemptCount, err.code, err.connect, docId, err.stack);
         //not continue attempts if timeout
-        if (err.code === 'ETIMEDOUT' || err.code === 'EMSGSIZE') {
+        if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT' || err.code === 'EMSGSIZE') {
           break;
         } else {
           yield utils.sleep(cfgDownloadAttemptDelay);
@@ -750,7 +750,7 @@ function simulateErrorResponse(data){
 function run() {
   queue = new queueService(simulateErrorResponse);
   queue.on('task', receiveTask);
-  queue.init(true, true, true, false, function(err) {
+  queue.init(true, true, true, false, false, false, function(err) {
     if (null != err) {
       logger.error('createTaskQueue error :\r\n%s', err.stack);
     }

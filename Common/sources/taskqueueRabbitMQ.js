@@ -50,18 +50,20 @@ var cfgRabbitQueueConvertTask = config.get('rabbitmq.queueconverttask');
 var cfgRabbitQueueConvertResponse = config.get('rabbitmq.queueconvertresponse');
 var cfgRabbitExchangeConvertDead = config.get('rabbitmq.exchangeconvertdead');
 var cfgRabbitQueueConvertDead = config.get('rabbitmq.queueconvertdead');
+var cfgRabbitQueueDelayed = config.get('rabbitmq.queuedelayed');
 var cfgActiveQueueConvertTask = constants.ACTIVEMQ_QUEUE_PREFIX + config.get('activemq.queueconverttask');
 var cfgActiveQueueConvertResponse = constants.ACTIVEMQ_QUEUE_PREFIX + config.get('activemq.queueconvertresponse');
 var cfgActiveQueueConvertDead = constants.ACTIVEMQ_QUEUE_PREFIX + config.get('activemq.queueconvertdead');
+var cfgActiveQueueDelayed = constants.ACTIVEMQ_QUEUE_PREFIX + config.get('activemq.queuedelayed');
 
-function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, callback) {
+function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, isEmitDead, isAddDelayed, callback) {
   return co(function* () {
     var e = null;
     try {
       var conn = yield rabbitMQCore.connetPromise(true, function() {
         clear(taskqueue);
         if (!taskqueue.isClose) {
-          init(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, null);
+          init(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, isEmitDead, isAddDelayed, null);
         }
       });
       taskqueue.connection = conn;
@@ -73,22 +75,6 @@ function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
         deadLetterExchange: cfgRabbitExchangeConvertDead
       };
       if (isAddTask) {
-        taskqueue.channelConvertDead = yield rabbitMQCore.createChannelPromise(conn);
-        yield rabbitMQCore.assertExchangePromise(taskqueue.channelConvertDead, cfgRabbitExchangeConvertDead, 'fanout',
-                                                 {durable: true});
-        var queue = yield rabbitMQCore.assertQueuePromise(taskqueue.channelConvertDead, cfgRabbitQueueConvertDead,
-                                                          {durable: true});
-
-        taskqueue.channelConvertDead.bindQueue(queue, cfgRabbitExchangeConvertDead, '');
-        yield rabbitMQCore.consumePromise(taskqueue.channelConvertDead, queue, function(message) {
-          if (null != taskqueue.channelConvertDead) {
-            if (message) {
-              taskqueue.emit('dead', message.content.toString());
-            }
-            taskqueue.channelConvertDead.ack(message);
-          }
-        }, {noAck: false});
-
         taskqueue.channelConvertTask = yield rabbitMQCore.createConfirmChannelPromise(conn);
         yield rabbitMQCore.assertQueuePromise(taskqueue.channelConvertTask, cfgRabbitQueueConvertTask,
           optionsTaskQueue);
@@ -137,6 +123,32 @@ function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
             taskqueue.channelConvertResponseReceive.ack(message);
           }, optionsReceive);
       }
+      if (isAddDelayed) {
+        let optionsDelayedQueue = {
+          durable: true,
+          deadLetterExchange: cfgRabbitExchangeConvertDead
+        };
+        taskqueue.channelDelayed = yield rabbitMQCore.createConfirmChannelPromise(conn);
+        yield rabbitMQCore.assertQueuePromise(taskqueue.channelDelayed, cfgRabbitQueueDelayed, optionsDelayedQueue);
+      }
+      if (isEmitDead) {
+        taskqueue.channelConvertDead = yield rabbitMQCore.createChannelPromise(conn);
+        yield rabbitMQCore.assertExchangePromise(taskqueue.channelConvertDead, cfgRabbitExchangeConvertDead, 'fanout',
+                                                 {durable: true});
+        var queue = yield rabbitMQCore.assertQueuePromise(taskqueue.channelConvertDead, cfgRabbitQueueConvertDead,
+                                                          {durable: true});
+
+        taskqueue.channelConvertDead.bindQueue(queue, cfgRabbitExchangeConvertDead, '');
+        yield rabbitMQCore.consumePromise(taskqueue.channelConvertDead, queue, function(message) {
+          if (null != taskqueue.channelConvertDead) {
+            if (message) {
+              taskqueue.emit('dead', message.content.toString());
+            }
+            taskqueue.channelConvertDead.ack(message);
+          }
+        }, {noAck: false});
+      }
+
       //process messages received while reconnection time
       repeat(taskqueue);
     } catch (err) {
@@ -147,31 +159,19 @@ function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
     }
   });
 }
-function initActive(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, callback) {
+function initActive(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, isEmitDead, isAddDelayed, callback) {
   return co(function*() {
     var e = null;
     try {
       var conn = yield activeMQCore.connetPromise(true, function() {
         clear(taskqueue);
         if (!taskqueue.isClose) {
-          init(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, null);
+          init(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, isEmitDead, isAddDelayed, null);
         }
       });
       taskqueue.connection = conn;
       if (isAddTask) {
         taskqueue.channelConvertTask = yield activeMQCore.openSenderPromise(conn, cfgActiveQueueConvertTask);
-
-        let receiver = yield activeMQCore.openReceiverPromise(conn, cfgActiveQueueConvertDead, false);
-        //todo ?consumer.dispatchAsync=false&consumer.prefetchSize=1
-        receiver.add_credit(1);
-        receiver.on("message", function(context) {
-          if (context) {
-            taskqueue.emit('dead', context.message.body);
-          }
-          context.delivery.accept();
-          receiver.add_credit(1);
-        });
-        taskqueue.channelConvertDead = receiver;
       }
       if (isAddResponse) {
         taskqueue.channelConvertResponse = yield activeMQCore.openSenderPromise(conn, cfgActiveQueueConvertResponse);
@@ -207,6 +207,24 @@ function initActive(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
         });
         taskqueue.channelConvertResponseReceive = receiver;
       }
+      if (isAddDelayed) {
+        taskqueue.channelDelayed = yield activeMQCore.openSenderPromise(conn, cfgActiveQueueDelayed);
+      }
+      if (isEmitDead) {
+        let receiver = yield activeMQCore.openReceiverPromise(conn, cfgActiveQueueConvertDead, false);
+        //todo ?consumer.dispatchAsync=false&consumer.prefetchSize=1
+        receiver.add_credit(1);
+        receiver.on("message", function(context) {
+          if (context) {
+            taskqueue.emit('dead', context.message.body);
+          }
+          context.delivery.accept();
+          receiver.add_credit(1);
+        });
+        taskqueue.channelConvertDead = receiver;
+      }
+
+      //process messages received while reconnection time
       repeat(taskqueue);
     } catch (err) {
       e = err;
@@ -222,6 +240,7 @@ function clear(taskqueue) {
   taskqueue.channelConvertDead = null;
   taskqueue.channelConvertResponse = null;
   taskqueue.channelConvertResponseReceive = null;
+  taskqueue.channelDelayed = null;
 }
 function* pushBackRedeliveredRabbit(taskqueue, message) {
   if (message.fields.redelivered) {
@@ -270,6 +289,11 @@ function repeat(taskqueue) {
     addTask(taskqueue, elem.task, elem.priority, function () {}, elem.expiration, elem.headers);
   }
   taskqueue.addTaskStore.length = 0;
+  for (var i = 0; i < taskqueue.addDelayedStore.length; ++i) {
+    var elem = taskqueue.addDelayedStore[i];
+    addDelayed(taskqueue, elem.task, elem.ttl, function () {});
+  }
+  taskqueue.addDelayedStore.length = 0;
 }
 function addTaskRabbit(taskqueue, content, priority, callback, opt_expiration, opt_headers) {
   var options = {persistent: true, priority: priority};
@@ -324,21 +348,34 @@ function closeRabbit(conn) {
 function closeActive(conn) {
   return activeMQCore.closePromise(conn);
 }
+function addDelayedRabbit(taskqueue, content, ttl, callback) {
+  var options = {persistent: true, expiration: ttl.toString()};
+  taskqueue.channelDelayed.sendToQueue(cfgRabbitQueueDelayed, content, options, callback);
+}
+function addDelayedActive(taskqueue, content, ttl, callback) {
+  var msg = {durable: true, body: content, ttl: ttl};
+  //todo confirm
+  taskqueue.channelDelayed.send(msg);
+  callback();
+}
 
 let init;
 let addTask;
 let addResponse;
 let close;
+let addDelayed;
 if (commonDefines.c_oAscQueueType.rabbitmq === cfgQueueType) {
   init = initRabbit;
   addTask = addTaskRabbit;
   addResponse = addResponseRabbit;
   close = closeRabbit;
+  addDelayed = addDelayedRabbit;
 } else {
   init = initActive;
   addTask = addTaskActive;
   addResponse = addResponseActive;
   close = closeActive;
+  addDelayed = addDelayedActive;
 }
 
 function TaskQueueRabbitMQ(simulateErrorResponse) {
@@ -349,17 +386,19 @@ function TaskQueueRabbitMQ(simulateErrorResponse) {
   this.channelConvertDead = null;
   this.channelConvertResponse = null;
   this.channelConvertResponseReceive = null;
+  this.channelDelayed = null;
   this.addTaskStore = [];
+  this.addDelayedStore = [];
   this.simulateErrorResponse = simulateErrorResponse;
 }
 util.inherits(TaskQueueRabbitMQ, events.EventEmitter);
-TaskQueueRabbitMQ.prototype.init = function (isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, callback) {
-  init(this, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, callback);
+TaskQueueRabbitMQ.prototype.init = function (isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, isEmitDead, isAddDelayed, callback) {
+  init(this, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, isEmitDead, isAddDelayed, callback);
 };
-TaskQueueRabbitMQ.prototype.initPromise = function(isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive) {
+TaskQueueRabbitMQ.prototype.initPromise = function(isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, isEmitDead, isAddDelayed) {
   var t = this;
   return new Promise(function(resolve, reject) {
-    init(t, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, function(err) {
+    init(t, isAddTask, isAddResponse, isAddTaskReceive, isAddResponseReceive, isEmitDead, isAddDelayed, function(err) {
       if (err) {
         reject(err);
       } else {
@@ -385,6 +424,24 @@ TaskQueueRabbitMQ.prototype.addResponse = function (task) {
         }
       });
     } else {
+      resolve();
+    }
+  });
+};
+TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl) {
+  var t = this;
+  return new Promise(function (resolve, reject) {
+    var content = new Buffer(JSON.stringify(task));
+    if (null != t.channelDelayed) {
+      addDelayed(t, content, ttl, function (err, ok) {
+        if (null != err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    } else {
+      t.addDelayedStore.push({task: content, ttl: ttl});
       resolve();
     }
   });
