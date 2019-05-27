@@ -12,6 +12,7 @@
 		}
 	},
 	"queue": {
+		"type": "rabbitmq",
 		"visibilityTimeout": 300,
 		"retentionPeriod": 900
 	},
@@ -40,7 +41,21 @@
 		"queueconverttask": "ds.converttask",
 		"queueconvertresponse": "ds.convertresponse",
 		"exchangeconvertdead": "ds.exchangeconvertdead",
-		"queueconvertdead": "ds.convertdead"
+		"queueconvertdead": "ds.convertdead",
+		"queuedelayed": "ds.delayed"
+	},
+	"activemq": {
+		"connectOptions": {
+			"port": 5672,
+			"host": "localhost",
+			"name": "admin",
+			"reconnect": false
+		},
+		"queueconverttask": "ds.converttask",
+		"queueconvertresponse": "ds.convertresponse",
+		"queueconvertdead": "ActiveMQ.DLQ",
+		"queuedelayed": "ds.delayed",
+		"topicpubsub": "ds.pubsub"
 	},
 	"dnscache": {
 		"enable" : true,
@@ -55,8 +70,13 @@
 				"mode": "development",
 				"limits_tempfile_upload": 104857600,
 				"limits_image_size": 26214400,
-				"limits_image_download_timeout": 120,
-				"callbackRequestTimeout": 120,
+				"limits_image_download_timeout": {
+					"connectionAndInactivity": "10s",
+					"wholeCycle": "2m"
+				},
+				"callbackRequestTimeout": {
+					"wholeCycle": "2m"
+				},
 				"healthcheckfilepath": "../public/healthcheck.docx",
 				"savetimeoutdelay": 5000,
 				"edit_singleton": false,
@@ -129,7 +149,7 @@
 			"ipfilter": {
 				"rules": [{"address": "*", "allowed": true}],
 				"useforrequest": false,
-				"errorcode": 401
+				"errorcode": 403
 			},
 			"secret": {
 				"browser": {"string": "secret", "file": "", "tenants": {}},
@@ -179,6 +199,16 @@
 			"sockjs": {
 				"sockjs_url": "",
 				"websocket": true
+			},
+			"callbackBackoffOptions": {
+				"retries": 0,
+				"timeout":{
+					"factor": 2,
+					"minTimeout": 1000,
+					"maxTimeout": 2147483647,
+					"randomize": false
+				},
+				"httpStatus": "429,500-599"
 			}
 		}
 	},
@@ -189,7 +219,10 @@
 	"FileConverter": {
 		"converter": {
 			"maxDownloadBytes": 104857600,
-			"downloadTimeout": 120,
+			"downloadTimeout": {
+				"connectionAndInactivity": "10s",
+				"wholeCycle": "2m"
+			},
 			"downloadAttemptMaxCount": 3,
 			"downloadAttemptDelay": 1000,
 			"maxprocesscount": 1,

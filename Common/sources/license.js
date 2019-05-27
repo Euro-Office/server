@@ -62,6 +62,7 @@ exports.readLicense = function*() {
 		mode: c_LM.None,
 		branding: false,
 		connections: constants.LICENSE_CONNECTIONS,
+		customization: false,
 		usersCount: 0,
 		usersExpire: constants.LICENSE_EXPIRE_USERS_ONE_DAY,
 		hasLicense: false,
@@ -96,6 +97,7 @@ exports.readLicense = function*() {
 
 			res.light = (true === oLicense['light'] || 'true' === oLicense['light']); // Someone who likes to put json string instead of bool
 			res.branding = (true === oLicense['branding'] || 'true' === oLicense['branding']); // Someone who likes to put json string instead of bool
+			res.customization = (!oLicense.hasOwnProperty('customization') || !!oLicense['customization']); // Check exist property for old licenses
 			res.plugins = true === oLicense['plugins'];
 			if (oLicense.hasOwnProperty('connections')) {
 				res.connections = oLicense['connections'] >> 0;
@@ -126,6 +128,7 @@ exports.readLicense = function*() {
 				if (res.type === c_LR.Success) {
 					res.mode = c_LM.Trial;
 					res.count = resMax.count;
+					res.customization = constants.PACKAGE_TYPE_D === oPackageType;
 					return res;
 				}
 			}

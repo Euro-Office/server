@@ -70,7 +70,6 @@ var cfgInputLimits = configConverter.get('inputLimits');
 const cfgStreamWriterBufferSize = configConverter.get('streamWriterBufferSize');
 //cfgMaxRequestChanges was obtained as a result of the test: 84408 changes - 5,16 MB
 const cfgMaxRequestChanges = config.get('services.CoAuthoring.server.maxRequestChanges');
-const cfgMaxRedeliveredCount = configConverter.get('maxRedeliveredCount');
 var cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
 const cfgForgottenFilesName = config.get('services.CoAuthoring.server.forgottenfilesname');
 
@@ -261,13 +260,13 @@ function* downloadFile(docId, uri, fileFrom) {
         if (cfgTokenEnableRequestOutbox) {
           authorization = utils.fillJwtForRequest({url: uri});
         }
-        data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout * 1000, cfgDownloadMaxBytes, authorization);
+        data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout, cfgDownloadMaxBytes, authorization);
         res = true;
       } catch (err) {
         res = false;
         logger.error('error downloadFile:url=%s;attempt=%d;code:%s;connect:%s;(id=%s)\r\n%s', uri, downloadAttemptCount, err.code, err.connect, docId, err.stack);
         //not continue attempts if timeout
-        if (err.code === 'ETIMEDOUT' || err.code === 'EMSGSIZE') {
+        if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT' || err.code === 'EMSGSIZE') {
           break;
         } else {
           yield utils.sleep(cfgDownloadAttemptDelay);
@@ -316,7 +315,7 @@ function* downloadFileFromStorage(id, strPath, dir) {
     fs.writeFileSync(path.join(dir, fileRel), data);
   }
 }
-function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
+function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs, authorProps) {
   let res = constants.NO_ERROR;
   let needConcatFiles = false;
   if (task.getFromOrigin() || task.getFromSettings()) {
@@ -337,7 +336,7 @@ function* processDownloadFromStorage(dataConvert, cmd, task, tempDirs) {
     yield* concatFiles(tempDirs.source);
   }
   if (task.getFromChanges()) {
-    res = yield* processChanges(tempDirs, cmd);
+    res = yield* processChanges(tempDirs, cmd, authorProps);
   }
   return res;
 }
@@ -367,7 +366,7 @@ function* concatFiles(source) {
   }
 }
 
-function* processChanges(tempDirs, cmd) {
+function* processChanges(tempDirs, cmd, authorProps) {
   let res = constants.NO_ERROR;
   let changesDir = path.join(tempDirs.source, constants.CHANGES_NAME);
   fs.mkdirSync(changesDir);
@@ -403,6 +402,8 @@ function* processChanges(tempDirs, cmd) {
           streamObj = yield* streamCreate(cmd.getDocId(), changesDir, indexFile++);
         }
         changesAuthor = change.user_id_original;
+        authorProps.lastModifiedBy = change.user_name;
+        authorProps.modified = change.change_date.toISOString().slice(0, 19) + 'Z';
         let strDate = baseConnector.getDateTime(change.change_date);
         changesHistory.changes.push({'created': strDate, 'user': {'id': changesAuthor, 'name': change.user_name}});
         yield* streamWrite(streamObj, '[');
@@ -579,6 +580,7 @@ function* ExecuteTask(task) {
   let fileTo = task.getToFile();
   dataConvert.fileTo = fileTo ? path.join(tempDirs.result, fileTo) : '';
   let isBuilder = cmd.getIsBuilder();
+  let authorProps = {lastModifiedBy: null, modified: null};
   if (cmd.getUrl()) {
     dataConvert.fileFrom = path.join(tempDirs.source, dataConvert.key + '.' + cmd.getFormat());
     var isDownload = yield* downloadFile(dataConvert.key, cmd.getUrl(), dataConvert.fileFrom);
@@ -596,7 +598,7 @@ function* ExecuteTask(task) {
       clientStatsD.timing('conv.downloadFileFromStorage', new Date() - curDate);
       curDate = new Date();
     }
-    error = yield* processDownloadFromStorage(dataConvert, cmd, task, tempDirs);
+    error = yield* processDownloadFromStorage(dataConvert, cmd, task, tempDirs, authorProps);
   } else if (cmd.getForgotten()) {
     yield* downloadFileFromStorage(cmd.getDocId(), cmd.getForgotten(), tempDirs.source);
     logger.debug('downloadFileFromStorage complete(id=%s)', dataConvert.key);
@@ -651,7 +653,16 @@ function* ExecuteTask(task) {
       }
       let timeoutId;
       try {
-        let spawnAsyncPromise = spawnAsync(processPath, childArgs, cfgSpawnOptions);
+        let spawnOptions = cfgSpawnOptions;
+        if (authorProps.lastModifiedBy && authorProps.modified) {
+          //copy to avoid modification of global cfgSpawnOptions
+          spawnOptions = Object.assign({}, cfgSpawnOptions);
+          spawnOptions.env = Object.assign({}, spawnOptions.env || process.env);
+
+          spawnOptions.env['LAST_MODIFIED_BY'] = authorProps.lastModifiedBy;
+          spawnOptions.env['MODIFIED'] = authorProps.modified;
+        }
+        let spawnAsyncPromise = spawnAsync(processPath, childArgs, spawnOptions);
         childRes = spawnAsyncPromise.child;
         let waitMS = task.getVisibilityTimeout() * 1000 - (new Date().getTime() - getTaskTime.getTime());
         timeoutId = setTimeout(function() {
@@ -698,51 +709,27 @@ function* ExecuteTask(task) {
   return resData;
 }
 
-function receiveTask(data, dataRaw) {
+function receiveTask(data) {
   return co(function* () {
     var res = null;
     var task = null;
-    if (!dataRaw.fields.redelivered) {
-      try {
-        task = new commonDefines.TaskQueueData(JSON.parse(data));
-        if (task) {
-          res = yield* ExecuteTask(task);
-        }
-      } catch (err) {
-        logger.error(err);
-      } finally {
-        try {
-          if (!res && task) {
-            //если все упало так что даже нет res, все равно пытаемся отдать ошибку.
-            var cmd = task.getCmd();
-            cmd.setStatusInfo(constants.CONVERT);
-            res = new commonDefines.TaskQueueData();
-            res.setCmd(cmd);
-          }
-          if(res) {
-            yield queue.addResponse(res);
-          }
-          yield queue.removeTask(dataRaw);
-        } catch (err) {
-          logger.error(err);
-        }
+    try {
+      task = new commonDefines.TaskQueueData(JSON.parse(data));
+      if (task) {
+        res = yield* ExecuteTask(task);
       }
-    } else {
+    } catch (err) {
+      logger.error(err);
+    } finally {
       try {
-        logger.warn('receiveTask redelivered data=%j', dataRaw);
-        //remove current task and add new into tail of queue to remove redelivered flag
-        yield queue.removeTask(dataRaw);
-        task = new commonDefines.TaskQueueData(JSON.parse(data));
-        let redeliveredCount = dataRaw.properties.headers['x-redelivered-count'];
-        if (!redeliveredCount || redeliveredCount < cfgMaxRedeliveredCount) {
-          dataRaw.properties.headers['x-redelivered-count'] = redeliveredCount ? redeliveredCount + 1 : 1;
-          yield queue.addTask(task, dataRaw.properties.priority, undefined, dataRaw.properties.headers);
-        } else {
-          //simulate error response
-          let cmd = task.getCmd();
+        if (!res && task) {
+          //если все упало так что даже нет res, все равно пытаемся отдать ошибку.
+          var cmd = task.getCmd();
           cmd.setStatusInfo(constants.CONVERT);
           res = new commonDefines.TaskQueueData();
           res.setCmd(cmd);
+        }
+        if (res) {
           yield queue.addResponse(res);
         }
       } catch (err) {
@@ -751,10 +738,19 @@ function receiveTask(data, dataRaw) {
     }
   });
 }
+function simulateErrorResponse(data){
+  let task = new commonDefines.TaskQueueData(JSON.parse(data));
+  //simulate error response
+  let cmd = task.getCmd();
+  cmd.setStatusInfo(constants.CONVERT);
+  let res = new commonDefines.TaskQueueData();
+  res.setCmd(cmd);
+  return res;
+}
 function run() {
-  queue = new queueService();
+  queue = new queueService(simulateErrorResponse);
   queue.on('task', receiveTask);
-  queue.init(true, true, true, false, function(err) {
+  queue.init(true, true, true, false, false, false, function(err) {
     if (null != err) {
       logger.error('createTaskQueue error :\r\n%s', err.stack);
     }

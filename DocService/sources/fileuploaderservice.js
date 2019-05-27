@@ -117,7 +117,7 @@ exports.uploadImageFileOld = function(req, res) {
       docId = checkJwtRes.docId || docId;
       userid = checkJwtRes.userid || userid;
     } else {
-      res.sendStatus(400);
+      res.sendStatus(403);
       return;
     }
   }
@@ -195,13 +195,13 @@ exports.uploadImageFile = function(req, res) {
     var isError = true;
     var docId = 'null';
     let output = {};
+    let isValidJwt = true;
     try {
       docId = req.params.docid;
       var userid = req.params.userid;
       let encrypted = false;
       logger.debug('Start uploadImageFile: docId = %s', docId);
 
-      var isValidJwt = true;
       if (cfgTokenEnableBrowser) {
         var checkJwtRes = checkJwtUpload(docId, 'uploadImageFile', req.query['token']);
         if (!checkJwtRes.err) {
@@ -250,7 +250,7 @@ exports.uploadImageFile = function(req, res) {
           res.setHeader('Content-Type', 'application/json');
           res.send(JSON.stringify(output));
         } else {
-          res.sendStatus(400);
+          res.sendStatus(isValidJwt ? 400 : 403);
         }
         logger.debug('End uploadImageFile: isError = %s docId = %s', isError, docId);
       } catch (e) {

@@ -220,6 +220,16 @@ exports.getFormatFromString = function(ext) {
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_FB2;
     case 'mobi':
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_MOBI;
+    case 'docm':
+      return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOCM;
+    case 'dotx':
+      return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOTX;
+    case 'dotm':
+      return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOTM;
+    case 'fodt':
+      return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_ODT_FLAT;
+    case 'ott':
+      return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_OTT;
 
     case 'pptx':
       return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTX;
@@ -229,6 +239,18 @@ exports.getFormatFromString = function(ext) {
       return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODP;
     case 'ppsx':
       return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPSX;
+    case 'pptm':
+      return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTM;
+    case 'ppsm':
+      return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPSM;
+    case 'potx':
+      return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_POTX;
+    case 'potm':
+      return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_POTM;
+    case 'fodp':
+      return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODP_FLAT;
+    case 'otp':
+      return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_OTP;
 
     case 'xlsx':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSX;
@@ -238,6 +260,16 @@ exports.getFormatFromString = function(ext) {
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_ODS;
     case 'csv':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_CSV;
+    case 'xlsm':
+      return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSM;
+    case 'xltx':
+      return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLTX;
+    case 'xltm':
+      return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLTM;
+    case 'fods':
+      return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_ODS_FLAT;
+    case 'ots':
+      return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_OTS;
 
     case 'jpeg':
     case 'jpe':
@@ -313,6 +345,20 @@ exports.getStringFromFormat = function(format) {
       return 'fb2';
     case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_MOBI:
       return 'mobi';
+    case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOCM:
+      return 'docm';
+    case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOTX:
+      return 'dotx';
+    case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOTM:
+      return 'dotm';
+    case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_ODT_FLAT:
+      return 'fodt';
+    case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_OTT:
+      return 'ott';
+    case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOC_FLAT:
+      return 'doc';
+    case constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_HTML_IN_CONTAINER:
+      return 'doc';
 
     case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTX:
       return 'pptx';
@@ -322,6 +368,18 @@ exports.getStringFromFormat = function(format) {
       return 'odp';
     case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPSX:
       return 'ppsx';
+    case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTM:
+      return 'pptm';
+    case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPSM:
+      return 'ppsm';
+    case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_POTX:
+      return 'potx';
+    case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_POTM:
+      return 'potm';
+    case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODP_FLAT:
+      return 'fodt';
+    case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_OTP:
+      return 'otp';
 
     case constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSX:
       return 'xlsx';
@@ -331,6 +389,16 @@ exports.getStringFromFormat = function(format) {
       return 'ods';
     case constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_CSV:
       return 'csv';
+    case constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSM:
+      return 'xlsm';
+    case constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLTX:
+      return 'xltx';
+    case constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLTM:
+      return 'xltm';
+    case constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_ODS_FLAT:
+      return 'fods';
+    case constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_OTS:
+      return 'ots';
 
     case constants.AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF:
     case constants.AVS_OFFICESTUDIO_FILE_OTHER_PDFA:
