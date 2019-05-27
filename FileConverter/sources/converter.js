@@ -266,7 +266,7 @@ function* downloadFile(docId, uri, fileFrom) {
         res = false;
         logger.error('error downloadFile:url=%s;attempt=%d;code:%s;connect:%s;(id=%s)\r\n%s', uri, downloadAttemptCount, err.code, err.connect, docId, err.stack);
         //not continue attempts if timeout
-        if (err.code === 'ETIMEDOUT' || err.code === 'EMSGSIZE') {
+        if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT' || err.code === 'EMSGSIZE') {
           break;
         } else {
           yield utils.sleep(cfgDownloadAttemptDelay);
@@ -654,10 +654,11 @@ function* ExecuteTask(task) {
       let timeoutId;
       try {
         let spawnOptions = cfgSpawnOptions;
-        if (authorProps.lastModifiedBy) {
-          if (!spawnOptions.env) {
-            spawnOptions.env = Object.assign({}, process.env);
-          }
+        if (authorProps.lastModifiedBy && authorProps.modified) {
+          //copy to avoid modification of global cfgSpawnOptions
+          spawnOptions = Object.assign({}, cfgSpawnOptions);
+          spawnOptions.env = Object.assign({}, spawnOptions.env || process.env);
+
           spawnOptions.env['LAST_MODIFIED_BY'] = authorProps.lastModifiedBy;
           spawnOptions.env['MODIFIED'] = authorProps.modified;
         }
@@ -695,8 +696,8 @@ function* ExecuteTask(task) {
     curDate = new Date();
   }
   if (tempDirs) {
-    //deleteFolderRecursive(tempDirs.temp);
-    logger.debug('deleteFolderRecursive %s (id=%s)', tempDirs.temp, dataConvert.key);
+    deleteFolderRecursive(tempDirs.temp);
+    logger.debug('deleteFolderRecursive (id=%s)', dataConvert.key);
     if(clientStatsD) {
       clientStatsD.timing('conv.deleteFolderRecursive', new Date() - curDate);
       curDate = new Date();
@@ -749,7 +750,7 @@ function simulateErrorResponse(data){
 function run() {
   queue = new queueService(simulateErrorResponse);
   queue.on('task', receiveTask);
-  queue.init(true, true, true, false, function(err) {
+  queue.init(true, true, true, false, false, false, function(err) {
     if (null != err) {
       logger.error('createTaskQueue error :\r\n%s', err.stack);
     }

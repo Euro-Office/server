@@ -231,12 +231,6 @@ if (cluster.isMaster) {
 		});
 
 		app.post('/docbuilder', utils.checkClientIp, rawFileParser, (req, res) => {
-			const licenseInfo = docsCoServer.getLicenseInfo();
-			if (licenseInfo.type !== constants.LICENSE_RESULT.Success) {
-				logger.error('License expired');
-				res.sendStatus(402);
-				return;
-			}
 			converterService.builder(req, res);
 		});
 		app.get('/info/info.json', utils.checkClientIp, docsCoServer.licenseInfo);

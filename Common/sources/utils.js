@@ -330,7 +330,9 @@ function postRequestPromise(uri, postData, optTimeout, opt_Authorization) {
         if (200 == response.statusCode || 204 == response.statusCode) {
           resolve(body);
         } else {
-          reject(new Error('Error response: statusCode:' + response.statusCode + ' ;body:\r\n' + body));
+          let error = new Error('Error response: statusCode:' + response.statusCode + ' ;body:\r\n' + body);
+          error.statusCode = response.statusCode;
+          reject(error);
         }
       }
     });
@@ -353,6 +355,10 @@ exports.mapAscServerErrorToOldError = function(error) {
     case constants.TASK_RESULT :
       res = -6;
       break;
+    case constants.CONVERT_PASSWORD :
+    case constants.CONVERT_DRM :
+      res = -5;
+      break;
     case constants.CONVERT_DOWNLOAD :
       res = -4;
       break;
@@ -361,8 +367,6 @@ exports.mapAscServerErrorToOldError = function(error) {
       res = -2;
       break;
     case constants.CONVERT_LIMITS :
-    case constants.CONVERT_PASSWORD :
-    case constants.CONVERT_DRM :
     case constants.CONVERT_NEED_PARAMS :
     case constants.CONVERT_PARAMS :
     case constants.CONVERT_LIBREOFFICE :

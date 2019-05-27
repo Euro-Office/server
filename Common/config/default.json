@@ -12,6 +12,7 @@
 		}
 	},
 	"queue": {
+		"type": "rabbitmq",
 		"visibilityTimeout": 300,
 		"retentionPeriod": 900
 	},
@@ -40,7 +41,8 @@
 		"queueconverttask": "ds.converttask",
 		"queueconvertresponse": "ds.convertresponse",
 		"exchangeconvertdead": "ds.exchangeconvertdead",
-		"queueconvertdead": "ds.convertdead"
+		"queueconvertdead": "ds.convertdead",
+		"queuedelayed": "ds.delayed"
 	},
 	"activemq": {
 		"connectOptions": {
@@ -52,6 +54,7 @@
 		"queueconverttask": "ds.converttask",
 		"queueconvertresponse": "ds.convertresponse",
 		"queueconvertdead": "ActiveMQ.DLQ",
+		"queuedelayed": "ds.delayed",
 		"topicpubsub": "ds.pubsub"
 	},
 	"dnscache": {
@@ -196,6 +199,16 @@
 			"sockjs": {
 				"sockjs_url": "",
 				"websocket": true
+			},
+			"callbackBackoffOptions": {
+				"retries": 0,
+				"timeout":{
+					"factor": 2,
+					"minTimeout": 1000,
+					"maxTimeout": 2147483647,
+					"randomize": false
+				},
+				"httpStatus": "429,500-599"
 			}
 		}
 	},

@@ -36,11 +36,13 @@ var events = require('events');
 var util = require('util');
 var co = require('co');
 var constants = require('./../../Common/sources/constants');
+const commonDefines = require('./../../Common/sources/commondefines');
 var utils = require('./../../Common/sources/utils');
 var rabbitMQCore = require('./../../Common/sources/rabbitMQCore');
 var activeMQCore = require('./../../Common/sources/activeMQCore');
 const logger = require('./../../Common/sources/logger');
 
+const cfgQueueType = config.get('queue.type');
 var cfgRabbitExchangePubSub = config.get('rabbitmq.exchangepubsub');
 var cfgActiveTopicPubSub = constants.ACTIVEMQ_TOPIC_PREFIX + config.get('activemq.topicpubsub');
 
@@ -141,7 +143,7 @@ function closeActive(conn) {
 let init;
 let publish;
 let close;
-if (constants.USE_RABBIT_MQ) {
+if (commonDefines.c_oAscQueueType.rabbitmq === cfgQueueType) {
   init = initRabbit;
   publish = publishRabbit;
   close = closeRabbit;

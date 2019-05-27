@@ -66,8 +66,9 @@ function* getConvertStatus(cmd, selectRes, baseUrl, opt_fileTo) {
         break;
       case taskResult.FileStatus.Err:
       case taskResult.FileStatus.ErrToReload:
+      case taskResult.FileStatus.NeedPassword:
         status.err = row.status_info;
-        if (taskResult.FileStatus.ErrToReload == row.status) {
+        if (taskResult.FileStatus.ErrToReload == row.status || taskResult.FileStatus.NeedPassword == row.status) {
           yield canvasService.cleanupCache(docId);
         }
         break;
@@ -75,9 +76,6 @@ function* getConvertStatus(cmd, selectRes, baseUrl, opt_fileTo) {
       case taskResult.FileStatus.SaveVersion:
       case taskResult.FileStatus.UpdateVersion:
         status.err = constants.UNKNOWN;
-        break;
-      case taskResult.FileStatus.NeedPassword:
-        status.err = row.status_info;
         break;
     }
     var lastOpenDate = row.last_open_date;

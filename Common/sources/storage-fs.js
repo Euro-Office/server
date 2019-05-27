@@ -167,10 +167,10 @@ exports.getSignedUrl = function(baseUrl, strPath, urlType, optFilename, opt_type
     expires += (commonDefines.c_oAscUrlTypes.Session === urlType ? (cfgExpSessionAbsolute / 1000) : cfgStorageUrlExpires) || 31536000;
 
     var md5 = crypto.createHash('md5').update(expires + decodeURIComponent(uri) + cfgStorageSecretString).digest("base64");
-    md5 = md5.replace(/\+/g, "-");
-    md5 = md5.replace(/\//g, "_");
+    md5 = md5.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 
-    url += ('?md5=' + md5 + '&expires=' + expires);
+    url += '?md5=' + encodeURIComponent(md5);
+    url += '&expires=' + encodeURIComponent(expires);
     url += '&disposition=' + encodeURIComponent(utils.getContentDisposition(null, null, opt_type));
     resolve(utils.changeOnlyOfficeUrl(url, strPath, optFilename));
   });
