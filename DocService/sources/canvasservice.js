@@ -31,7 +31,7 @@
  */
 
 'use strict';
-
+const crypto = require('crypto');
 var pathModule = require('path');
 var urlModule = require('url');
 var co = require('co');
@@ -564,7 +564,7 @@ function* commandImgurls(conn, cmd, outputData) {
           var userid = cmd.getUserId();
           var imageIndex = cmd.getSaveIndex() + imageCount;
           imageCount++;
-          var strLocalPath = 'media/' + utils.crc32(userid).toString(16) + '_';
+          var strLocalPath = 'media/' + crypto.randomBytes(16).toString("hex") + '_';
           if (urlParsed) {
             var urlBasename = pathModule.basename(urlParsed.pathname);
             var displayN = isDisplayedImage(urlBasename);

@@ -31,7 +31,7 @@
  */
 
 'use strict';
-
+const crypto = require('crypto');
 var multiparty = require('multiparty');
 var co = require('co');
 var jwt = require('jsonwebtoken');
@@ -121,10 +121,9 @@ exports.uploadImageFileOld = function(req, res) {
       return;
     }
   }
-  var index = parseInt(req.params.index);
   var listImages = [];
   //todo userid
-  if (docId && index) {
+  if (docId) {
     var isError = false;
     var form = new multiparty.Form();
     form.on('error', function(err) {
@@ -144,7 +143,7 @@ exports.uploadImageFileOld = function(req, res) {
           part.resume();
         } else {
           //в начале пишется хеш, чтобы избежать ошибок при параллельном upload в совместном редактировании
-          var strImageName = utils.crc32(userid).toString(16) + '_image' + (parseInt(index) + listImages.length);
+          var strImageName = crypto.randomBytes(16).toString("hex");
           var strPath = docId + '/media/' + strImageName + '.jpg';
           listImages.push(strPath);
           utils.stream2Buffer(part).then(function(buffer) {
@@ -213,7 +212,6 @@ exports.uploadImageFile = function(req, res) {
         }
       }
 
-      var index = parseInt(req.params.index);
       if (isValidJwt && docId && req.body && Buffer.isBuffer(req.body)) {
         let buffer = req.body;
         if (buffer.length <= cfgImageSize) {
@@ -227,7 +225,7 @@ exports.uploadImageFile = function(req, res) {
           }
           if (formatLimit) {
             //в начале пишется хеш, чтобы избежать ошибок при параллельном upload в совместном редактировании
-            var strImageName = utils.crc32(userid).toString(16) + '_image' + index;
+            var strImageName = crypto.randomBytes(16).toString("hex");
             var strPathRel = 'media/' + strImageName + '.' + formatStr;
             var strPath = docId + '/' + strPathRel;
             yield storageBase.putObject(strPath, buffer, buffer.length);
