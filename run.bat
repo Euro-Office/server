@@ -29,6 +29,13 @@ call npm install -g grunt-cli
 call npm install
 call grunt --src="./configs" --level=WHITESPACE_ONLY --formatting=PRETTY_PRINT
 
+ECHO.
+ECHO ----------------------------------------
+ECHO Start build themes.js
+ECHO ----------------------------------------
+CD /D %~dp0\FileConverter\Bin
+reg Query "HKLM\Hardware\Description\System\CentralProcessor\0" | find /i "x86" > NUL && set OS=32&&set OS2=x86||set OS=64&& set OS2=x64
+"core\build\bin\win_%OS%\allthemesgen.exe" --converter-dir="%~dp0\FileConverter\Bin" --src="%~dp0\..\sdkjs\slide\themes" --output="%~dp0\..\sdkjs\common\Images"
 
 ECHO.
 ECHO ----------------------------------------
