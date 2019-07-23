@@ -32,6 +32,11 @@ copy "core\build\lib\win_%OS%\HtmlFileInternal.exe" ".\HtmlFileInternal"
 xcopy /s/h/e/k/c/y/q "core\Common\3dParty\cef\win_%OS%\build" ".\HtmlFileInternal"
 copy "core\build\bin\win_%OS%\x2t.exe" "."
 
+ECHO.
+ECHO ----------------------------------------
+ECHO generate fonts
+ECHO ----------------------------------------
+
 if exist "%~dp0\..\fonts" rmdir /S /Q "%~dp0\..\fonts"
 mkdir "%~dp0\..\fonts"
 "core\build\bin\win_%OS%\allfontsgen.exe" --input="%~dp0\..\core-fonts" --allfonts-web="%~dp0\..\sdkjs\common\AllFonts.js" --allfonts="%~dp0\FileConverter\bin\AllFonts.js" --images="%~dp0\..\sdkjs\common\Images" --selection="%~dp0\FileConverter\bin\font_selection.bin" --output-web="%~dp0\..\fonts" --use-system="true"
