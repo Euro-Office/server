@@ -2,6 +2,23 @@ ECHO OFF
 
 ECHO.
 ECHO ----------------------------------------
+ECHO check Node.js version
+ECHO ----------------------------------------
+
+node -v > tmpFile
+SET /p NODEJS_V= < tmpFile
+DEL tmpFile
+ECHO Installed Node.js version %NODEJS_V%
+SET NODEJS_V=%NODEJS_V:~1,1%
+SET NODEJS_V_MIN=8
+
+if %NODEJS_V_MIN% GTR %NODEJS_V% (
+	ECHO ERROR Node.js version! %NODEJS_V_MIN% more than %NODEJS_V%. Min version Node.js 8.x
+	goto ERROR
+)
+
+ECHO.
+ECHO ----------------------------------------
 ECHO restart RabbitMQ node to prevent "Erl.exe high CPU usage every Monday morning on Windows" https://groups.google.com/forum/#!topic/rabbitmq-users/myl74gsYyYg
 ECHO ----------------------------------------
 
