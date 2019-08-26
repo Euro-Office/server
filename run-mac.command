@@ -42,20 +42,25 @@ gunzip -c core.tar.gz | tar xopf - -C core
 
 cp -v "core/build/bin/mac_64/icudtl_dat.S" "."
 cp -v "core/build/bin/mac_64/x2t" "."
+cp -v "core/Common/3dParty/icu/mac_64/build/libicudata.58.dylib" "."
+cp -v "core/Common/3dParty/icu/mac_64/build/libicuuc.58.dylib" "."
 cp -v "core/Common/3dParty/icu/mac_64/build/libicudata.60.dylib" "."
 cp -v "core/Common/3dParty/icu/mac_64/build/libicuuc.60.dylib" "."
 cp -v "core/Common/3dParty/icu/mac_64/build/libicudata.60.2.dylib" "."
 cp -v "core/Common/3dParty/icu/mac_64/build/libicuuc.60.2.dylib" "."
 cp -v "core/build/lib/mac_64/libDjVuFile.dylib" "."
+cp -v "core/build/lib/mac_64/libdoctrenderer.dylib" "."
+cp -v "core/build/lib/mac_64/libgraphics.dylib" "."
 cp -v "core/build/lib/mac_64/libHtmlFile.dylib" "."
 cp -v "core/build/lib/mac_64/libHtmlRenderer.dylib" "."
+cp -v "core/build/lib/mac_64/libkernel.dylib" "."
 cp -v "core/build/lib/mac_64/libPdfReader.dylib" "."
 cp -v "core/build/lib/mac_64/libPdfWriter.dylib" "."
 cp -v "core/build/lib/mac_64/libUnicodeConverter.dylib" "."
 cp -v "core/build/lib/mac_64/libXpsFile.dylib" "."
-cp -v "core/build/lib/mac_64/libascdocumentscore.dylib" "."
-cp -v "core/build/lib/mac_64/libdoctrenderer.dylib" "."
-cp -v "core/build/lib/mac_64/libkernel.dylib" "."
+
+ln -s "libicudata.58.dylib" "libicudata.58.2.dylib"
+ln -s "libicuuc.58.dylib" "libicuuc.58.2.dylib"
 
 chmod -v +x x2t
 
@@ -90,8 +95,8 @@ echo "Run services"
 echo "----------------------------------------"
 
 mysql.server restart
-RunCommand "RabbitMQ Server" "/usr/local/sbin/rabbitmq-server"
-RunCommand "Redis" "redis-server /usr/local/etc/redis.conf"
+RunCommand "RabbitMQ Server" "rabbitmq-server"
+RunCommand "Redis" "redis-server"
 
 RunCommand "Server" "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && cd $BASEDIR/DocService/sources && node server.js"
 RunCommand "GC" "export NODE_CONFIG_DIR=$BASEDIR/Common/config && export NODE_ENV=development-mac && cd $BASEDIR/DocService/sources && node gc.js"
