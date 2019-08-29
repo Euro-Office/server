@@ -248,38 +248,41 @@ function getTempDir() {
   return {temp: newTemp, source: sourceDir, result: resultDir};
 }
 function* downloadFile(docId, uri, fileFrom) {
-  var res = false;
+  var res = constants.CONVERT_DOWNLOAD;
   var data = null;
   var downloadAttemptCount = 0;
   var urlParsed = url.parse(uri);
   var filterStatus = yield* utils.checkHostFilter(urlParsed.hostname);
   if (0 == filterStatus) {
-    while (!res && downloadAttemptCount++ < cfgDownloadAttemptMaxCount) {
+    while (constants.NO_ERROR !== res && downloadAttemptCount++ < cfgDownloadAttemptMaxCount) {
       try {
         let authorization;
         if (cfgTokenEnableRequestOutbox) {
           authorization = utils.fillJwtForRequest({url: uri});
         }
         data = yield utils.downloadUrlPromise(uri, cfgDownloadTimeout, cfgDownloadMaxBytes, authorization);
-        res = true;
+        res = constants.NO_ERROR;
       } catch (err) {
-        res = false;
+        res = constants.CONVERT_DOWNLOAD;
         logger.error('error downloadFile:url=%s;attempt=%d;code:%s;connect:%s;(id=%s)\r\n%s', uri, downloadAttemptCount, err.code, err.connect, docId, err.stack);
         //not continue attempts if timeout
-        if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT' || err.code === 'EMSGSIZE') {
+        if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
+          break;
+        } else if (err.code === 'EMSGSIZE') {
+          res = constants.CONVERT_LIMITS;
           break;
         } else {
           yield utils.sleep(cfgDownloadAttemptDelay);
         }
       }
     }
-    if (res) {
+    if (constants.NO_ERROR === res) {
       logger.debug('downloadFile complete filesize=%d (id=%s)', data.length, docId);
       fs.writeFileSync(fileFrom, data);
     }
   } else {
     logger.error('checkIpFilter error:url=%s;code:%s;(id=%s)', uri, filterStatus, docId);
-    res = false;
+    res = constants.CONVERT_DOWNLOAD;
   }
   return res;
 }
@@ -583,10 +586,7 @@ function* ExecuteTask(task) {
   let authorProps = {lastModifiedBy: null, modified: null};
   if (cmd.getUrl()) {
     dataConvert.fileFrom = path.join(tempDirs.source, dataConvert.key + '.' + cmd.getFormat());
-    var isDownload = yield* downloadFile(dataConvert.key, cmd.getUrl(), dataConvert.fileFrom);
-    if (!isDownload) {
-      error = constants.CONVERT_DOWNLOAD;
-    }
+    error = yield* downloadFile(dataConvert.key, cmd.getUrl(), dataConvert.fileFrom);
     if(clientStatsD) {
       clientStatsD.timing('conv.downloadFile', new Date() - curDate);
       curDate = new Date();
