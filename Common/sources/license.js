@@ -112,6 +112,8 @@ exports.readLicense = function*() {
 			throw 'verify';
 		}
 	} catch (e) {
+		logger.warn(e);
+
 		res.count = 1;
 		res.type = c_LR.Error;
 
