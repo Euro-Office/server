@@ -37,7 +37,7 @@ CreateDir "$BASEDIR/FileConverter/bin/HtmlFileInternal"
 
 cd "$BASEDIR/FileConverter/bin"
 
-wget -N http://repo-doc-onlyoffice-com.s3.amazonaws.com/mac/core/origin/develop/latest/x64/core.tar.gz
+wget -N http://repo-doc-onlyoffice-com.s3.amazonaws.com/mac/core/develop/latest/x64/core.tar.gz
 gunzip -c core.tar.gz | tar xopf - -C core
 
 cp -v "core/build/bin/mac_64/icudtl_dat.S" "."

@@ -12,7 +12,7 @@ ECHO ----------------------------------------
 mkdir "%~dp0\FileConverter\bin"
 mkdir "%~dp0\FileConverter\bin\HtmlFileInternal"
 
-powershell -executionpolicy remotesigned -file update-core.ps1 "http://repo-doc-onlyoffice-com.s3.amazonaws.com/windows/core/origin/%GITBRANCH%/latest/%OS2%/core.zip" "%~dp0FileConverter\bin\core.zip" "%~dp0FileConverter\bin\core"
+powershell -executionpolicy remotesigned -file update-core.ps1 "http://repo-doc-onlyoffice-com.s3.amazonaws.com/windows/core/%GITBRANCH%/latest/%OS2%/core.zip" "%~dp0FileConverter\bin\core.zip" "%~dp0FileConverter\bin\core"
 
 cd /D "%~dp0\FileConverter\bin" || goto ERROR
 copy "core\Common\3dParty\v8\win_%OS%\release\icudt.dll" "."
