@@ -112,6 +112,8 @@ CORE_FONTS_DIR = core-fonts
 CORE_FONTS_FILES = ../$(CORE_FONTS_DIR)/**
 CORE_FONTS = $(OUTPUT)/../$(CORE_FONTS_DIR)/
 
+CUSTOM_PUBLIC_KEY = $(BRANDING_DIR)/licenseKey.pem
+
 .PHONY: all clean install uninstall build-date htmlfileinternal docbuilder
 
 .NOTPARALLEL:
@@ -123,6 +125,8 @@ build-date: $(GRUNT_FILES)
 	sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i $(COMMON_DEFINES_JS)
 	sed "s|\(const buildNumber = \).*|\1${BUILD_NUMBER};|" -i $(COMMON_DEFINES_JS)
 	sed "s|\(const buildDate = \).*|\1'$$(date +%F)';|" -i $(LICENSE_JS)
+	test -e $(CUSTOM_PUBLIC_KEY) && \
+	cp $(CUSTOM_PUBLIC_KEY) $(OUTPUT)/Common/sources || true
 
 htmlfileinternal: $(FILE_CONVERTER)
 	mkdir -p $(HTML_FILE_INTERNAL) && \
