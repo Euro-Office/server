@@ -15,6 +15,7 @@
       "./SpellChecker/package.json",
       "./Common/config/*.json",
       "./Common/config/log4js/*.json",
+      "./Common/sources/licenseKey.pem",
       "./Metrics/config/config.js"
     ],
     "dest": "./build/server"
