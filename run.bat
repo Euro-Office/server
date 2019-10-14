@@ -5,11 +5,10 @@ ECHO ----------------------------------------
 ECHO check Node.js version
 ECHO ----------------------------------------
 
-node -v > tmpFile
-SET /p NODEJS_V= < tmpFile
-DEL tmpFile
+FOR /F "tokens=*" %%a IN ('node -v') DO (SET NODEJS_V=%%a)
 ECHO Installed Node.js version %NODEJS_V%
-SET NODEJS_V=%NODEJS_V:~1,1%
+FOR /F "tokens=1 delims=." %%a IN ("%NODEJS_V%") DO (SET NODEJS_V=%%a)
+SET NODEJS_V=%NODEJS_V:~1,2%
 SET NODEJS_V_MIN=8
 
 if %NODEJS_V_MIN% GTR %NODEJS_V% (
