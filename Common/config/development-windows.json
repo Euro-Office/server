@@ -18,9 +18,6 @@
           "/sdkjs": {
             "path": "../../../sdkjs"
           },
-          "/web-apps": {
-            "path": "../../../web-apps"
-          },
           "/web-apps-pro": {
             "path": "../../../web-apps-pro"
           },
@@ -42,7 +39,7 @@
         "spellcheckerUrl": "http://127.0.0.1:8080"
       },
       "sockjs": {
-        "sockjs_url": "/web-apps/vendor/sockjs/sockjs.min.js"
+        "sockjs_url": "/web-apps-pro/vendor/sockjs/sockjs.min.js"
       }
     }
   },

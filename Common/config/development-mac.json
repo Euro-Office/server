@@ -18,9 +18,6 @@
           "/sdkjs": {
             "path": "../../../sdkjs"
           },
-          "/web-apps": {
-            "path": "../../../web-apps"
-          },
           "/web-apps-pro": {
             "path": "../../../web-apps-pro"
           },
