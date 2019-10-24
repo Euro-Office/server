@@ -1815,7 +1815,7 @@ exports.install = function(server, callbackFunction) {
   function fillUsername(data) {
     let user = data.user;
     if (user.firstname && user.lastname) {
-      //as in web-apps--pro/apps/common/main/lib/util/utils.js
+      //as in web-apps/apps/common/main/lib/util/utils.js
       let isRu = (data.lang && /^ru/.test(data.lang));
       return isRu ? user.lastname + ' ' + user.firstname : user.firstname + ' ' + user.lastname;
     } else {
@@ -1824,7 +1824,7 @@ exports.install = function(server, callbackFunction) {
   }
   function isEditMode(permissions, mode, def) {
     if (permissions && mode) {
-      //as in web-apps-pro/apps/documenteditor/main/app/controller/Main.js
+      //as in web-apps/apps/documenteditor/main/app/controller/Main.js
       return mode !== 'view' && (permissions.edit !== false || permissions.review === true ||
         permissions.comment === true || permissions.fillForms === true);
     } else {

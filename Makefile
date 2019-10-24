@@ -184,7 +184,7 @@ install:
 	mkdir -p ${DESTDIR}/var/log/onlyoffice/documentserver
 	mkdir -p ${DESTDIR}/var/lib/onlyoffice/documentserver/App_Data
 
-	cp -fr -t ${DESTDIR}${DOCUMENT_ROOT} build/* ../web-apps-pro/deploy/*
+	cp -fr -t ${DESTDIR}${DOCUMENT_ROOT} build/* ../web-apps/deploy/*
 	mkdir -p ${DESTDIR}/etc/onlyoffice/documentserver
 	mv ${DESTDIR}${DOCUMENT_ROOT}/server/Common/config/* ${DESTDIR}/etc/onlyoffice/documentserver
 

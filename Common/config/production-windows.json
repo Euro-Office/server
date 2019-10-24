@@ -19,8 +19,8 @@
             "path": "../../../sdkjs",
             "options": {"maxAge": "7d"}
           },
-          "/web-apps-pro": {
-            "path": "../../../web-apps-pro",
+          "/web-apps": {
+            "path": "../../../web-apps",
             "options": {"maxAge": "7d"}
           },
           "/sdkjs-plugins": {
@@ -41,7 +41,7 @@
         "utils_common_fontdir": "C:\\Windows\\Fonts"
       },
       "sockjs": {
-        "sockjs_url": "/web-apps-pro/vendor/sockjs/sockjs.min.js"
+        "sockjs_url": "/web-apps/vendor/sockjs/sockjs.min.js"
       }
     }
   },
