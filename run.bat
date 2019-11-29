@@ -47,6 +47,16 @@ call grunt --src="./configs" --level=WHITESPACE_ONLY --formatting=PRETTY_PRINT
 
 ECHO.
 ECHO ----------------------------------------
+ECHO Start build web-apps
+ECHO ----------------------------------------
+CD /D %~dp0\..\web-apps\build
+call npm install
+CD /D %~dp0\..\web-apps\build\sprites
+call npm install
+call grunt
+
+ECHO.
+ECHO ----------------------------------------
 ECHO Start build themes.js
 ECHO ----------------------------------------
 CD /D %~dp0\FileConverter\Bin
