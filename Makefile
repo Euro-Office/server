@@ -48,39 +48,6 @@ TARGET := $(PLATFORM)_$(ARCHITECTURE)
 
 OUTPUT = ../build_tools/out/$(TARGET)/onlyoffice/documentserver/server
 
-FILE_CONVERTER = $(OUTPUT)/FileConverter/bin
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)DjVuFile$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)doctrenderer$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)graphics$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)HtmlFile$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)HtmlRenderer$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)kernel$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)PdfReader$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)PdfWriter$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)UnicodeConverter$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/build/lib/$(TARGET)/$(LIB_PREFIX)XpsFile$(SHARED_EXT)
-
-ifeq ($(PLATFORM),linux)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/libicudata$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/libicuuc$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/v8/out.gn/$(TARGET)/icudtl.dat
-endif
-
-ifeq ($(PLATFORM),win)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icudt*$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/icu/$(TARGET)/build/icuuc*$(SHARED_EXT)
-FILE_CONVERTER_FILES += ../core/Common/3dParty/v8/v8/out.gn/$(TARGET)/release/icudtl.dat
-endif
-
-FILE_CONVERTER_FILES += ../core/build/bin/$(TARGET)/x2t$(EXEC_EXT)
-
-DOC_BUILDER_FILES += ../core/build/bin/$(TARGET)/docbuilder$(EXEC_EXT)
-DOC_BUILDER_FILES += ../core/Common/empty
-
-HTML_FILE_INTERNAL := $(FILE_CONVERTER)/HtmlFileInternal
-HTML_FILE_INTERNAL_FILES += ../core/build/lib/$(TARGET)/HtmlFileInternal$(EXEC_EXT)
-HTML_FILE_INTERNAL_FILES += ../core/Common/3dParty/cef/$(TARGET)/build/**
-
 SPELLCHECKER_DICTIONARIES := $(OUTPUT)/SpellChecker/dictionaries
 SPELLCHECKER_DICTIONARY_FILES += ../dictionaries/*_*
 
@@ -113,12 +80,10 @@ CORE_FONTS = $(OUTPUT)/../$(CORE_FONTS_DIR)/
 
 CUSTOM_PUBLIC_KEY = $(BRANDING_DIR)/licenseKey.pem
 
-.PHONY: all clean install uninstall build-date htmlfileinternal docbuilder
+.PHONY: all clean install uninstall build-date
 
 .NOTPARALLEL:
-all: $(FILE_CONVERTER) $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(CORE_FONTS) $(LICENSE) $(WELCOME) $(INFO) build-date
-
-ext: htmlfileinternal docbuilder
+all: $(SPELLCHECKER_DICTIONARIES) $(TOOLS) $(SCHEMA) $(CORE_FONTS) $(LICENSE) $(WELCOME) $(INFO) build-date
 
 build-date: $(GRUNT_FILES)
 	sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i $(COMMON_DEFINES_JS)
@@ -126,17 +91,6 @@ build-date: $(GRUNT_FILES)
 	sed "s|\(const buildDate = \).*|\1'$$(date +%F)';|" -i $(LICENSE_JS)
 	test -e $(CUSTOM_PUBLIC_KEY) && \
 	cp $(CUSTOM_PUBLIC_KEY) $(OUTPUT)/Common/sources || true
-
-htmlfileinternal: $(FILE_CONVERTER)
-	mkdir -p $(HTML_FILE_INTERNAL) && \
-		cp -r -t $(HTML_FILE_INTERNAL) $(HTML_FILE_INTERNAL_FILES)
-
-docbuilder: $(FILE_CONVERTER)
-	cp -r -t $(FILE_CONVERTER) $(DOC_BUILDER_FILES)
-
-$(FILE_CONVERTER): $(GRUNT_FILES)
-	mkdir -p $(FILE_CONVERTER) && \
-		cp -r -t $(FILE_CONVERTER) $(FILE_CONVERTER_FILES)
 
 $(SPELLCHECKER_DICTIONARIES): $(GRUNT_FILES)
 	mkdir -p $(SPELLCHECKER_DICTIONARIES) && \
@@ -158,6 +112,8 @@ $(GRUNT_FILES):
 	cd $(@D) && \
 		npm install && \
 		$(GRUNT_ENV) $(GRUNT) $(GRUNT_FLAGS)
+		mkdir -p $(OUTPUT)
+		cp -r -t $(OUTPUT) ./build/server/*
 	echo "Done" > $@
 
 $(WELCOME):
@@ -173,7 +129,7 @@ $(CORE_FONTS):
 		cp -r -t $(CORE_FONTS) $(CORE_FONTS_FILES)
 
 clean:
-	rm -rf $(CORE_FONTS) $(OUTPUT) $(GRUNT_FILES)
+	rm -rf $(GRUNT_FILES)
 
 install:
 	mkdir -pv ${DESTDIR}/var/www/onlyoffice
