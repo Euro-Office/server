@@ -113,7 +113,6 @@ function TaskQueueDataConvert(task) {
   this.themeDir = path.resolve(cfgPresentationThemesDir);
   this.mailMergeSend = cmd.mailmergesend;
   this.thumbnail = cmd.thumbnail;
-  this.doctParams = cmd.getDoctParams();
   this.jsonParams = cmd.getJsonParams();
   this.lcid = cmd.getLCID();
   this.password = cmd.getPassword();
@@ -144,7 +143,6 @@ TaskQueueDataConvert.prototype = {
     if (this.thumbnail) {
       xml += this.serializeThumbnail(this.thumbnail);
     }
-    xml += this.serializeXmlProp('m_nDoctParams', this.doctParams);
     xml += this.serializeXmlProp('m_sJsonParams', this.jsonParams);
     xml += this.serializeXmlProp('m_nLcid', this.lcid);
     xml += this.serializeXmlProp('m_oTimestamp', this.timestamp.toISOString());

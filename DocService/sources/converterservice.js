@@ -203,10 +203,8 @@ function convertRequest(req, res, isJson) {
       cmd.setDelimiter(parseIntParam(params.delimiter) || commonDefines.c_oAscCsvDelimiter.Comma);
       if(undefined != params.delimiterChar)
         cmd.setDelimiterChar(params.delimiterChar);
-      cmd.setDoctParams(parseIntParam(params.doctparams));
-      var regionalSettings = locale[params.regionalSettings];
-      if (regionalSettings) {
-        cmd.setLCID(regionalSettings.id);
+      if (params.regionalSettings && locale[params.regionalSettings.toLowerCase()]) {
+        cmd.setLCID(locale[params.regionalSettings.toLowerCase()].id);
       }
       if (params.spreadsheetLayout) {
         cmd.setJsonParams(JSON.stringify({'spreadsheetLayout': params.spreadsheetLayout}));
