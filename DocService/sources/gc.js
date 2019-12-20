@@ -115,7 +115,7 @@ var checkDocumentExpire = function() {
           if (docId) {
             var puckerIndex = yield docsCoServer.getChangesIndexPromise(docId);
             if (puckerIndex > 0) {
-              yield docsCoServer.createSaveTimerPromise(docId, null, queue, true);
+              yield docsCoServer.createSaveTimerPromise(docId, null, null, queue, true);
               startSaveCount++;
             } else {
               yield docsCoServer.cleanDocumentOnExitNoChangesPromise(docId);

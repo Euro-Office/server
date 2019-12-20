@@ -39,6 +39,7 @@ var sqlDataBaseType = {
 
 var config = require('config').get('services.CoAuthoring.sql');
 var baseConnector = (sqlDataBaseType.mySql === config.get('type')) ? require('./mySqlBaseConnector') : require('./postgreSqlBaseConnector');
+var logger = require('./../../Common/sources/logger');
 
 var tableChanges = config.get('tableChanges'),
 	tableResult = config.get('tableResult');
@@ -278,3 +279,39 @@ exports.getEmptyCallbacks = function() {
     });
   });
 };
+function UserCallback() {
+  this.userIndex = undefined;
+  this.callback = undefined;
+}
+UserCallback.prototype.fromValues = function(userIndex, callback){
+  if(null !== userIndex){
+    this.userIndex = userIndex;
+  }
+  if(null !== callback){
+    this.callback = callback;
+  }
+};
+UserCallback.prototype.delimiter = String.fromCharCode(5);
+UserCallback.prototype.toSQLInsert = function(){
+  return this.delimiter + JSON.stringify(this);
+};
+UserCallback.prototype.toSQLUpdate = function(){
+  return 'callback || ' + baseConnector.sqlEscape(this.toSQLInsert());
+};
+UserCallback.prototype.getCallbackByUserIndex = function(docId, callbacksStr, opt_userIndex) {
+  logger.debug("getCallbackByUserIndex: docId = %s userIndex = %s callbacks = %s", docId, opt_userIndex, callbacksStr);
+  if (!callbacksStr || !callbacksStr.startsWith(UserCallback.prototype.delimiter)) {
+    return callbacksStr;
+  }
+  let callbacks = callbacksStr.split(UserCallback.prototype.delimiter);
+  let callbackUrl = "";
+  for (let i = 1; i < callbacks.length; ++i) {
+    let callback = JSON.parse(callbacks[i]);
+    callbackUrl = callback.callback;
+    if (callback.userIndex === opt_userIndex) {
+      break;
+    }
+  }
+  return callbackUrl;
+};
+exports.UserCallback = UserCallback;

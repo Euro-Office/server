@@ -428,7 +428,7 @@ function* commandSendMailMerge(cmd, outputData) {
   var isErr = false;
   if (completeParts && !isJson) {
     isErr = true;
-    var getRes = yield* docsCoServer.getCallback(cmd.getDocId());
+    var getRes = yield* docsCoServer.getCallback(cmd.getDocId(), cmd.getUserIndex());
     if (getRes) {
       mailMergeSend.setUrl(getRes.server.href);
       mailMergeSend.setBaseUrl(getRes.baseUrl);
@@ -661,6 +661,10 @@ function* commandSfcCallback(cmd, isSfcm, isEncrypted) {
   var docId = cmd.getDocId();
   logger.debug('Start commandSfcCallback: docId = %s', docId);
   var statusInfo = cmd.getStatusInfo();
+  //setUserId - set from changes in convert
+  //setUserActionId - used in case of save without changes(forgotten files)
+  const userLastChangeId = cmd.getUserId() || cmd.getUserActionId();
+  const userLastChangeIndex = cmd.getUserIndex() || cmd.getUserActionIndex();
   let replyStr;
   if (constants.EDITOR_CHANGES !== statusInfo || isSfcm) {
     var saveKey = cmd.getSaveKey();
@@ -669,7 +673,7 @@ function* commandSfcCallback(cmd, isSfcm, isEncrypted) {
     var savePathDoc = saveKey + '/' + cmd.getOutputPath();
     var savePathChanges = saveKey + '/changes.zip';
     var savePathHistory = saveKey + '/changesHistory.json';
-    var getRes = yield* docsCoServer.getCallback(docId);
+    var getRes = yield* docsCoServer.getCallback(docId, userLastChangeIndex);
     var forceSave = cmd.getForceSave();
     var forceSaveType = forceSave ? forceSave.getType() : commonDefines.c_oAscForceSaveTypes.Command;
     var isSfcmSuccess = false;
@@ -722,9 +726,6 @@ function* commandSfcCallback(cmd, isSfcm, isEncrypted) {
       outputSfc.setEncrypted(isEncrypted);
       var users = [];
       let isOpenFromForgotten = false;
-      //setUserId - set from changes in convert
-      //setUserActionId - used in case of save without changes(forgotten files)
-      let userLastChangeId = cmd.getUserId() || cmd.getUserActionId();
       if (userLastChangeId) {
         users.push(userLastChangeId);
       }
@@ -887,7 +888,7 @@ function* commandSfcCallback(cmd, isSfcm, isEncrypted) {
     }
   } else {
     logger.debug('commandSfcCallback cleanDocumentOnExitNoChangesPromise: docId = %s', docId);
-    yield docsCoServer.cleanDocumentOnExitNoChangesPromise(docId, undefined, true);
+    yield docsCoServer.cleanDocumentOnExitNoChangesPromise(docId, undefined, userLastChangeIndex, true);
   }
 
   if ((docsCoServer.getIsShutdown() && !isSfcm) || cmd.getRedisKey()) {
@@ -1045,6 +1046,7 @@ exports.downloadAs = function(req, res) {
               isValidJwt = true;
               docId = doc.key;
               cmd.setDocId(doc.key);
+              cmd.setUserIndex(doc.user && doc.user.index);
             } else {
               logger.warn('Error downloadAs jwt: docId = %s\r\n%s', docId, 'access deny');
             }
@@ -1147,7 +1149,7 @@ exports.saveFile = function(req, res) {
     }
   });
 };
-exports.saveFromChanges = function(docId, statusInfo, optFormat, opt_userId, opt_queue) {
+exports.saveFromChanges = function(docId, statusInfo, optFormat, opt_userId, opt_userIndex, opt_queue) {
   return co(function* () {
     try {
       var startDate = null;
@@ -1170,6 +1172,7 @@ exports.saveFromChanges = function(docId, statusInfo, optFormat, opt_userId, opt
         cmd.setOutputFormat(optFormat);
         cmd.setStatusInfoIn(statusInfo);
         cmd.setUserActionId(opt_userId);
+        cmd.setUserActionIndex(opt_userIndex);
         yield* addRandomKeyTaskCmd(cmd);
         var queueData = getSaveTask(cmd);
         queueData.setFromChanges(true);

@@ -677,14 +677,14 @@ function parseUrl(callbackUrl) {
   return result;
 }
 
-function* getCallback(id) {
+function* getCallback(id, opt_userIndex) {
   var callbackUrl = null;
   var baseUrl = null;
   var selectRes = yield taskResult.select(id);
   if (selectRes.length > 0) {
     var row = selectRes[0];
     if (row.callback) {
-      callbackUrl = row.callback;
+      callbackUrl = sqlBase.UserCallback.prototype.getCallbackByUserIndex(id, row.callback, opt_userIndex);
     }
     if (row.baseurl) {
       baseUrl = row.baseurl;
@@ -846,17 +846,17 @@ function handleDeadLetter(data, ack) {
  * @param callback
  * @param baseUrl
  */
-function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl, opt_userData, opt_forceClose) {
-  if (!callback) {
-    var getRes = yield* getCallback(docId);
+function* sendStatusDocument(docId, bChangeBase, opt_userAction, opt_userIndex, opt_callback, opt_baseUrl, opt_userData, opt_forceClose) {
+  if (!opt_callback) {
+    var getRes = yield* getCallback(docId, opt_userIndex);
     if (getRes) {
-      callback = getRes.server;
-      if (!baseUrl) {
-        baseUrl = getRes.baseUrl;
+      opt_callback = getRes.server;
+      if (!opt_baseUrl) {
+        opt_baseUrl = getRes.baseUrl;
       }
     }
   }
-  if (null == callback) {
+  if (null == opt_callback) {
     return;
   }
 
@@ -876,8 +876,8 @@ function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl, 
       //always override callback to avoid expired callbacks
       var updateTask = new taskResult.TaskResultData();
       updateTask.key = docId;
-      updateTask.callback = callback.href;
-      updateTask.baseurl = baseUrl;
+      updateTask.callback = opt_callback.href;
+      updateTask.baseurl = opt_baseUrl;
       var updateIfRes = yield taskResult.update(updateTask);
       if (updateIfRes.affectedRows > 0) {
         logger.debug('sendStatusDocument updateIf: docId = %s', docId);
@@ -893,13 +893,13 @@ function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl, 
   if (c_oAscServerStatus.Closed !== status) {
     sendData.setUsers(participants);
   }
-  if (userAction) {
-    sendData.setActions([userAction]);
+  if (opt_userAction) {
+    sendData.setActions([opt_userAction]);
   }
   if (opt_userData) {
     sendData.setUserData(opt_userData);
   }
-  var uri = callback.href;
+  var uri = opt_callback.href;
   var replyData = null;
   try {
     replyData = yield* sendServerRequest(docId, uri, sendData);
@@ -908,7 +908,7 @@ function* sendStatusDocument(docId, bChangeBase, userAction, callback, baseUrl, 
     logger.error('postData error: docId = %s;url = %s;data = %j\r\n%s', docId, uri, sendData, err.stack);
   }
   yield* onReplySendStatusDocument(docId, replyData);
-  return callback;
+  return opt_callback;
 }
 function parseReplyData(docId, replyData) {
   var res = null;
@@ -982,8 +982,10 @@ function* bindEvents(docId, callback, baseUrl, opt_userAction, opt_userData) {
   var oCallbackUrl;
   if (!callback) {
     var getRes = yield* getCallback(docId);
-    oCallbackUrl = getRes.server;
-    bChangeBase = c_oAscChangeBase.Delete;
+    if (getRes) {
+      oCallbackUrl = getRes.server;
+      bChangeBase = c_oAscChangeBase.Delete;
+    }
   } else {
     oCallbackUrl = parseUrl(callback);
     bChangeBase = c_oAscChangeBase.All;
@@ -999,7 +1001,7 @@ function* bindEvents(docId, callback, baseUrl, opt_userAction, opt_userData) {
   if (null === oCallbackUrl) {
     return commonDefines.c_oAscServerCommandErrors.ParseError;
   } else {
-    yield* sendStatusDocument(docId, bChangeBase, opt_userAction, oCallbackUrl, baseUrl, opt_userData);
+    yield* sendStatusDocument(docId, bChangeBase, opt_userAction, undefined, oCallbackUrl, baseUrl, opt_userData);
     return commonDefines.c_oAscServerCommandErrors.NoError;
   }
 }
@@ -1016,16 +1018,16 @@ function* cleanDocumentOnExit(docId, deleteChanges) {
     yield storage.deletePath(cfgForgottenFiles + '/' + docId);
   }
 }
-function* cleanDocumentOnExitNoChanges(docId, opt_userId, opt_forceClose) {
+function* cleanDocumentOnExitNoChanges(docId, opt_userId, opt_userIndex, opt_forceClose) {
   var userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
   // Отправляем, что все ушли и нет изменений (чтобы выставить статус на сервере об окончании редактирования)
-  yield* sendStatusDocument(docId, c_oAscChangeBase.No, userAction, undefined, undefined, undefined, opt_forceClose);
+  yield* sendStatusDocument(docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
   //если пользователь зашел в документ, соединение порвалось, на сервере удалилась вся информация,
   //при восстановлении соединения userIndex сохранится и он совпадет с userIndex следующего пользователя
   yield* cleanDocumentOnExit(docId, false);
 }
 
-function* _createSaveTimer(docId, opt_userId, opt_queue, opt_noDelay) {
+function* _createSaveTimer(docId, opt_userId, opt_userIndex, opt_queue, opt_noDelay) {
   var updateMask = new taskResult.TaskResultData();
   updateMask.key = docId;
   updateMask.status = taskResult.FileStatus.Ok;
@@ -1039,7 +1041,7 @@ function* _createSaveTimer(docId, opt_userId, opt_queue, opt_noDelay) {
     }
     while (true) {
       if (!sqlBase.isLockCriticalSection(docId)) {
-        canvasService.saveFromChanges(docId, updateTask.statusInfo, null, opt_userId, opt_queue);
+        canvasService.saveFromChanges(docId, updateTask.statusInfo, null, opt_userId, opt_userIndex, opt_queue);
         break;
       }
       yield utils.sleep(c_oAscLockTimeOutDelay);
@@ -1403,6 +1405,7 @@ exports.install = function(server, callbackFunction) {
         // Для данного пользователя снимаем Lock с документа
         yield* checkEndAuthLock(true, false, docId, conn.user.id);
 
+        let userIndex = utils.getIndexFromUserId(tmpUser.id, tmpUser.idOriginal)
         // Если у нас нет пользователей, то удаляем все сообщения
         if (!bHasEditors) {
           // На всякий случай снимаем lock
@@ -1418,14 +1421,14 @@ exports.install = function(server, callbackFunction) {
           }
           if (needSaveChanges && !conn.encrypted) {
             // Send changes to save server
-            yield* _createSaveTimer(docId, tmpUser.idOriginal);
+            yield* _createSaveTimer(docId, tmpUser.idOriginal, userIndex);
           } else if (needSendStatus) {
-            yield* cleanDocumentOnExitNoChanges(docId, tmpUser.idOriginal);
+            yield* cleanDocumentOnExitNoChanges(docId, tmpUser.idOriginal, userIndex);
           } else {
             yield* cleanDocumentOnExit(docId);
           }
         } else if (needSendStatus) {
-          yield* sendStatusDocument(docId, c_oAscChangeBase.No, new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, tmpUser.idOriginal));
+          yield* sendStatusDocument(docId, c_oAscChangeBase.No, new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, tmpUser.idOriginal), userIndex);
         }
       }
     }
@@ -1891,6 +1894,9 @@ exports.install = function(server, callbackFunction) {
             openCmd.userid = user.id;
           }
         }
+        if (null != user.index) {
+          dataUser.indexUser = user.index;
+        }
         if (null != user.firstname) {
           dataUser.firstname = user.firstname;
         }
@@ -1941,6 +1947,7 @@ exports.install = function(server, callbackFunction) {
     var user = edit.user;
     user.id = conn.user.idOriginal;
     user.name = conn.user.username;
+    user.index = conn.user.indexUser;
     //no standart
     edit.ds_view = conn.user.view;
     edit.ds_isCloseCoAuthoring = conn.isCloseCoAuthoring;
@@ -1982,11 +1989,20 @@ exports.install = function(server, callbackFunction) {
         cmd.setWithAuthorization(true);
       }
       let upsertRes = null;
-      let curIndexUser;
+      let curIndexUser, documentCallback;
       if (bIsRestore) {
         // Если восстанавливаем, индекс тоже восстанавливаем
         curIndexUser = user.indexUser;
       } else {
+        if (data.documentCallbackUrl) {
+          documentCallback = url.parse(data.documentCallbackUrl);
+          let filterStatus = yield* utils.checkHostFilter(documentCallback.hostname);
+          if (0 !== filterStatus) {
+            logger.warn('checkIpFilter error: docId = %s;url = %s', docId, data.documentCallbackUrl);
+            conn.close(constants.DROP_CODE, constants.DROP_REASON);
+            return;
+          }
+        }
         upsertRes = yield canvasService.commandOpenStartPromise(docId, cmd, true, data.documentCallbackUrl, utils.getBaseUrlByConnection(conn));
 		  curIndexUser = upsertRes.affectedRows == 1 ? 1 : upsertRes.insertId;
       }
@@ -2133,7 +2149,7 @@ exports.install = function(server, callbackFunction) {
         }
       } else {
         conn.sessionId = conn.id;
-        const endAuthRes = yield* endAuth(conn, false, data.documentCallbackUrl);
+        const endAuthRes = yield* endAuth(conn, false, documentCallback);
         if (endAuthRes && cmd) {
           yield canvasService.openDocument(conn, cmd, upsertRes, bIsRestore);
         }
@@ -2141,7 +2157,7 @@ exports.install = function(server, callbackFunction) {
     }
   }
 
-  function* endAuth(conn, bIsRestore, documentCallbackUrl) {
+  function* endAuth(conn, bIsRestore, documentCallback) {
     let res = true;
     const docId = conn.docId;
     const tmpUser = conn.user;
@@ -2168,20 +2184,15 @@ exports.install = function(server, callbackFunction) {
       return false;
     }
     // Отправляем на внешний callback только для тех, кто редактирует
-    let bindEventsRes = commonDefines.c_oAscServerCommandErrors.NoError;
     if (!tmpUser.view) {
+      const userIndex = utils.getIndexFromUserId(tmpUser.id, tmpUser.idOriginal);
       const userAction = new commonDefines.OutputAction(commonDefines.c_oAscUserAction.In, tmpUser.idOriginal);
-      // Если пришла информация о ссылке для посылания информации, то добавляем
-      if (documentCallbackUrl) {
-        bindEventsRes = yield* bindEvents(docId, documentCallbackUrl, conn.baseUrl, userAction);
-      } else {
-        let callback = yield* sendStatusDocument(docId, c_oAscChangeBase.No, userAction);
-        if (!callback && !bIsRestore) {
-          //check forgotten file
-          let forgotten = yield storage.listObjects(cfgForgottenFiles + '/' + docId);
-          hasForgotten = forgotten.length > 0;
-          logger.debug('endAuth hasForgotten %s: docId = %s', hasForgotten, docId);
-        }
+      let callback = yield* sendStatusDocument(docId, c_oAscChangeBase.No, userAction, userIndex, documentCallback, conn.baseUrl);
+      if (!callback && !bIsRestore) {
+        //check forgotten file
+        let forgotten = yield storage.listObjects(cfgForgottenFiles + '/' + docId);
+        hasForgotten = forgotten.length > 0;
+        logger.debug('endAuth hasForgotten %s: docId = %s', hasForgotten, docId);
       }
     }
 
@@ -2189,63 +2200,58 @@ exports.install = function(server, callbackFunction) {
       //closing could happen during async action
       return false;
     }
-    if (commonDefines.c_oAscServerCommandErrors.NoError === bindEventsRes) {
-      let lockDocument = null;
-      let waitAuthUserId;
-      if (!bIsRestore && 2 === countNoView && !tmpUser.view) {
-        // Ставим lock на документ
-        const isLock = yield utils.promiseRedis(redisClient, redisClient.setnx,
-                                              redisKeyLockDoc + docId, JSON.stringify(firstParticipantNoView));
-        if (constants.CONN_CLOSED === conn.readyState) {
-          //closing could happen during async action
-          return false;
-        }
-        if (isLock) {
-          lockDocument = firstParticipantNoView;
-          waitAuthUserId = lockDocument.id;
-          yield* setLockDocumentTimer(docId, lockDocument.id);
-        }
-      }
-      if (!lockDocument) {
-        const getRes = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyLockDoc + docId);
-        if (getRes) {
-          const getResParsed = JSON.parse(getRes);
-          //prevent self locking
-          if (tmpUser.id !== getResParsed.id) {
-            lockDocument = getResParsed;
-          }
-        }
-      }
+    let lockDocument = null;
+    let waitAuthUserId;
+    if (!bIsRestore && 2 === countNoView && !tmpUser.view) {
+      // Ставим lock на документ
+      const isLock = yield utils.promiseRedis(redisClient, redisClient.setnx,
+                                            redisKeyLockDoc + docId, JSON.stringify(firstParticipantNoView));
       if (constants.CONN_CLOSED === conn.readyState) {
         //closing could happen during async action
         return false;
       }
-      if (lockDocument && !tmpUser.view) {
-        // Для view не ждем снятия lock-а
-        const sendObject = {
-          type: "waitAuth",
-          lockDocument: lockDocument
-        };
-        sendData(conn, sendObject);//Or 0 if fails
-      } else {
-        if (!bIsRestore) {
-          yield* sendAuthChanges(conn.docId, [conn]);
-        }
-        if (constants.CONN_CLOSED === conn.readyState) {
-          //closing could happen during async action
-          return false;
-        }
-        yield* sendAuthInfo(conn, bIsRestore, participantsMap, hasForgotten);
+      if (isLock) {
+        lockDocument = firstParticipantNoView;
+        waitAuthUserId = lockDocument.id;
+        yield* setLockDocumentTimer(docId, lockDocument.id);
       }
-      if (constants.CONN_CLOSED === conn.readyState) {
-        //closing could happen during async action
-        return false;
-      }
-      yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, userId: tmpUser.id, participantsTimestamp: participantsTimestamp, participants: participantsMap, waitAuthUserId: waitAuthUserId}, docId, tmpUser.id);
-    } else {
-      sendFileError(conn, 'ip filter');
-      res = false;
     }
+    if (!lockDocument) {
+      const getRes = yield utils.promiseRedis(redisClient, redisClient.get, redisKeyLockDoc + docId);
+      if (getRes) {
+        const getResParsed = JSON.parse(getRes);
+        //prevent self locking
+        if (tmpUser.id !== getResParsed.id) {
+          lockDocument = getResParsed;
+        }
+      }
+    }
+    if (constants.CONN_CLOSED === conn.readyState) {
+      //closing could happen during async action
+      return false;
+    }
+    if (lockDocument && !tmpUser.view) {
+      // Для view не ждем снятия lock-а
+      const sendObject = {
+        type: "waitAuth",
+        lockDocument: lockDocument
+      };
+      sendData(conn, sendObject);//Or 0 if fails
+    } else {
+      if (!bIsRestore) {
+        yield* sendAuthChanges(conn.docId, [conn]);
+      }
+      if (constants.CONN_CLOSED === conn.readyState) {
+        //closing could happen during async action
+        return false;
+      }
+      yield* sendAuthInfo(conn, bIsRestore, participantsMap, hasForgotten);
+    }
+    if (constants.CONN_CLOSED === conn.readyState) {
+      //closing could happen during async action
+      return false;
+    }
+    yield* publish({type: commonDefines.c_oPublishType.participantsState, docId: docId, userId: tmpUser.id, participantsTimestamp: participantsTimestamp, participants: participantsMap, waitAuthUserId: waitAuthUserId}, docId, tmpUser.id);
     return res;
   }
 

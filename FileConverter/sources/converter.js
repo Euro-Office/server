@@ -377,6 +377,7 @@ function* processChanges(tempDirs, cmd, authorProps) {
   fs.mkdirSync(changesDir);
   let indexFile = 0;
   let changesAuthor = null;
+  let changesIndex = null;
   let changesHistory = {
     serverVersion: commonDefines.buildVersion,
     changes: []
@@ -407,6 +408,7 @@ function* processChanges(tempDirs, cmd, authorProps) {
           streamObj = yield* streamCreate(cmd.getDocId(), changesDir, indexFile++);
         }
         changesAuthor = change.user_id_original;
+        changesIndex = utils.getIndexFromUserId(change.user_id, change.user_id_original);
         authorProps.lastModifiedBy = change.user_name;
         authorProps.modified = change.change_date.toISOString().slice(0, 19) + 'Z';
         let strDate = baseConnector.getDateTime(change.change_date);
@@ -430,6 +432,7 @@ function* processChanges(tempDirs, cmd, authorProps) {
     fs.unlinkSync(streamObj.filePath);
   }
   cmd.setUserId(changesAuthor);
+  cmd.setUserIndex(changesIndex);
   fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
   return res;
 }

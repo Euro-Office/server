@@ -770,3 +770,6 @@ function fillJwtForRequest(opt_payload) {
 }
 exports.fillJwtForRequest = fillJwtForRequest;
 exports.forwarded = forwarded;
+exports.getIndexFromUserId = function(userId, userIdOriginal){
+  return parseInt(userId.substring(userIdOriginal.length));
+};
