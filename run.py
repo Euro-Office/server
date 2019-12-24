@@ -36,7 +36,8 @@ if (True != check_nodejs_version()):
   exit(0)
 
 base.print_info('restart RabbitMQ node to prevent "Erl.exe high CPU usage every Monday morning on Windows" https://groups.google.com/forum/#!topic/rabbitmq-users/myl74gsYyYg')
-print('ToDo: restart RabbitMQ')
+base.cmd('restart-rabbit.bat')
+print('ToDo: rewrite to python')
 
 base.print_info('Build modules')
 base.cmd_in_dir('../build_tools', 'python', ['configure.py', '--branch', 'develop', '--module', 'develop', '--update', '1', '--update-light', '1', '--clean', '0', '--sdkjs-addon', 'comparison'])
