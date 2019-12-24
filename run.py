@@ -39,7 +39,8 @@ base.print_info('restart RabbitMQ node to prevent "Erl.exe high CPU usage every 
 print('ToDo: restart RabbitMQ')
 
 base.print_info('Build modules')
-print('ToDo: build_tools')
+base.cmd_in_dir('../build_tools', 'python', ['configure.py', '--branch', 'develop', '--module', 'develop', '--update', '1', '--update-light', '1', '--clean', '0', '--sdkjs-addon', 'comparison'])
+base.cmd_in_dir('../build_tools', 'python', ['make.py'])
 
 base.create_dir('App_Data')
 
