@@ -27,6 +27,10 @@ def check_nodejs_version():
 
   return True
 
+def install_module(path):
+  base.print_info('Install: ' + path)
+  base.cmd_in_dir(path, 'npm', ['install'])
+
 base.print_info('check Node.js version')
 if (True != check_nodejs_version()):
   exit(0)
@@ -42,8 +46,10 @@ base.create_dir('App_Data')
 base.create_dir('SpellChecker/dictionaries')
 base.copy_dir_content('../dictionaries', 'SpellChecker/dictionaries', '', '.git')
 
-base.print_info('Install node.js modules')
-print('ToDo: Install node.js')
+install_module('DocService')
+install_module('Common')
+install_module('FileConverter')
+install_module('SpellChecker')
 
 print('ToDo: set configs')
 print('ToDo: start')
