@@ -37,9 +37,10 @@ print('ToDo: restart RabbitMQ')
 base.print_info('Build modules')
 print('ToDo: build_tools')
 
-print('ToDo: create App_Data')
+base.create_dir('App_Data')
 
-print('ToDo: copy spellcheck dictionaries')
+base.create_dir('SpellChecker/dictionaries')
+base.copy_dir_content('../dictionaries', 'SpellChecker/dictionaries', '', '.git')
 
 base.print_info('Install node.js modules')
 print('ToDo: Install node.js')
