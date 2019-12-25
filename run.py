@@ -31,6 +31,9 @@ def install_module(path):
   base.print_info('Install: ' + path)
   base.cmd_in_dir(path, 'npm', ['install'])
 
+def run_module(directory, args=[]):
+  base.run_nodejs_in_dir(directory, args)
+
 base.print_info('check Node.js version')
 if (True != check_nodejs_version()):
   exit(0)
@@ -56,4 +59,7 @@ install_module('SpellChecker')
 base.set_env('NODE_ENV', 'development-windows')
 base.set_env('NODE_CONFIG_DIR', '../../Common/config')
 
-print('ToDo: start')
+run_module('DocService/sources', ['server.js'])
+run_module('DocService/sources', ['gc.js'])
+run_module('FileConverter/sources', ['convertermaster.js'])
+run_module('SpellChecker/sources', ['server.js'])
