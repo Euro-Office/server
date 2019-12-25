@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import sys
 sys.path.append('../build_tools/scripts')
+import os
 import base
 import subprocess
 
@@ -34,13 +35,24 @@ def install_module(path):
 def run_module(directory, args=[]):
   base.run_nodejs_in_dir(directory, args)
 
+def find_rabbitmqctl(base_path):
+  return base.find_file(os.path.join(base_path, 'RabbitMQ Server'), 'rabbitmqctl.bat')
+
+def restart_rabbit():
+  base.print_info('restart RabbitMQ node to prevent "Erl.exe high CPU usage every Monday morning on Windows" https://groups.google.com/forum/#!topic/rabbitmq-users/myl74gsYyYg')
+  rabbitmqctl = find_rabbitmqctl(os.environ['ProgramFiles']) or find_rabbitmqctl(os.environ['ProgramFiles(x86)'])
+  if rabbitmqctl is not None:
+    base.cmd_in_dir(base.get_script_dir(rabbitmqctl), 'rabbitmqctl.bat', ['stop_app'])
+    base.cmd_in_dir(base.get_script_dir(rabbitmqctl), 'rabbitmqctl.bat', ['start_app'])
+  else:
+    base.print_info('Missing rabbitmqctl.bat')
+
 base.print_info('check Node.js version')
 if (True != check_nodejs_version()):
   exit(0)
 
-base.print_info('restart RabbitMQ node to prevent "Erl.exe high CPU usage every Monday morning on Windows" https://groups.google.com/forum/#!topic/rabbitmq-users/myl74gsYyYg')
-base.cmd('restart-rabbit.bat')
-print('ToDo: rewrite to python')
+if ("windows" == host_platform()):
+  restart_rabbit()
 
 base.print_info('Build modules')
 base.cmd_in_dir('../build_tools', 'python', ['configure.py', '--branch', 'develop', '--module', 'develop', '--update', '1', '--update-light', '1', '--clean', '0', '--sdkjs-addon', 'comparison'])
