@@ -48,11 +48,7 @@ def restart_rabbit():
     base.print_info('Missing rabbitmqctl.bat')
 
 def run_integration_example():
-  path = '../document-server-integration/web/documentserver-example/nodejs'
-  install_module(path)
-  base.set_env('NODE_CONFIG_DIR', '../config')
-  base.print_info('run integration example')
-  run_module(os.path.join(path, 'bin'), ['www'])
+  base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
 
 base.set_env('NODE_ENV', 'development-windows')
 
