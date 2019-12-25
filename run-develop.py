@@ -47,6 +47,17 @@ def restart_rabbit():
   else:
     base.print_info('Missing rabbitmqctl.bat')
 
+def run_integration_example():
+  base.print_info('run integration example')
+  path = '../document-server-integration/web/documentserver-example/nodejs';
+  install_module(path)
+  base.set_env('NODE_CONFIG_DIR', '../config')
+  run_module(os.path.join(path, 'bin'), ['www'])
+
+base.set_env('NODE_ENV', 'development-windows')
+
+run_integration_example()
+
 base.print_info('check Node.js version')
 if (True != check_nodejs_version()):
   exit(0)
