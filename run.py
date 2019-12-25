@@ -53,5 +53,7 @@ install_module('Common')
 install_module('FileConverter')
 install_module('SpellChecker')
 
-print('ToDo: set configs')
+base.set_env('NODE_ENV', 'development-windows')
+base.set_env('NODE_CONFIG_DIR', '../../Common/config')
+
 print('ToDo: start')
