@@ -51,7 +51,7 @@ base.print_info('check Node.js version')
 if (True != check_nodejs_version()):
   exit(0)
 
-if ("windows" == host_platform()):
+if ("windows" == base.host_platform()):
   restart_rabbit()
 
 base.print_info('Build modules')
