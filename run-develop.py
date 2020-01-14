@@ -54,7 +54,8 @@ base.print_info('check Node.js version')
 if (True != check_nodejs_version()):
   exit(0)
 
-if ("windows" == base.host_platform()):
+platform = base.host_platform()
+if ("windows" == platform):
   restart_rabbit()
 
 base.print_info('Build modules')
@@ -73,7 +74,7 @@ install_module('Common')
 install_module('FileConverter')
 install_module('SpellChecker')
 
-base.set_env('NODE_ENV', 'development-windows')
+base.set_env('NODE_ENV', 'development-' + platform)
 base.set_env('NODE_CONFIG_DIR', '../../Common/config')
 
 run_module('DocService/sources', ['server.js'])
