@@ -38,7 +38,7 @@ def run_module(directory, args=[]):
 def find_rabbitmqctl(base_path):
   return base.find_file(os.path.join(base_path, 'RabbitMQ Server'), 'rabbitmqctl.bat')
 
-def restart_rabbit():
+def restart_win_rabbit():
   base.print_info('restart RabbitMQ node to prevent "Erl.exe high CPU usage every Monday morning on Windows" https://groups.google.com/forum/#!topic/rabbitmq-users/myl74gsYyYg')
   rabbitmqctl = find_rabbitmqctl(os.environ['ProgramFiles']) or find_rabbitmqctl(os.environ['ProgramFiles(x86)'])
   if rabbitmqctl is not None:
@@ -46,6 +46,12 @@ def restart_rabbit():
     base.cmd_in_dir(base.get_script_dir(rabbitmqctl), 'rabbitmqctl.bat', ['start_app'])
   else:
     base.print_info('Missing rabbitmqctl.bat')
+
+def start_mac_services():
+  base.print_info('Start RabbitMQ Server')
+  base.cmd('rabbitmq-server')
+  base.print_info('Start Redis')
+  base.cmd('redis-server')
 
 def run_integration_example():
   base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
@@ -56,7 +62,9 @@ if (True != check_nodejs_version()):
 
 platform = base.host_platform()
 if ("windows" == platform):
-  restart_rabbit()
+  restart_win_rabbit()
+elif ("mac" == host_platform()):
+  start_mac_services()
 
 base.print_info('Build modules')
 base.cmd_in_dir('../build_tools', 'python', ['configure.py', '--branch', 'develop', '--module', 'develop', '--update', '1', '--update-light', '1', '--clean', '0', '--sdkjs-addon', 'comparison'])
