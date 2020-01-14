@@ -50,10 +50,6 @@ def restart_rabbit():
 def run_integration_example():
   base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
 
-base.set_env('NODE_ENV', 'development-windows')
-
-run_integration_example()
-
 base.print_info('check Node.js version')
 if (True != check_nodejs_version()):
   exit(0)
@@ -64,6 +60,8 @@ if ("windows" == base.host_platform()):
 base.print_info('Build modules')
 base.cmd_in_dir('../build_tools', 'python', ['configure.py', '--branch', 'develop', '--module', 'develop', '--update', '1', '--update-light', '1', '--clean', '0', '--sdkjs-addon', 'comparison'])
 base.cmd_in_dir('../build_tools', 'python', ['make.py'])
+
+run_integration_example()
 
 base.create_dir('App_Data')
 
