@@ -49,9 +49,9 @@ def restart_win_rabbit():
 
 def start_mac_services():
   base.print_info('Start RabbitMQ Server')
-  base.cmd('rabbitmq-server')
+  base.run_process(['rabbitmq-server'])
   base.print_info('Start Redis')
-  base.cmd('redis-server')
+  base.run_process(['redis-server'])
 
 def run_integration_example():
   base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
@@ -63,7 +63,7 @@ if (True != check_nodejs_version()):
 platform = base.host_platform()
 if ("windows" == platform):
   restart_win_rabbit()
-elif ("mac" == host_platform()):
+elif ("mac" == platform):
   start_mac_services()
 
 base.print_info('Build modules')
