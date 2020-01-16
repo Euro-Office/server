@@ -48,6 +48,8 @@ def restart_win_rabbit():
     base.print_info('Missing rabbitmqctl.bat')
 
 def start_mac_services():
+  base.print_info('Restart MySQL Server')
+  base.run_process(['mysql.server', 'restart'])
   base.print_info('Start RabbitMQ Server')
   base.run_process(['rabbitmq-server'])
   base.print_info('Start Redis')
