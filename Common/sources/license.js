@@ -44,7 +44,7 @@ const redisClient = pubsubRedis.getClientRedis();
 
 const buildDate = '6/29/2016';
 const oBuildDate = new Date(buildDate);
-const oPackageType = constants.PACKAGE_TYPE_OS;
+const oPackageType = configL.get('packageType');
 
 const cfgRedisPrefix = config.get('services.CoAuthoring.redis.prefix');
 const redisKeyLicense = cfgRedisPrefix + ((constants.PACKAGE_TYPE_OS === oPackageType) ? constants.REDIS_KEY_LICENSE :
