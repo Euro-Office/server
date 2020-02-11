@@ -47,7 +47,8 @@
   },
   "license": {
     "license_file": "./../../license.lic",
-    "warning_limit_percents": "70"
+    "warning_limit_percents": 70,
+    "packageType": 0
   },
   "FileConverter": {
     "converter": {
