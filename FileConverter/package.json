@@ -16,6 +16,7 @@
       "../Common/sources/storage-s3.js"
     ],
     "assets": [
+      "../Common/sources/licenseKey.pem",
       "../DocService/node_modules/pg-escape/reserved.txt"
     ]
   }
