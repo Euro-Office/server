@@ -3,23 +3,44 @@
   "version": "0.0.0",
   "homepage": "http://www.teamlab.com",
   "private": true,
-  "build": {
-    "src": [
-      "./**/sources/*.js",
-      "./Common/package.json",
-      "./DocService/package.json",
-      "./DocService/public/healthcheck.docx",
-      "./FileConverter/package.json",
-      "./FileConverter/bin/DoctRenderer.config",
-      "./Metrics/package.json",
-      "./SpellChecker/package.json",
-      "./Common/config/*.json",
-      "./Common/config/log4js/*.json",
-      "./Common/sources/licenseKey.pem",
-      "./Metrics/config/config.js"
-    ],
-    "dest": "./build/server"
+  "grunt": {
+    "copy": {
+      "server": {
+        "expand": true,
+        "src": [
+          "./**/sources/*.js",
+          "./Common/package.json",
+          "./DocService/package.json",
+          "./DocService/public/healthcheck.docx",
+          "./FileConverter/package.json",
+          "./FileConverter/bin/DoctRenderer.config",
+          "./Metrics/package.json",
+          "./SpellChecker/package.json",
+          "./Common/config/*.json",
+          "./Common/config/log4js/*.json",
+          "./Common/sources/licenseKey.pem",
+          "./Metrics/config/config.js"
+        ],
+        "dest": "./build/server"
+      }     
+    },
+    "clean": {
+      "options": {
+        "force": true        
+      },
+      "server": "./build/server"
+    },
+    "mkdir": {
+      "server": {
+        "options": {
+          "create": [
+            "./build/server"
+          ]
+        }
+      }
+    }
   },
+
   "postprocess": {
     "src": [
       "./build/server/**/sources/*.js"
