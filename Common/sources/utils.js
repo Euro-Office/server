@@ -233,24 +233,7 @@ function getContentDisposition (opt_filename, opt_useragent, opt_type) {
   }
   return contentDisposition;
 }
-function getContentDispositionS3 (opt_filename, opt_useragent, opt_type) {
-  var contentDisposition = opt_type ? opt_type : constants.CONTENT_DISPOSITION_ATTACHMENT;
-  if (opt_filename) {
-    contentDisposition += ';';
-    if (opt_useragent != null && -1 != opt_useragent.toLowerCase().indexOf('android')) {
-      contentDisposition += ' filename=' + makeAndroidSafeFileName(opt_filename);
-    } else {
-      if (containsAllAsciiNP(opt_filename)) {
-        contentDisposition += ' filename=' + opt_filename;
-      } else {
-        contentDisposition += ' filename*=UTF-8\'\'' + encodeRFC5987ValueChars(opt_filename);
-      }
-    }
-  }
-  return contentDisposition;
-}
 exports.getContentDisposition = getContentDisposition;
-exports.getContentDispositionS3 = getContentDispositionS3;
 function raiseError(ro, code, msg) {
   ro.abort();
   let error = new Error(msg);
