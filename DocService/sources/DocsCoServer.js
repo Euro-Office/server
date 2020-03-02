@@ -2348,7 +2348,8 @@ exports.install = function(server, callbackFunction) {
     const startIndex = puckerIndex;
 
     const newChanges = JSON.parse(data.changes);
-    let newChangesLastTime = null;
+    let newChangesLastDate = new Date();
+    let newChangesLastTime = Date.now();
     let arrNewDocumentChanges = [];
     logger.info("saveChanges docid: %s ; deleteIndex: %s ; startIndex: %s ; length: %s", docId, deleteIndex, startIndex, newChanges.length);
     if (0 < newChanges.length) {
@@ -2356,8 +2357,7 @@ exports.install = function(server, callbackFunction) {
 
       for (let i = 0; i < newChanges.length; ++i) {
         oElement = newChanges[i];
-        newChangesLastTime = Date.now();
-        arrNewDocumentChanges.push({docid: docId, change: JSON.stringify(oElement), time: newChangesLastTime,
+        arrNewDocumentChanges.push({docid: docId, change: JSON.stringify(oElement), time: newChangesLastDate,
           user: userId, useridoriginal: conn.user.idOriginal});
       }
 
