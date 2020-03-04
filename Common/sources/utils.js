@@ -352,9 +352,11 @@ exports.mapAscServerErrorToOldError = function(error) {
     case constants.CONVERT_DEAD_LETTER :
       res = -2;
       break;
+    case constants.CONVERT_PARAMS :
+      res = -7;
+      break;
     case constants.CONVERT_LIMITS :
     case constants.CONVERT_NEED_PARAMS :
-    case constants.CONVERT_PARAMS :
     case constants.CONVERT_LIBREOFFICE :
     case constants.CONVERT_CORRUPTED :
     case constants.CONVERT_UNKNOWN_FORMAT :
@@ -753,3 +755,22 @@ function fillJwtForRequest(opt_payload) {
 }
 exports.fillJwtForRequest = fillJwtForRequest;
 exports.forwarded = forwarded;
+exports.getIndexFromUserId = function(userId, userIdOriginal){
+  return parseInt(userId.substring(userIdOriginal.length));
+};
+exports.getConnectionInfo = function(conn){
+    var user = conn.user;
+    var data = {
+      id: user.id,
+      idOriginal: user.idOriginal,
+      username: user.username,
+      indexUser: user.indexUser,
+      view: user.view,
+      connectionId: conn.id,
+      isCloseCoAuthoring: conn.isCloseCoAuthoring
+    };
+    return data;
+};
+exports.getConnectionInfoStr = function(conn){
+  return JSON.stringify(exports.getConnectionInfo(conn));
+};

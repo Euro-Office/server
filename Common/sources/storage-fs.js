@@ -172,6 +172,7 @@ exports.getSignedUrl = function(baseUrl, strPath, urlType, optFilename, opt_type
     url += '?md5=' + encodeURIComponent(md5);
     url += '&expires=' + encodeURIComponent(expires);
     url += '&disposition=' + encodeURIComponent(utils.getContentDisposition(null, null, opt_type));
-    resolve(utils.changeOnlyOfficeUrl(url, strPath, optFilename));
+    url += '&filename=' + userFriendlyName;
+    resolve(url);
   });
 };

@@ -3,11 +3,17 @@
   "version": "1.0.1",
   "homepage": "http://www.onlyoffice.com",
   "private": true,
+  "bin": "sources/server.js",
   "dependencies": {
     "co": "^4.6.0",
     "config": "^2.0.1",
     "express": "^4.16.4",
     "nodehun": "git+https://git@github.com/ONLYOFFICE/nodehun.git#c9ba32e5ff117ecc51e8e119c0753a021e519113",
     "sockjs": "^0.3.19"
+  },
+  "pkg": {
+    "assets": [
+      "dictionaries/**/*"
+    ]
   }
 }

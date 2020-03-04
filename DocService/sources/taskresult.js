@@ -127,7 +127,9 @@ function toUpdateArray(task, updateTime) {
     res.push('change_id=' + sqlBase.baseConnector.sqlEscape(task.changeId));
   }
   if (null != task.callback) {
-    res.push('callback=' + sqlBase.baseConnector.sqlEscape(task.callback));
+    var userCallback = new sqlBase.UserCallback();
+    userCallback.fromValues(task.indexUser, task.callback);
+    res.push('callback=' + userCallback.toSQLUpdate());
   }
   if (null != task.baseurl) {
     res.push('baseurl=' + sqlBase.baseConnector.sqlEscape(task.baseurl));

@@ -80,8 +80,8 @@ var MAX_OPEN_FILES = 200;
 var TEMP_PREFIX = 'ASC_CONVERT';
 var queue = null;
 var clientStatsD = statsDClient.getClient();
-var exitCodesReturn = [constants.CONVERT_NEED_PARAMS, constants.CONVERT_CORRUPTED, constants.CONVERT_DRM,
-  constants.CONVERT_PASSWORD, constants.CONVERT_LIMITS];
+var exitCodesReturn = [constants.CONVERT_PARAMS, constants.CONVERT_NEED_PARAMS, constants.CONVERT_CORRUPTED,
+  constants.CONVERT_DRM, constants.CONVERT_PASSWORD, constants.CONVERT_LIMITS];
 var exitCodesMinorError = [constants.CONVERT_NEED_PARAMS, constants.CONVERT_DRM, constants.CONVERT_PASSWORD];
 var exitCodesUpload = [constants.NO_ERROR, constants.CONVERT_CORRUPTED, constants.CONVERT_NEED_PARAMS,
   constants.CONVERT_DRM];
@@ -377,6 +377,7 @@ function* processChanges(tempDirs, cmd, authorProps) {
   fs.mkdirSync(changesDir);
   let indexFile = 0;
   let changesAuthor = null;
+  let changesIndex = null;
   let changesHistory = {
     serverVersion: commonDefines.buildVersion,
     changes: []
@@ -407,6 +408,7 @@ function* processChanges(tempDirs, cmd, authorProps) {
           streamObj = yield* streamCreate(cmd.getDocId(), changesDir, indexFile++);
         }
         changesAuthor = change.user_id_original;
+        changesIndex = utils.getIndexFromUserId(change.user_id, change.user_id_original);
         authorProps.lastModifiedBy = change.user_name;
         authorProps.modified = change.change_date.toISOString().slice(0, 19) + 'Z';
         let strDate = baseConnector.getDateTime(change.change_date);
@@ -430,6 +432,7 @@ function* processChanges(tempDirs, cmd, authorProps) {
     fs.unlinkSync(streamObj.filePath);
   }
   cmd.setUserId(changesAuthor);
+  cmd.setUserIndex(changesIndex);
   fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
   return res;
 }

@@ -3,9 +3,15 @@
   "version": "1.0.1",
   "homepage": "http://www.onlyoffice.com",
   "private": true,
+  "bin": {
+    "docservice": "sources/server.js",
+    "gc": "sources/gc.js",
+    "prepare4shutdown": "sources/shutdown.js"
+  },
   "dependencies": {
     "base64-stream": "^1.0.0",
     "body-parser": "^1.18.3",
+    "bytes": "^3.0.0",
     "co": "^4.6.0",
     "config": "^2.0.1",
     "cron": "^1.5.0",
@@ -26,5 +32,18 @@
     "sockjs": "^0.3.19",
     "underscore": "^1.9.1",
     "windows-locale": "^1.0.1"
+  },
+  "pkg": {
+    "scripts": [
+      "./sources/editorDataMemory.js",
+      "./sources/editorDataRedis.js",
+      "./sources/pubsubRabbitMQ.js",
+      "../Common/sources/storage-fs.js",
+      "../Common/sources/storage-s3.js"
+    ],
+    "assets": [
+      "../Common/sources/licenseKey.pem",
+      "node_modules/pg-escape/reserved.txt"
+    ]
   }
 }

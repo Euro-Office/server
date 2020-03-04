@@ -1,10 +1,10 @@
 {
   "log": {
-    "filePath": "../../../config/log4js/production.json"
+    "filePath": "../../config/log4js/production.json"
   },
   "storage": {
     "fs": {
-      "folderPath": "../../App_Data/cache/files"
+      "folderPath": "../App_Data/cache/files"
     }
   },
   "services": {
@@ -12,27 +12,27 @@
       "server": {
         "static_content": {
           "/fonts": {
-            "path": "../../../fonts",
+            "path": "../../fonts",
             "options": {"maxAge": "7d"}
           },
           "/sdkjs": {
-            "path": "../../../sdkjs",
+            "path": "../../sdkjs",
             "options": {"maxAge": "7d"}
           },
           "/web-apps": {
-            "path": "../../../web-apps",
+            "path": "../../web-apps",
             "options": {"maxAge": "7d"}
           },
           "/sdkjs-plugins": {
-            "path": "../../../sdkjs-plugins",
+            "path": "../../sdkjs-plugins",
             "options": {"maxAge": "7d"}
           },
           "/welcome": {
-            "path": "../../welcome",
+            "path": "../welcome",
             "options": {"maxAge": "7d"}
           },
           "/info": {
-            "path": "../../info",
+            "path": "../info",
             "options": {"maxAge": "7d"}
           }
         }
@@ -46,16 +46,22 @@
     }
   },
   "license": {
-    "license_file": "./../../license.lic",
-    "warning_limit_percents": "70"
+    "license_file": "./../license.lic",
+    "warning_limit_percents": 70,
+    "packageType": 0
   },
   "FileConverter": {
     "converter": {
       "fontDir": "",
-      "presentationThemesDir": "../../../sdkjs/slide/themes",
-      "x2tPath": "../../FileConverter/bin/x2t.exe",
-      "docbuilderPath": "../../FileConverter/bin/docbuilder.exe",
-      "docbuilderAllFontsPath": "../../App_Data/docbuilder/AllFonts.js"
+      "presentationThemesDir": "../../sdkjs/slide/themes",
+      "x2tPath": "../FileConverter/bin/x2t.exe",
+      "docbuilderPath": "../FileConverter/bin/docbuilder.exe",
+      "docbuilderAllFontsPath": "../App_Data/docbuilder/AllFonts.js"
+    }
+  },
+  "SpellChecker": {
+    "server": {
+      "dictDir": "./dictionaries"
     }
   }
 }

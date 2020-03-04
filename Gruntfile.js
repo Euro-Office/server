@@ -29,10 +29,52 @@
  * terms at http://creativecommons.org/licenses/by-sa/4.0/legalcode
  *
  */
-
+const path = require('path');
+const _ = require('lodash');
 var packageFile = require('./package.json');
 
 module.exports = function (grunt) {
+  
+  let addons = grunt.option('addon') || [];
+  if (!Array.isArray(addons))
+      addons = [addons];
+
+  addons.forEach((element,index,self) => self[index] = path.join('..', element));
+  addons = addons.filter(element => grunt.file.isDir(element));
+
+  function _merge(target, ...sources) {
+    if (!sources.length) return target;
+      const source = sources.shift();
+
+    for (const key in source) {
+      if (_.isObject(source[key])) {
+        if (_.isArray(source[key])) {
+          if (!_.isArray(target[key])){
+            target[key]=[];
+          }
+          target[key].push(...source[key])
+        }
+        else { 
+          if (!target[key]) {
+            Object.assign(target, { [key]: {} }); 
+          }
+          _merge(target[key], source[key]);
+        }
+      } 
+      else {
+        Object.assign(target, { [key]: source[key] });
+      }
+    }
+  }
+  addons.forEach(element => {
+    let _path = path.join(element, 'package.json');
+    if (grunt.file.exists(_path)) {
+        _merge(packageFile, require(_path));
+        grunt.log.ok('addon '.green + element + ' is merged successfully'.green);
+    }
+  });
+
+  //grunt.file.write("package-test.json", JSON.stringify(packageFile, null, 4));
 
   var checkDependencies = {};
    
@@ -47,28 +89,9 @@ module.exports = function (grunt) {
   }
   
   grunt.initConfig({
-    pkg: grunt.file.readJSON('package.json'),
-    
-    clean: {
-      options: {
-        force: true        
-      },
-      build: packageFile.build.dest
-    },
-    mkdir: {
-      build: {
-        options: {
-          create: [packageFile.build.dest]
-        },
-      },
-    },
-    copy: {
-      main: {
-          expand: true,
-          src: packageFile.build.src,
-          dest: packageFile.build.dest
-      }
-    },    
+    clean: packageFile.grunt.clean,
+    mkdir: packageFile.grunt.mkdir,
+    copy: packageFile.grunt.copy,    
     comments: {
       js: {
         options: {

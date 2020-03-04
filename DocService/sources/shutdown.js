@@ -35,41 +35,33 @@ var config = require('config');
 var configCoAuthoring = config.get('services.CoAuthoring');
 var co = require('co');
 var logger = require('./../../Common/sources/logger');
-var pubsubService = require('./' + configCoAuthoring.get('pubsub.name'));
-var pubsubRedis = require('./pubsubRedis.js');
+var pubsubService = require('./pubsubRabbitMQ');
 var commonDefines = require('./../../Common/sources/commondefines');
 var constants = require('./../../Common/sources/constants');
 var utils = require('./../../Common/sources/utils');
 
 var cfgRedisPrefix = configCoAuthoring.get('redis.prefix');
 var redisKeyShutdown = cfgRedisPrefix + constants.REDIS_KEY_SHUTDOWN;
-var redisKeyDocuments = cfgRedisPrefix + constants.REDIS_KEY_DOCUMENTS;
 
 var WAIT_TIMEOUT = 30000;
 var LOOP_TIMEOUT = 1000;
 var EXEC_TIMEOUT = WAIT_TIMEOUT + utils.CONVERTION_TIMEOUT;
 
-(function shutdown() {
-  return co(function* () {
-    var exitCode = 0;
+exports.shutdown = function(editorData, status) {
+  return co(function*() {
+    var res = true;
     try {
-      logger.debug('shutdown start' + EXEC_TIMEOUT);
+      logger.debug('shutdown start:' + EXEC_TIMEOUT);
 
-      var redisClient = pubsubRedis.getClientRedis();
       //redisKeyShutdown не простой счетчик, чтобы его не уменьшала сборка, которая началась перед запуском Shutdown
       //сбрасываем redisKeyShutdown на всякий случай, если предыдущий запуск не дошел до конца
-      var multi = redisClient.multi([
-        ['del', redisKeyShutdown],
-        ['zcard', redisKeyDocuments]
-      ]);
-      var multiRes = yield utils.promiseRedis(multi, multi.exec);
-      logger.debug('number of open documents %d', multiRes[1]);
+      yield editorData.cleanupShutdown(redisKeyShutdown);
 
       var pubsub = new pubsubService();
       yield pubsub.initPromise();
       //inner ping to update presence
       logger.debug('shutdown pubsub shutdown message');
-      pubsub.publish(JSON.stringify({type: commonDefines.c_oPublishType.shutdown}));
+      pubsub.publish(JSON.stringify({type: commonDefines.c_oPublishType.shutdown, status: status}));
       //wait while pubsub deliver and start conversion
       logger.debug('shutdown start wait pubsub deliver');
       var startTime = new Date().getTime();
@@ -79,12 +71,12 @@ var EXEC_TIMEOUT = WAIT_TIMEOUT + utils.CONVERTION_TIMEOUT;
         if (isStartWait && curTime >= WAIT_TIMEOUT) {
           isStartWait = false;
           logger.debug('shutdown stop wait pubsub deliver');
-        } else if(curTime >= EXEC_TIMEOUT) {
-          exitCode = 1;
+        } else if (curTime >= EXEC_TIMEOUT) {
+          res = false;
           logger.debug('shutdown timeout');
           break;
         }
-        var remainingFiles = yield utils.promiseRedis(redisClient, redisClient.scard, redisKeyShutdown);
+        var remainingFiles = yield editorData.getShutdownCount(redisKeyShutdown);
         logger.debug('shutdown remaining files:%d', remainingFiles);
         if (!isStartWait && remainingFiles <= 0) {
           break;
@@ -93,14 +85,14 @@ var EXEC_TIMEOUT = WAIT_TIMEOUT + utils.CONVERTION_TIMEOUT;
       }
       //todo надо проверять очереди, потому что могут быть долгие конвертации запущенные до Shutdown
       //clean up
-      yield utils.promiseRedis(redisClient, redisClient.del, redisKeyShutdown);
+      yield editorData.cleanupShutdown(redisKeyShutdown);
       yield pubsub.close();
 
       logger.debug('shutdown end');
     } catch (e) {
+      res = false;
       logger.error('shutdown error:\r\n%s', e.stack);
-    } finally {
-      process.exit(exitCode);
     }
+    return res;
   });
-})();
+};

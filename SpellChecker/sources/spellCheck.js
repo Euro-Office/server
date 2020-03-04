@@ -43,7 +43,7 @@ const languages = require('./languages');
 const allLanguages = languages.allLanguages;
 const path = require('path');
 const arrExistDictionaries = {};
-const pathDictionaries = path.join(__dirname, '../dictionaries');
+const pathDictionaries = require('config').get('SpellChecker.server.dictDir');
 const arrDictionaries = {};
 
 function spell(type, word, id) {

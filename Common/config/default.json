@@ -83,11 +83,12 @@
 				"forgottenfiles": "forgotten",
 				"forgottenfilesname": "output",
 				"maxRequestChanges": 20000,
-				"openProtectedFile": true
+				"openProtectedFile": true,
+				"editorDataStorage": "editorDataMemory"
 			},
 			"requestDefaults": {
 				"headers": {
-					"userAgent": "Node.js/6.13"
+					"User-Agent": "Node.js/6.13"
 				},
 				"rejectUnauthorized": true
 			},
@@ -123,7 +124,6 @@
 				"options": {}
 			},
 			"pubsub": {
-				"name": "pubsubRabbitMQ",
 				"maxChanges": 1000
 			},
 			"expire": {
@@ -195,7 +195,8 @@
 				"reconnection":{
 					"attempts": 50,
 					"delay": "2s"
-				}
+				},
+				"websocketMaxPayloadSize": "1.5MB"
 			},
 			"sockjs": {
 				"sockjs_url": "",
@@ -215,7 +216,8 @@
 	},
 	"license" : {
 		"license_file": "",
-		"warning_limit_percents": "70"
+		"warning_limit_percents": 70,
+		"packageType": 0
 	},
 	"FileConverter": {
 		"converter": {

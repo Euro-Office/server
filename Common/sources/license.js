@@ -39,16 +39,18 @@ const configL = config.get('license');
 const constants = require('./constants');
 const logger = require('./logger');
 const utils = require('./utils');
-const pubsubRedis = require('./../../DocService/sources/pubsubRedis');
-const redisClient = pubsubRedis.getClientRedis();
+const path = require('path');
+const editorDataStorage = require('./../../DocService/sources/' + config.get('services.CoAuthoring.server.editorDataStorage'));
 
 const buildDate = '6/29/2016';
 const oBuildDate = new Date(buildDate);
-const oPackageType = constants.PACKAGE_TYPE_OS;
+const oPackageType = configL.get('packageType');
 
 const cfgRedisPrefix = config.get('services.CoAuthoring.redis.prefix');
 const redisKeyLicense = cfgRedisPrefix + ((constants.PACKAGE_TYPE_OS === oPackageType) ? constants.REDIS_KEY_LICENSE :
 	constants.REDIS_KEY_LICENSE_T);
+
+let editorData = new editorDataStorage();
 
 exports.readLicense = function*() {
 	const c_LR = constants.LICENSE_RESULT;
@@ -80,7 +82,7 @@ exports.readLicense = function*() {
 
 		const verify = crypto.createVerify('RSA-SHA1');
 		verify.update(JSON.stringify(oLicense));
-		if (verify.verify(fs.readFileSync('./../../Common/sources/licenseKey.pem'), sign, 'hex')) {
+		if (verify.verify(fs.readFileSync(path.join(__dirname, './licenseKey.pem')), sign, 'hex')) {
 			const endDate = new Date(oLicense['end_date']);
 			res.endDate = endDate;
 			const isTrial = (true === oLicense['trial'] || 'true' === oLicense['trial']); // Someone who likes to put json string instead of bool
@@ -154,7 +156,7 @@ function getLicenseMode(mode) {
 }
 
 function* _getFileState(res) {
-	const val = yield utils.promiseRedis(redisClient, redisClient.hget, redisKeyLicense, redisKeyLicense);
+	const val = yield editorData.getLicense(redisKeyLicense);
 	if (constants.PACKAGE_TYPE_OS === oPackageType) {
 		return val;
 	}
@@ -171,5 +173,5 @@ function* _getFileState(res) {
 }
 function* _updateFileState(state) {
 	const val = constants.PACKAGE_TYPE_OS === oPackageType ? redisKeyLicense : (state ? new Date(1) : new Date());
-	yield utils.promiseRedis(redisClient, redisClient.hset, redisKeyLicense, redisKeyLicense, val);
+	yield editorData.setLicense(redisKeyLicense, val);
 }

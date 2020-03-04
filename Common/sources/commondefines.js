@@ -41,6 +41,7 @@ function InputCommand(data, copyExplicit) {
     this['c'] = data['c'];
     this['id'] = data['id'];
     this['userid'] = data['userid'];
+    this['userindex'] = data['userindex'];
     this['tokenSession'] = data['tokenSession'];
     this['tokenDownload'] = data['tokenDownload'];
     this['tokenHistory'] = data['tokenHistory'];
@@ -75,6 +76,7 @@ function InputCommand(data, copyExplicit) {
     this['jsonparams'] = data['jsonparams'];
     this['lcid'] = data['lcid'];
     this['useractionid'] = data['useractionid'];
+    this['useractionindex'] = data['useractionindex'];
     if (data['forcesave']) {
       this['forcesave'] = new CForceSaveData(data['forcesave']);
     } else {
@@ -99,6 +101,7 @@ function InputCommand(data, copyExplicit) {
     this['c'] = undefined;//string command
     this['id'] = undefined;//string document id
     this['userid'] = undefined;//string
+    this['userindex'] = undefined;
     this['tokenSession'] = undefined;//string validate
     this['tokenDownload'] = undefined;//string validate
     this['tokenHistory'] = undefined;//string validate
@@ -129,6 +132,7 @@ function InputCommand(data, copyExplicit) {
     this['jsonparams'] = undefined;//string
     this['lcid'] = undefined;
     this['useractionid'] = undefined;
+    this['useractionindex'] = undefined;
     this['forcesave'] = undefined;
     this['userdata'] = undefined;
     this['inline'] = undefined;//content disposition
@@ -145,6 +149,9 @@ function InputCommand(data, copyExplicit) {
   }
 }
 InputCommand.prototype = {
+  fillFromConnection: function(conn) {
+    this['id'] = conn.docId;
+  },
   getCommand: function() {
     return this['c'];
   },
@@ -162,6 +169,12 @@ InputCommand.prototype = {
   },
   setUserId: function(data) {
     this['userid'] = data;
+  },
+  getUserIndex: function() {
+    return this['userindex'];
+  },
+  setUserIndex: function(data) {
+    this['userindex'] = data;
   },
   getTokenSession: function() {
     return this['tokenSession'];
@@ -309,6 +322,12 @@ InputCommand.prototype = {
   },
   setUserActionId: function(data) {
     this['useractionid'] = data;
+  },
+  getUserActionIndex: function() {
+    return this['useractionindex'];
+  },
+  setUserActionIndex: function(data) {
+    this['useractionindex'] = data;
   },
   getForceSave: function() {
     return this['forcesave'];
