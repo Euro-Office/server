@@ -147,7 +147,7 @@ docsCoServer.install(server, () => {
 			commonDefines.buildNumber);
 	});
 	const rawFileParser = bodyParser.raw(
-		{inflate: true, limit: config.get('server.limits_tempfile_upload'), type: '*/*'});
+		{inflate: true, limit: config.get('server.limits_tempfile_upload'), type: function() {return true;}});
 
 	app.get('/coauthoring/CommandService.ashx', utils.checkClientIp, rawFileParser, docsCoServer.commandFromServer);
 	app.post('/coauthoring/CommandService.ashx', utils.checkClientIp, rawFileParser,
