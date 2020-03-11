@@ -10,7 +10,7 @@
   "services": {
     "CoAuthoring": {
       "server": {
-        "port": 8080,
+        "port": 8001,
         "static_content": {
           "/fonts": {
             "path": "../../../fonts"
@@ -36,7 +36,7 @@
         "dbPass": "onlyoffice"
       },
       "editor": {
-        "spellcheckerUrl": ""
+        "spellcheckerUrl": "http://127.0.0.1:8080"
       },
       "sockjs": {
         "sockjs_url": "/office/vendor/sockjs/sockjs.min.js"
@@ -52,7 +52,7 @@
     "converter": {
       "fontDir": "",
       "presentationThemesDir": "../../../OfficeWeb/PowerPoint/themes",
-      "x2tPath": "../../FileConverter/Bin/x2t",
+      "x2tPath": "../../FileConverter/bin/x2t",
       "docbuilderPath": "../../FileConverter/Bin/docbuilder",
       "docbuilderAllFontsPath": "../../App_Data/docbuilder/AllFonts.js",
       "errorfiles": "error"
