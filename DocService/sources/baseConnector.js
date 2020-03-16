@@ -34,11 +34,12 @@
 
 var sqlDataBaseType = {
 	mySql		: 'mysql',
+	mariaDB		: 'mariadb',
 	postgreSql	: 'postgres'
 };
 
 var config = require('config').get('services.CoAuthoring.sql');
-var baseConnector = (sqlDataBaseType.mySql === config.get('type')) ? require('./mySqlBaseConnector') : require('./postgreSqlBaseConnector');
+var baseConnector = (sqlDataBaseType.mySql === config.get('type') || sqlDataBaseType.mariaDB === config.get('type')) ? require('./mySqlBaseConnector') : require('./postgreSqlBaseConnector');
 var logger = require('./../../Common/sources/logger');
 
 var tableChanges = config.get('tableChanges'),
