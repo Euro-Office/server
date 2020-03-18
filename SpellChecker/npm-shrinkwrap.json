@@ -271,8 +271,8 @@
       "integrity": "sha1-KzJxhOiZIQEXeyhWP7XnECrNDKk="
     },
     "nodehun": {
-      "version": "git+https://git@github.com/ONLYOFFICE/nodehun.git#c9ba32e5ff117ecc51e8e119c0753a021e519113",
-      "from": "git+https://git@github.com/ONLYOFFICE/nodehun.git#c9ba32e5ff117ecc51e8e119c0753a021e519113"
+      "version": "git+https://git@github.com/ONLYOFFICE/nodehun.git#631d3f3c48500bf2f2ec44f8a676423d5c92e3d3",
+      "from": "git+https://git@github.com/ONLYOFFICE/nodehun.git#631d3f3c48500bf2f2ec44f8a676423d5c92e3d3"
     },
     "on-finished": {
       "version": "2.3.0",
