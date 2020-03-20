@@ -2451,7 +2451,7 @@ exports.install = function(server, callbackFunction) {
     if (unlockRes) {
       sendData(conn, {type: 'unSaveLock', index: index, time: time});
     } else {
-      logger.warn("unSaveLock failure: docId = %s; conn.user.id: %s; saveLock: %s", conn.docId, conn.user.id, saveLock);
+      logger.warn("unSaveLock failure: docId = %s; conn.user.id: %s", conn.docId, conn.user.id);
     }
   }
 
