@@ -38,6 +38,8 @@ var logger = require('./../../Common/sources/logger');
 var utils = require('./../../Common/sources/utils');
 var constants = require('./../../Common/sources/constants');
 
+let addSqlParam = sqlBase.baseConnector.addSqlParameter;
+
 var RANDOM_KEY_MAX = 10000;
 
 var FileStatus = {
@@ -93,98 +95,95 @@ function upsert(task, opt_updateUserIndex) {
   return sqlBase.baseConnector.upsert(task, opt_updateUserIndex);
 }
 
-function getSelectString(docId) {
-  return 'SELECT * FROM task_result WHERE id=' + sqlBase.baseConnector.sqlEscape(docId) + ';';
-}
-
 function select(docId) {
   return new Promise(function(resolve, reject) {
-    var sqlCommand = getSelectString(docId);
+    let values = [];
+    let sqlParam = addSqlParam(docId, values);
+    let sqlCommand = `SELECT * FROM task_result WHERE id=${sqlParam};`;
     sqlBase.baseConnector.sqlQuery(sqlCommand, function(error, result) {
       if (error) {
         reject(error);
       } else {
         resolve(result);
       }
-    });
+    }, undefined, undefined, values);
   });
 }
-function toUpdateArray(task, updateTime) {
+function toUpdateArray(task, updateTime, isMask, values) {
   var res = [];
   if (null != task.status) {
-    res.push('status=' + sqlBase.baseConnector.sqlEscape(task.status));
+    let sqlParam = addSqlParam(task.status, values);
+    res.push(`status=${sqlParam}`);
   }
   if (null != task.statusInfo) {
-    res.push('status_info=' + sqlBase.baseConnector.sqlEscape(task.statusInfo));
+    let sqlParam = addSqlParam(task.statusInfo, values);
+    res.push(`status_info=${sqlParam}` );
+
   }
   if (updateTime) {
-    res.push('last_open_date=' + sqlBase.baseConnector.sqlEscape(sqlBase.getDateTime(new Date())));
+    let sqlParam = addSqlParam(new Date(), values);
+    res.push(`last_open_date=${sqlParam}`);
+
   }
   if (null != task.indexUser) {
-    res.push('user_index=' + sqlBase.baseConnector.sqlEscape(task.indexUser));
+    let sqlParam = addSqlParam(task.indexUser, values);
+    res.push(`user_index=${sqlParam}`);
+
   }
   if (null != task.changeId) {
-    res.push('change_id=' + sqlBase.baseConnector.sqlEscape(task.changeId));
+    let sqlParam = addSqlParam(task.changeId, values);
+    res.push(`change_id=${sqlParam}`);
+
   }
-  if (null != task.callback) {
+  if (null != task.callback && !isMask) {
     var userCallback = new sqlBase.UserCallback();
     userCallback.fromValues(task.indexUser, task.callback);
-    res.push('callback=' + userCallback.toSQLUpdate());
+    let sqlParam = addSqlParam(userCallback.toSQLInsert(), values);
+    res.push(`callback=callback || ${sqlParam}`);
   }
   if (null != task.baseurl) {
-    res.push('baseurl=' + sqlBase.baseConnector.sqlEscape(task.baseurl));
+    let sqlParam = addSqlParam(task.baseurl, values);
+    res.push(`baseurl=${sqlParam}`);
   }
   return res;
-}
-function getUpdateString(task) {
-  var commandArgEsc = toUpdateArray(task, true);
-  return 'UPDATE task_result SET ' + commandArgEsc.join(', ') +
-    ' WHERE id=' + sqlBase.baseConnector.sqlEscape(task.key) + ';';
 }
 
 function update(task) {
   return new Promise(function(resolve, reject) {
-    var sqlCommand = getUpdateString(task);
+    let values = [];
+    let updateElems = toUpdateArray(task, true, false, values);
+    let sqlSet = updateElems.join(', ');
+    let sqlParam = addSqlParam(task.key, values);
+    let sqlCommand = `UPDATE task_result SET ${sqlSet} WHERE id=${sqlParam};`;
     sqlBase.baseConnector.sqlQuery(sqlCommand, function(error, result) {
       if (error) {
         reject(error);
       } else {
         resolve(result);
       }
-    });
+    }, undefined, undefined, values);
   });
-}
-function getUpdateIfString(task, mask) {
-  var commandArgEsc = toUpdateArray(task, true);
-  var commandArgEscMask = toUpdateArray(mask);
-  commandArgEscMask.push('id=' + sqlBase.baseConnector.sqlEscape(mask.key));
-  return 'UPDATE task_result SET ' + commandArgEsc.join(', ') +
-    ' WHERE ' + commandArgEscMask.join(' AND ') + ';';
 }
 
 function updateIf(task, mask) {
   return new Promise(function(resolve, reject) {
-    var sqlCommand = getUpdateIfString(task, mask);
+    let values = [];
+    let commandArg = toUpdateArray(task, true, false, values);
+    let commandArgMask = toUpdateArray(mask, false, true, values);
+    commandArgMask.push('id=' + addSqlParam(mask.key, values));
+    let sqlSet = commandArg.join(', ');
+    let sqlWhere = commandArgMask.join(' AND ');
+    let sqlCommand = `UPDATE task_result SET ${sqlSet} WHERE ${sqlWhere};`;
     sqlBase.baseConnector.sqlQuery(sqlCommand, function(error, result) {
       if (error) {
         reject(error);
       } else {
         resolve(result);
       }
-    });
+    }, undefined, undefined, values);
   });
 }
 
-function getInsertString(task) {
-  var dateNow = sqlBase.getDateTime(new Date());
-  task.completeDefaults();
-  var commandArg = [task.key, task.status, task.statusInfo, dateNow, task.userIndex, task.changeId, task.callback, task.baseurl];
-  var commandArgEsc = commandArg.map(function(curVal) {
-    return sqlBase.baseConnector.sqlEscape(curVal)
-  });
-  return 'INSERT INTO task_result ( id, status, status_info, last_open_date, user_index, change_id, callback,' +
-    ' baseurl) VALUES (' + commandArgEsc.join(', ') + ');';
-}
 function addRandomKey(task, opt_prefix, opt_size) {
   return new Promise(function(resolve, reject) {
     if (undefined !== opt_prefix && undefined !== opt_size) {
@@ -192,14 +191,25 @@ function addRandomKey(task, opt_prefix, opt_size) {
     } else {
       task.key = task.key + '_' + Math.round(Math.random() * RANDOM_KEY_MAX);
     }
-    var sqlCommand = getInsertString(task);
+    task.completeDefaults();
+    let values = [];
+    let p1 = addSqlParam(task.key, values);
+    let p2 = addSqlParam(task.status, values);
+    let p3 = addSqlParam(task.statusInfo, values);
+    let p4 = addSqlParam(new Date(), values);
+    let p5 = addSqlParam(task.userIndex, values);
+    let p6 = addSqlParam(task.changeId, values);
+    let p7 = addSqlParam(task.callback, values);
+    let p8 = addSqlParam(task.baseurl, values);
+    let sqlCommand = 'INSERT INTO task_result (id, status, status_info, last_open_date, user_index, change_id, callback, baseurl)' +
+      ` VALUES (${p1}, ${p2}, ${p3}, ${p4}, ${p5}, ${p6}, ${p7}, ${p8});`;
     sqlBase.baseConnector.sqlQuery(sqlCommand, function(error, result) {
       if (error) {
         reject(error);
       } else {
         resolve(result);
       }
-    });
+    }, undefined, undefined, values);
   });
 }
 function* addRandomKeyTask(key, opt_prefix, opt_size) {
@@ -227,38 +237,36 @@ function* addRandomKeyTask(key, opt_prefix, opt_size) {
   }
 }
 
-function getRemoveString(docId) {
-  return 'DELETE FROM task_result WHERE id=' + sqlBase.baseConnector.sqlEscape(docId) + ';';
-}
 function remove(docId) {
   return new Promise(function(resolve, reject) {
-    var sqlCommand = getRemoveString(docId);
+    let values = [];
+    let sqlParam = addSqlParam(docId, values);
+    const sqlCommand = `DELETE FROM task_result WHERE id=${sqlParam};`;
     sqlBase.baseConnector.sqlQuery(sqlCommand, function(error, result) {
       if (error) {
         reject(error);
       } else {
         resolve(result);
       }
-    });
+    }, undefined, undefined, values);
   });
-}
-function getExpiredString(maxCount, expireSeconds) {
-  var expireDate = new Date();
-  utils.addSeconds(expireDate, -expireSeconds);
-  var expireDateStr = sqlBase.baseConnector.sqlEscape(sqlBase.getDateTime(expireDate));
-  return 'SELECT * FROM task_result WHERE last_open_date <= ' + expireDateStr +
-    ' AND NOT EXISTS(SELECT id FROM doc_changes WHERE doc_changes.id = task_result.id LIMIT 1) LIMIT ' + maxCount + ';';
 }
 function getExpired(maxCount, expireSeconds) {
   return new Promise(function(resolve, reject) {
-    var sqlCommand = getExpiredString(maxCount, expireSeconds);
+    let values = [];
+    let expireDate = new Date();
+    utils.addSeconds(expireDate, -expireSeconds);
+    let sqlParam1 = addSqlParam(expireDate, values);
+    let sqlParam2 = addSqlParam(maxCount, values);
+    let sqlCommand = `SELECT * FROM task_result WHERE last_open_date <= ${sqlParam1}` +
+      ` AND NOT EXISTS(SELECT id FROM doc_changes WHERE doc_changes.id = task_result.id LIMIT 1) LIMIT ${sqlParam2};`;
     sqlBase.baseConnector.sqlQuery(sqlCommand, function(error, result) {
       if (error) {
         reject(error);
       } else {
         resolve(result);
       }
-    });
+    }, undefined, undefined, values);
   });
 }
 

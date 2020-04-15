@@ -26,7 +26,6 @@
     "multiparty": "^4.2.1",
     "mysql": "^2.16.0",
     "pg": "^7.6.0",
-    "pg-escape": "^0.2.0",
     "redis": "^2.8.0",
     "retry": "^0.12.0",
     "sockjs": "^0.3.19",
@@ -40,10 +39,6 @@
       "./sources/pubsubRabbitMQ.js",
       "../Common/sources/storage-fs.js",
       "../Common/sources/storage-s3.js"
-    ],
-    "assets": [
-      "../Common/sources/licenseKey.pem",
-      "node_modules/pg-escape/reserved.txt"
     ]
   }
 }

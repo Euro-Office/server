@@ -13,7 +13,7 @@ def check_nodejs_version():
     stdout, stderr = popen.communicate()
     popen.wait()
 
-    nodejs_version = stdout.strip()
+    nodejs_version = stdout.strip().decode("utf-8")
 
   finally:
     popen.stdout.close()
@@ -23,7 +23,7 @@ def check_nodejs_version():
   nodejs_min_version = 8
   nodejs_cur_version = int(nodejs_version.split('.')[0][1:])
   if (nodejs_min_version > nodejs_cur_version):
-    print 'Node.js version!', nodejs_min_version, 'more than', nodejs_cur_version, '. Min version Node.js 8.x'
+    print('Node.js version!', nodejs_min_version, 'more than', nodejs_cur_version, '. Min version Node.js 8.x')
     return False
 
   return True

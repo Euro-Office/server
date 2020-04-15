@@ -21,7 +21,7 @@
 		"fs": {
 			"folderPath": "",
 			"urlExpires": 900,
-			"secretString": "onlyoffice"
+			"secretString": "verysecretstring"
 		},
 		"region": "",
 		"endpoint": "http://localhost/s3",

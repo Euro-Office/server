@@ -34,56 +34,24 @@
 
 var sqlDataBaseType = {
 	mySql		: 'mysql',
+	mariaDB		: 'mariadb',
 	postgreSql	: 'postgres'
 };
 
 var config = require('config').get('services.CoAuthoring.sql');
-var baseConnector = (sqlDataBaseType.mySql === config.get('type')) ? require('./mySqlBaseConnector') : require('./postgreSqlBaseConnector');
+var baseConnector = (sqlDataBaseType.mySql === config.get('type') || sqlDataBaseType.mariaDB === config.get('type')) ? require('./mySqlBaseConnector') : require('./postgreSqlBaseConnector');
 var logger = require('./../../Common/sources/logger');
 
-var tableChanges = config.get('tableChanges'),
+const tableChanges = config.get('tableChanges'),
 	tableResult = config.get('tableResult');
 
 var g_oCriticalSection = {};
+let isSupportFastInsert = !!baseConnector.insertChanges;
+let addSqlParam = baseConnector.addSqlParameter;
 var maxPacketSize = config.get('max_allowed_packet'); // Размер по умолчанию для запроса в базу данных 1Mb - 1 (т.к. он не пишет 1048575, а пишет 1048574)
 
-function getDataFromTable (tableId, data, getCondition, callback) {
-	var table = getTableById(tableId);
-	var sqlCommand = "SELECT " + data + " FROM " + table + " WHERE " + getCondition + ";";
-
-	baseConnector.sqlQuery(sqlCommand, callback);
-}
-function deleteFromTable (tableId, deleteCondition, callback) {
-	var table = getTableById(tableId);
-	var sqlCommand = "DELETE FROM " + table + " WHERE " + deleteCondition + ";";
-
-	baseConnector.sqlQuery(sqlCommand, callback);
-}
-var c_oTableId = {
-	callbacks	: 2,
-	changes		: 3
-};
-function getTableById (id) {
-	var res;
-	switch (id) {
-		case c_oTableId.changes:
-			res = tableChanges;
-			break;
-	}
-	return res;
-}
-
 exports.baseConnector = baseConnector;
-exports.tableId = c_oTableId;
-exports.loadTable = function (tableId, callbackFunction) {
-	var table = getTableById(tableId);
-	var sqlCommand = "SELECT * FROM " + table + ";";
-	baseConnector.sqlQuery(sqlCommand, callbackFunction);
-};
-exports.insertChanges = function (objChanges, docId, index, user) {
-	lockCriticalSection(docId, function () {_insertChanges(0, objChanges, docId, index, user);});
-};
-exports.insertChangesPromise = function (objChanges, docId, index, user) {
+exports.insertChangesPromiseCompatibility = function (objChanges, docId, index, user) {
   return new Promise(function(resolve, reject) {
     _insertChangesCallback(0, objChanges, docId, index, user, function(error, result) {
       if (error) {
@@ -94,64 +62,83 @@ exports.insertChangesPromise = function (objChanges, docId, index, user) {
     });
   });
 };
-function _lengthInUtf8Bytes (s) {
-	return ~-encodeURI(s).split(/%..|./).length;
-}
+exports.insertChangesPromiseFast = function (objChanges, docId, index, user) {
+  return new Promise(function(resolve, reject) {
+    baseConnector.insertChanges(tableChanges, 0, objChanges, docId, index, user, function(error, result, isSupported) {
+      isSupportFastInsert = isSupported;
+      if (error) {
+        if (!isSupportFastInsert) {
+          resolve(exports.insertChangesPromiseCompatibility(objChanges, docId, index, user));
+        } else {
+          reject(error);
+        }
+      } else {
+        resolve(result);
+      }
+    });
+  });
+};
+exports.insertChangesPromise = function (objChanges, docId, index, user) {
+  if (isSupportFastInsert) {
+    return exports.insertChangesPromiseFast(objChanges, docId, index, user);
+  } else {
+    return exports.insertChangesPromiseCompatibility(objChanges, docId, index, user);
+  }
+
+};
 function _getDateTime2(oDate) {
   return oDate.toISOString().slice(0, 19).replace('T', ' ');
 }
-function _getDateTime(nTime) {
-	var oDate = new Date(nTime);
-  return _getDateTime2(oDate);
-}
 
 exports.getDateTime = _getDateTime2;
-function _insertChanges (startIndex, objChanges, docId, index, user) {
-  _insertChangesCallback(startIndex, objChanges, docId, index, user, function () {unLockCriticalSection(docId);});
-}
+
 function _insertChangesCallback (startIndex, objChanges, docId, index, user, callback) {
-	var sqlCommand = "INSERT INTO " + tableChanges + " VALUES";
-	var i = startIndex, l = objChanges.length, sqlNextRow = "", lengthUtf8Current = 0, lengthUtf8Row = 0;
-	if (i === l)
-		return;
+  var sqlCommand = `INSERT INTO ${tableChanges} VALUES`;
+  var i = startIndex, l = objChanges.length, lengthUtf8Current = sqlCommand.length, lengthUtf8Row = 0, values = [];
+  if (i === l)
+    return;
 
-	for (; i < l; ++i, ++index) {
-		sqlNextRow = "(" + baseConnector.sqlEscape(docId) + "," + baseConnector.sqlEscape(index) + ","
-			+ baseConnector.sqlEscape(user.id) + "," + baseConnector.sqlEscape(user.idOriginal) + ","
-			+ baseConnector.sqlEscape(user.username) + "," + baseConnector.sqlEscape(objChanges[i].change) + ","
-			+ baseConnector.sqlEscape(_getDateTime(objChanges[i].time)) + ")";
-		lengthUtf8Row = _lengthInUtf8Bytes(sqlNextRow) + 1; // 1 - это на символ ',' или ';' в конце команды
-		if (i === startIndex) {
-			lengthUtf8Current = _lengthInUtf8Bytes(sqlCommand);
-			sqlCommand += sqlNextRow;
-		} else {
-			if (lengthUtf8Row + lengthUtf8Current >= maxPacketSize) {
-				sqlCommand += ';';
-				(function (tmpStart, tmpIndex) {
-					baseConnector.sqlQuery(sqlCommand, function () {
-						// lock не снимаем, а продолжаем добавлять
-						_insertChangesCallback(tmpStart, objChanges, docId, tmpIndex, user, callback);
-					});
-				})(i, index);
-				return;
-			} else {
-				sqlCommand += ',';
-				sqlCommand += sqlNextRow;
-			}
-		}
+  for (; i < l; ++i, ++index) {
+    //44 - length of "($1001,... $1007),"
+    //4 is max utf8 bytes per symbol
+    lengthUtf8Row = 44 + 4 * (docId.length + user.id.length + user.idOriginal.length + user.username.length + objChanges[i].change.length) + 4 + 8;
+    if (lengthUtf8Row + lengthUtf8Current >= maxPacketSize && i > startIndex) {
+      sqlCommand += ';';
+      (function(tmpStart, tmpIndex) {
+        baseConnector.sqlQuery(sqlCommand, function() {
+          // lock не снимаем, а продолжаем добавлять
+          _insertChangesCallback(tmpStart, objChanges, docId, tmpIndex, user, callback);
+        }, undefined, undefined, values);
+      })(i, index);
+      return;
+    }
+    let p1 = addSqlParam(docId, values);
+    let p2 = addSqlParam(index, values);
+    let p3 = addSqlParam(user.id, values);
+    let p4 = addSqlParam(user.idOriginal, values);
+    let p5 = addSqlParam(user.username, values);
+    let p6 = addSqlParam(objChanges[i].change, values);
+    let p7 = addSqlParam(objChanges[i].time, values);
+    if (i > startIndex) {
+      sqlCommand += ',';
+    }
+    sqlCommand += `(${p1},${p2},${p3},${p4},${p5},${p6},${p7})`;
+    lengthUtf8Current += lengthUtf8Row;
+  }
 
-		lengthUtf8Current += lengthUtf8Row;
-	}
-
-	sqlCommand += ';';
-	baseConnector.sqlQuery(sqlCommand, callback);
+  sqlCommand += ';';
+  baseConnector.sqlQuery(sqlCommand, callback, undefined, undefined, values);
 }
-exports.deleteChangesCallback = function (docId, deleteIndex, callback) {
-  var sqlCommand = "DELETE FROM " + tableChanges + " WHERE id='" + docId + "'";
-  if (null !== deleteIndex)
-    sqlCommand += " AND change_id >= " + deleteIndex;
-  sqlCommand += ";";
-  baseConnector.sqlQuery(sqlCommand, callback);
+exports.deleteChangesCallback = function(docId, deleteIndex, callback) {
+  let sqlCommand, values = [];
+  let sqlParam1 = addSqlParam(docId, values);
+  if (null !== deleteIndex) {
+    let sqlParam2 = addSqlParam(deleteIndex, values);
+    sqlCommand = `DELETE FROM ${tableChanges} WHERE id=${sqlParam1} AND change_id >= ${sqlParam2};`;
+  } else {
+    sqlCommand = `DELETE FROM ${tableChanges} WHERE id=${sqlParam1};`;
+  }
+  baseConnector.sqlQuery(sqlCommand, callback, undefined, undefined, values);
 };
 exports.deleteChangesPromise = function (docId, deleteIndex) {
   return new Promise(function(resolve, reject) {
@@ -171,9 +158,10 @@ function _deleteChanges (docId, deleteIndex) {
   exports.deleteChangesCallback(docId, deleteIndex, function () {unLockCriticalSection(docId);});
 }
 exports.getChangesIndex = function(docId, callback) {
-  var table = getTableById(c_oTableId.changes);
-  var sqlCommand = 'SELECT MAX(change_id) as change_id FROM ' + table + ' WHERE id=' + baseConnector.sqlEscape(docId) + ';';
-  baseConnector.sqlQuery(sqlCommand, callback);
+  let values = [];
+  let sqlParam = addSqlParam(docId, values);
+  var sqlCommand = `SELECT MAX(change_id) as change_id FROM ${tableChanges} WHERE id=${sqlParam};`;
+  baseConnector.sqlQuery(sqlCommand, callback, undefined, undefined, values);
 };
 exports.getChangesIndexPromise = function(docId) {
   return new Promise(function(resolve, reject) {
@@ -188,29 +176,41 @@ exports.getChangesIndexPromise = function(docId) {
 };
 exports.getChangesPromise = function (docId, optStartIndex, optEndIndex, opt_time) {
   return new Promise(function(resolve, reject) {
-    var getCondition = 'id='+baseConnector.sqlEscape(docId);
+    let values = [];
+    let sqlParam = addSqlParam(docId, values);
+    let sqlWhere = `id=${sqlParam}`;
     if (null != optStartIndex) {
-      getCondition += ' AND change_id>=' + optStartIndex;
+      sqlParam = addSqlParam(optStartIndex, values);
+      sqlWhere += ` AND change_id>=${sqlParam}`;
     }
     if (null != optEndIndex) {
-      getCondition += ' AND change_id<' + optEndIndex;
+      sqlParam = addSqlParam(optEndIndex, values);
+      sqlWhere += ` AND change_id<${sqlParam}`;
     }
     if (null != opt_time) {
-      getCondition += ' AND change_date<=' + baseConnector.sqlEscape(_getDateTime(opt_time));
+      if (!(opt_time instanceof Date)) {
+        opt_time = new Date(opt_time);
+      }
+      sqlParam = addSqlParam(opt_time, values);
+      sqlWhere += ` AND change_date<=${sqlParam}`;
     }
-    getCondition += ' ORDER BY change_id ASC';
-    getDataFromTable(c_oTableId.changes, "*", getCondition, function(error, result) {
+    sqlWhere += ' ORDER BY change_id ASC';
+    var sqlCommand = `SELECT * FROM ${tableChanges} WHERE ${sqlWhere};`;
+
+    baseConnector.sqlQuery(sqlCommand, function(error, result) {
       if (error) {
         reject(error);
       } else {
         resolve(result);
       }
-    });
+    }, undefined, undefined, values);
   });
 };
 exports.checkStatusFile = function (docId, callbackFunction) {
-	var sqlCommand = "SELECT status, status_info FROM " + tableResult + " WHERE id='" + docId + "';";
-	baseConnector.sqlQuery(sqlCommand, callbackFunction);
+  let values = [];
+  let sqlParam = addSqlParam(docId, values);
+  var sqlCommand = `SELECT status, status_info FROM ${tableResult} WHERE id=${sqlParam};`;
+  baseConnector.sqlQuery(sqlCommand, callbackFunction, undefined, undefined, values);
 };
 exports.checkStatusFilePromise = function (docId) {
   return new Promise(function(resolve, reject) {
@@ -222,11 +222,6 @@ exports.checkStatusFilePromise = function (docId) {
       }
     });
   });
-};
-exports.updateStatusFile = function (docId) {
-	// Статус OK = 1
-	var sqlCommand = "UPDATE " + tableResult + " SET status=1 WHERE id='" + docId + "';";
-	baseConnector.sqlQuery(sqlCommand);
 };
 
 exports.isLockCriticalSection = function (id) {
@@ -294,9 +289,6 @@ UserCallback.prototype.fromValues = function(userIndex, callback){
 UserCallback.prototype.delimiter = String.fromCharCode(5);
 UserCallback.prototype.toSQLInsert = function(){
   return this.delimiter + JSON.stringify(this);
-};
-UserCallback.prototype.toSQLUpdate = function(){
-  return 'callback || ' + baseConnector.sqlEscape(this.toSQLInsert());
 };
 UserCallback.prototype.getCallbackByUserIndex = function(docId, callbacksStr, opt_userIndex) {
   logger.debug("getCallbackByUserIndex: docId = %s userIndex = %s callbacks = %s", docId, opt_userIndex, callbacksStr);
