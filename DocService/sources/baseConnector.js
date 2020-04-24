@@ -293,7 +293,14 @@ UserCallback.prototype.toSQLInsert = function(){
 UserCallback.prototype.getCallbackByUserIndex = function(docId, callbacksStr, opt_userIndex) {
   logger.debug("getCallbackByUserIndex: docId = %s userIndex = %s callbacks = %s", docId, opt_userIndex, callbacksStr);
   if (!callbacksStr || !callbacksStr.startsWith(UserCallback.prototype.delimiter)) {
-    return callbacksStr;
+    let index = callbacksStr.indexOf(UserCallback.prototype.delimiter);
+    if (-1 === index) {
+      //old format
+      return callbacksStr;
+    } else {
+      //mix of old and new format
+      callbacksStr = callbacksStr.substring(index);
+    }
   }
   let callbacks = callbacksStr.split(UserCallback.prototype.delimiter);
   let callbackUrl = "";
