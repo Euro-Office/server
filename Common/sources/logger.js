@@ -33,6 +33,7 @@
 'use strict';
 
 var config = require('config');
+var util = require('util');
 
 var log4js = require('log4js');
 
