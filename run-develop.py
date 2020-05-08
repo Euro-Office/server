@@ -98,6 +98,4 @@ try:
   run_module('FileConverter/sources', ['convertermaster.js'])
   run_module('SpellChecker/sources', ['server.js'])
 except SystemExit:
-  print("Ignoring SystemExit")
-finally:
-  input("Press Enter to continue...")
+  input("Ignoring SystemExit. Press Enter to continue...")
