@@ -201,7 +201,12 @@ exports.uploadImageFile = function(req, res) {
       logger.debug('Start uploadImageFile: docId = %s', docId);
 
       if (cfgTokenEnableBrowser) {
-        var checkJwtRes = checkJwtUpload(docId, 'uploadImageFile', req.query['token']);
+        let checkJwtRes = docsCoServer.checkJwtHeader(docId, req, 'Authorization', 'Bearer ', commonDefines.c_oAscSecretType.Session);
+        if (!checkJwtRes) {
+          //todo remove compatibility with previous versions
+          checkJwtRes = checkJwtUpload(docId, 'uploadImageFile', req.query['token']);
+        }
+
         if (!checkJwtRes.err) {
           docId = checkJwtRes.docId || docId;
           encrypted = checkJwtRes.encrypted;

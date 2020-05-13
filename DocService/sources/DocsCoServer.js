@@ -964,11 +964,14 @@ function checkJwt(docId, token, type) {
   }
   return res;
 }
-function checkJwtHeader(docId, req) {
-  var authorization = req.get(cfgTokenInboxHeader);
-  if (authorization && authorization.startsWith(cfgTokenInboxPrefix)) {
-    var token = authorization.substring(cfgTokenInboxPrefix.length);
-    return checkJwt(docId, token, commonDefines.c_oAscSecretType.Inbox);
+function checkJwtHeader(docId, req, opt_header, opt_prefix, opt_secretType) {
+  let header = opt_header || cfgTokenInboxHeader;
+  let prefix = opt_prefix || cfgTokenInboxPrefix;
+  let secretType = opt_secretType || commonDefines.c_oAscSecretType.Inbox;
+  let authorization = req.get(header);
+  if (authorization && authorization.startsWith(prefix)) {
+    var token = authorization.substring(prefix.length);
+    return checkJwt(docId, token, secretType);
   }
   return null;
 }
