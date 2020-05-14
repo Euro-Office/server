@@ -52,6 +52,8 @@ var cfgSecretAccessKey = configStorage.get('secretAccessKey');
 var cfgUseRequestToGetUrl = configStorage.get('useRequestToGetUrl');
 var cfgUseSignedUrl = configStorage.get('useSignedUrl');
 var cfgExternalHost = configStorage.get('externalHost');
+var cfgSslEnabled = configStorage.get('sslEnabled');
+var cfgS3ForcePathStyle = configStorage.get('s3ForcePathStyle');
 var configFs = configStorage.get('fs');
 var cfgStorageUrlExpires = configFs.get('urlExpires');
 const cfgExpSessionAbsolute = ms(config.get('services.CoAuthoring.expire.sessionabsolute'));
@@ -69,9 +71,10 @@ var configS3 = {
   accessKeyId: cfgAccessKeyId,
   secretAccessKey: cfgSecretAccessKey
 };
+
 if (configS3.endpoint) {
-  configS3.sslEnabled = false;
-  configS3.s3ForcePathStyle = true;
+  configS3.sslEnabled = cfgSslEnabled;
+  configS3.s3ForcePathStyle = cfgS3ForcePathStyle;
 }
 AWS.config.update(configS3);
 var s3Client = new AWS.S3();

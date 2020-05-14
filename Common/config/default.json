@@ -32,6 +32,8 @@
 		"secretAccessKey": "SECRET",
 		"useRequestToGetUrl": false,
 		"useSignedUrl": false,
+		"sslEnabled": false,
+		"s3ForcePathStyle": true,
 		"externalHost": ""
 	},
 	"rabbitmq": {
