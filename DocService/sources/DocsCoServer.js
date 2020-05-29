@@ -1863,7 +1863,7 @@ exports.install = function(server, callbackFunction) {
         return;
       }
 
-      const curUserId = user.id + curIndexUser;
+      const curUserId = String(user.id) + curIndexUser;
       conn.docId = data.docid;
       conn.permissions = data.permissions;
       conn.user = {
