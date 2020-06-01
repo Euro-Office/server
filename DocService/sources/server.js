@@ -127,7 +127,7 @@ if (configStorage.has('fs.folderPath')) {
 try {
 	fs.watch(config.get('plugins.path'), updatePlugins);
 } catch (e) {
-	logger.warn('Plugins watch exception (https://nodejs.org/docs/latest/api/fs.html#fs_availability).');
+	logger.warn('Failed to subscribe to plugin folder updates. When changing the list of plugins, you must restart the server. https://nodejs.org/docs/latest/api/fs.html#fs_availability');
 }
 fs.watchFile(configCommon.get('license').get('license_file'), updateLicense);
 setInterval(updateLicense, 86400000);
