@@ -189,6 +189,9 @@
 				"session": {
 					"algorithm": "HS256",
 					"expires": "30d"
+				},
+				"verifyOptions": {
+					"clockTolerance": 60
 				}
 			},
 			"plugins": {

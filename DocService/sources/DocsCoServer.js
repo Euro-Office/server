@@ -135,6 +135,7 @@ const cfgTokenInboxPrefix = config.get('token.inbox.prefix');
 const cfgTokenInboxInBody = config.get('token.inbox.inBody');
 const cfgTokenOutboxInBody = config.get('token.outbox.inBody');
 const cfgTokenBrowserSecretFromInbox = config.get('token.browser.secretFromInbox');
+const cfgTokenVerifyOptions = config.get('token.verifyOptions');
 const cfgSecretBrowser = config.get('secret.browser');
 const cfgSecretInbox = config.get('secret.inbox');
 const cfgSecretSession = config.get('secret.session');
@@ -950,7 +951,7 @@ function checkJwt(docId, token, type) {
     logger.warn('empty secret: docId = %s token = %s', docId, token);
   }
   try {
-    res.decoded = jwt.verify(token, secret);
+    res.decoded = jwt.verify(token, secret, cfgTokenVerifyOptions);
     logger.debug('checkJwt success: docId = %s decoded = %j', docId, res.decoded);
   } catch (err) {
     logger.warn('checkJwt error: docId = %s name = %s message = %s token = %s', docId, err.name, err.message, token);
