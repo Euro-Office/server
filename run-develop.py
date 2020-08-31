@@ -1,10 +1,41 @@
-#!/usr/bin/env python
 import sys
 sys.path.append('../build_tools/scripts')
 import os
 import base
 import subprocess
+import ctypes
 
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+ 
+def deleteNodejs():
+    if is_admin():
+        print("\nDeleting Node.js...")
+        code = subprocess.call('wmic product where name="Node.js" call uninstall',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        if code == 0:
+            print("\nDelete success!")
+        else:
+            print("\nError!")
+    else:
+        ctypes.windll.shell32.ShellExecuteW(None, u"runas", unicode(sys.executable), unicode(''.join(sys.argv)), None, 1)
+        sys.exit() 
+
+def installNodejs():
+    base.download("https://nodejs.org/dist/latest-v10.x/node-v10.22.0-x86.msi", "C:/Python_downloads" + "/nodejs.msi")
+    if is_admin():
+        print("\nUnstalling Node.js...")
+        code = subprocess.call('cd C:\Python_downloads\ && msiexec.exe /i nodejs.msi /qn',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        if code == 0:
+            print("\nInstall success!")
+        else:
+            print("\nError!")
+    else:
+        ctypes.windll.shell32.ShellExecuteW(None, u"runas", unicode(sys.executable), unicode(''.join(sys.argv)), None, 1)
+        sys.exit()
+        
 def check_nodejs_version():
   get_version_command = 'node -v'
   popen = subprocess.Popen(get_version_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
@@ -19,12 +50,19 @@ def check_nodejs_version():
     popen.stdout.close()
     popen.stderr.close()
 
+  if nodejs_version == retvalue:
+    installNodejs()
+    return True
+ 
   print('Installed Node.js version: ' + nodejs_version)
   nodejs_min_version = 8
+  nodejs_max_version = 10
   nodejs_cur_version = int(nodejs_version.split('.')[0][1:])
-  if (nodejs_min_version > nodejs_cur_version):
-    print('Node.js version!', nodejs_min_version, 'more than', nodejs_cur_version, '. Min version Node.js 8.x')
-    return False
+  if (nodejs_min_version > nodejs_cur_version or nodejs_cur_version > nodejs_max_version):
+    print('\nNode.js version must be 8.x to 10.x')
+    deleteNodejs()
+    installNodejs()
+    return True
 
   return True
 
