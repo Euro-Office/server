@@ -72,15 +72,14 @@ def check_nodejs_version():
   return True
   
 def check_java_bitness():
-  java_bitness = run_command('java -version')
+  java_version = run_command('java -version')
     
-  if java_bitness == '':
+  if java_version == '':
     installJava()
     return True
  
-  print('Installed java bitness: x' + str(java_bitness))
-  java_required_bitness = 64
-  if java_bitness != java_required_bitness:
+  print('Installed java: ' + java_version)
+  if java_version.find('64-Bit') == -1:
     print('Java bitness must be x64')
     #deleteProgram('Java')
     installJava()
