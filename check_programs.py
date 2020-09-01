@@ -27,7 +27,7 @@ def installNodejs():
   if is_admin():
     base.download("https://nodejs.org/dist/latest-v10.x/node-v10.22.0-x64.msi", './nodejs.msi')
     print("Unstalling Node.js...")
-    code = subprocess.call('cd ' + os.getcwd() + ' && msiexec.exe /i nodejs.msi /qn',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    code = subprocess.call('msiexec.exe /i nodejs.msi /qn',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     if code == 0:
       print("Install success!")
     else:
@@ -41,7 +41,7 @@ def installJava():
   if is_admin():
     base.download("https://javadl.oracle.com/webapps/download/AutoDL?BundleId=242990_a4634525489241b9a9e1aa73d9e118e6", './java.exe')
     print("Installing Java...")
-    code = subprocess.call('cd ' + os.getcwd() + ' && java.exe /s',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    code = subprocess.call('java.exe /s',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     if code == 0:
       print("Install success!")
     else:
@@ -72,13 +72,13 @@ def check_nodejs_version():
   return True
   
 def check_java_bitness():
-  java_bitness = chek_version('Java -version')
+  java_bitness = chek_version('java -version')
     
   if java_bitness == '':
     installJava()
     return True
  
-  print('Installed Java bitness: x' + str(java_bitness))
+  print('Installed java bitness: x' + str(java_bitness))
   java_required_bitness = 64
   if java_bitness != java_required_bitness:
     print('Java bitness must be x64')
@@ -98,7 +98,7 @@ def chek_version(sCommand):
     progVersion = ''
     if sCommand == 'node -v':
       progVersion = stdout.strip().decode("utf-8")
-    elif sCommand == 'Java -version':
+    elif sCommand == 'java -version':
       if stderr.find('32-Bit') != -1:
         progVersion = 32
       elif stderr.find('64-Bit') != -1:
