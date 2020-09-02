@@ -2,7 +2,7 @@ import sys
 sys.path.append('../build_tools/scripts')
 import os
 import base
-import check_programs
+import install_develop
 
 def install_module(path):
   base.print_info('Install: ' + path)
@@ -35,11 +35,7 @@ def run_integration_example():
   base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
 
 try:
-  base.print_info('check Node.js version')
-  if (True != check_programs.check_nodejs_version()):
-    exit(0)
-  base.print_info('check Java bitness version')
-  if (True != check_programs.check_java_bitness()):
+  if (True != base.cmd_in_dir('../', 'python', ['install_develop.py'])):
     exit(0)
 
   platform = base.host_platform()
