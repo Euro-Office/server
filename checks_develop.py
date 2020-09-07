@@ -24,7 +24,10 @@ def check_java_bitness():
     return 'x32'
   elif java_version.find('32-Bit') == -1:
     return 'x64'
- 
+    
+def check_rabbitmq():
+  return run_command('sc query RabbitMQ')
+  
 def run_command(sCommand):
   popen = subprocess.Popen(sCommand, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True) 
   result = ''
@@ -33,7 +36,7 @@ def run_command(sCommand):
     popen.wait()
     if sCommand == 'node -v':
       result = stdout.strip().decode("utf-8") 
-    elif sCommand == 'java -version' or sCommand == 'path':
+    else:
       result = stdout.strip().decode("utf-8") + stderr.strip().decode("utf-8")
   finally:
     popen.stdout.close()
