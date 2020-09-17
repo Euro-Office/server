@@ -4,7 +4,8 @@ import os
 import base
 import subprocess
 import ctypes
-import checks_develop
+import checks_develop as check
+import shutil
 
 def is_admin():
   try:
@@ -70,18 +71,39 @@ def installingProgram(sProgram, bSilent = False):
     else:
       print("Error!")
       return False
+  elif sProgram == 'MySQLInstaller':
+    print('Installing MySQL Installer...')
+    base.download("https://dev.mysql.com/get/Downloads/MySQLInstaller/mysql-installer-web-community-8.0.21.0.msi", './mysqlinstaller.msi')
+    code = subprocess.call('msiexec.exe /i mysqlinstaller.msi /qn',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    if code == 0:
+      print("Install success!")
+      base.delete_file('./mysqlinstaller.msi')
+      return True
+    else:
+      print("Error!")
+      base.delete_file('./mysqlinstaller.msi')
+      return False
+  elif sProgram == 'MySQLServer':
+    print('Installing MySQL Server...')
+    code = subprocess.call('cd C:\Program Files (x86)\MySQL\MySQL Installer for Windows && MySQLInstallerConsole.exe community install server;8.0.21;x64:*:type=config;openfirewall=true;generallog=true;binlog=true;serverid=3306;enable_tcpip=true;port=3306;rootpasswd=onlyoffice -silent',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    if code == 0:
+      print("Install success!")
+      return True
+    else:
+      print("Error!")
+      return False
 
 def deleteProgram(sName):
   if sName == 'Erlang':
     print("Deleting " + sName + "...")
-    code = subprocess.call('cd ' + checks_develop.get_erlangPath() + ' && Uninstall.exe /S', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    code = subprocess.call('cd ' + check.get_erlangPath() + ' && Uninstall.exe /S', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     if code == 0:
       print("Delete success!")
       return True
     else:
       print("Error!")
       return False
-      
+  
   if is_admin():
     print("Deleting " + sName + "...")
     code = subprocess.call('wmic product where name="' + sName + '" call uninstall',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
@@ -136,7 +158,7 @@ def installErlang(result):
   if result == None or result == 'The system cannot find the path specified.':
     installingProgram('Erlang')
     installingProgram('RabbitMQ')
-    path = checks_develop.get_erlangPath()
+    path = check.get_erlangPath()
     code = subprocess.call('SETX /M ERLANG_HOME "' + path + '"')
     if code == 0:
       return True
@@ -149,8 +171,8 @@ def installErlang(result):
       exit(0)
     installingProgram('RabbitMQ')
   elif result == '8':
-    if os.getenv("ERLANG_HOME") != checks_develop.get_erlangPath():
-      path = checks_develop.get_erlangPath()
+    if os.getenv("ERLANG_HOME") != check.get_erlangPath():
+      path = check.get_erlangPath()
       code = subprocess.call('SETX /M ERLANG_HOME "' + path + '"')
       if code == 0:
         return True
@@ -166,20 +188,62 @@ def installGruntCli(result):
   else:
     print('Grunt-Cli is installed')
     return True
-
-
+    
+def installMySQLServer(serversBitness, serversVersions, serversPaths, dataPaths):
+  for i in range(len(serversBitness)):
+    result = serversBitness[i]
+    
+    if result == "":
+      continue 
+    elif result == 'x32':
+      print('MySQL Server bitness is x32, is not valid')
+      deleteProgram('MySQL Server ' + serversVersions[i][0:-3])
+      continue
+    elif result == 'x64':
+      connectionResult = check.run_command('cd ' + serversPaths[i] + 'bin && mysql -u root -ponlyoffice -e "SHOW GLOBAL VARIABLES LIKE ' + r"'PORT';" + '"')
+      if connectionResult.find('port') != -1 and connectionResult.find('3306') != -1:
+        print('MySQL Server ' + serversVersions[i] + ' is valid')
+        return True
+      else:
+        print('MySQL Server configuration is not valid')
+        deleteProgram('MySQL Server ' + serversVersions[i][0:-3])
+        shutil.rmtree(dataPaths[i])
+        continue
+      
+  if True != installingProgram('MySQLInstaller'):
+    deleteProgram('MySQL Installer - Community')
+    if True != installingProgram('MySQLInstaller'):
+      return False
+      
+  installingProgram('MySQLServer')
+  dirPaths = check.get_mysqlServersPaths()
+  
+  for i in range(len(dirPaths)):
+    if dirPaths[i].find('Server 8.0') != -1:
+      connectionResult = check.run_command('cd ' + dirPaths[i] + 'bin && mysql -u root -ponlyoffice -e "SHOW GLOBAL VARIABLES LIKE ' + r"'PORT';" + '"')
+      if connectionResult.find('port') != -1 and connectionResult.find('3306') != -1:
+        print('MySQL Server ' + serversVersions[i] + ' is valid')
+        return True
+      else:
+        continue
+  return False
+      
+        
 try:
   if is_admin():
     base.print_info('Check Node.js version')
-    installNodejs(checks_develop.check_nodejs_version())
+    installNodejs(check.check_nodejs_version())
     base.print_info('Check Java bitness')
-    installJava(checks_develop.check_java_bitness())
+    installJava(check.check_java_bitness())
     base.print_info('Check Erlang')
-    installErlang(checks_develop.check_erlang())
+    installErlang(check.check_erlang())
     base.print_info('Check RabbitMQ')
-    installRabbitMQ(checks_develop.check_rabbitmq())
+    installRabbitMQ(check.check_rabbitmq())
     base.print_info('Check Grunt-Cli')
-    installGruntCli(checks_develop.check_gruntcli())
+    installGruntCli(check.check_gruntcli())
+    base.print_info('Check MySQL Server')
+    installMySQLServer(check.check_mysqlServersBitness(check.get_mysqlServersPaths()), check.get_mysqlServersVersions(), check.get_mysqlServersPaths(), check.get_mysqlServersDataPaths())
+    input()
   else:
     ctypes.windll.shell32.ShellExecuteW(None, u"runas", unicode(sys.executable), unicode(''.join(sys.argv)), None, 1)
     sys.exit()

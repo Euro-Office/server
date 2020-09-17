@@ -1,13 +1,6 @@
 import sys
 import subprocess
-import ctypes 
 import os 
-
-def is_admin():
-  try:
-    return ctypes.windll.shell32.IsUserAnAdmin()
-  except:
-    return False
 
 def check_nodejs_version():
   nodejs_version = run_command('node -v')
@@ -31,6 +24,7 @@ def check_rabbitmq():
 
 def get_erlangPath():
   pythonV = run_command('python --version').split('Python ')[1].split('.')[0]
+  
   if int(pythonV) > 2:
     import winreg
   else:
@@ -53,6 +47,84 @@ def get_erlangPath():
   except:
     return Path
     
+def get_mysqlServersPaths():
+  pythonV = run_command('python --version').split('Python ')[1].split('.')[0]
+  paths = []
+  if int(pythonV) > 2:
+    import winreg
+  else:
+    import _winreg as winreg
+    
+  Path = ""
+  try:
+    keyValue = r"SOFTWARE\WOW6432Node\MySQL AB"
+    aKey = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, keyValue)
+    count_subkey = winreg.QueryInfoKey(aKey)[0]
+    
+    for i in range(count_subkey):
+      asubkey_name = winreg.EnumKey(aKey, i)
+      if asubkey_name.find('MySQL Server') != - 1:
+        asubkey = winreg.OpenKey(aKey, asubkey_name)
+        Path = winreg.QueryValueEx(asubkey, 'Location')[0]
+        paths.append(Path)
+      else:
+        continue
+    return paths
+  except:
+    return paths
+    
+def get_mysqlServersDataPaths():
+  pythonV = run_command('python --version').split('Python ')[1].split('.')[0]
+  paths = []
+  if int(pythonV) > 2:
+    import winreg
+  else:
+    import _winreg as winreg
+    
+  Path = ""
+  try:
+    keyValue = r"SOFTWARE\WOW6432Node\MySQL AB"
+    aKey = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, keyValue)
+    count_subkey = winreg.QueryInfoKey(aKey)[0]
+    
+    for i in range(count_subkey):
+      asubkey_name = winreg.EnumKey(aKey, i)
+      if asubkey_name.find('MySQL Server') != - 1:
+        asubkey = winreg.OpenKey(aKey, asubkey_name)
+        Path = winreg.QueryValueEx(asubkey, 'DataLocation')[0]
+        paths.append(Path)
+      else:
+        continue
+    return paths
+  except:
+    return paths
+    
+def get_mysqlServersVersions():
+  pythonV = run_command('python --version').split('Python ')[1].split('.')[0]
+  Versions = []
+  if int(pythonV) > 2:
+    import winreg
+  else:
+    import _winreg as winreg
+    
+  Version = ""
+  try:
+    keyValue = r"SOFTWARE\WOW6432Node\MySQL AB"
+    aKey = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, keyValue)
+    count_subkey = winreg.QueryInfoKey(aKey)[0]
+    
+    for i in range(count_subkey):
+      asubkey_name = winreg.EnumKey(aKey, i)
+      if asubkey_name.find('MySQL Server') != - 1:
+        asubkey = winreg.OpenKey(aKey, asubkey_name)
+        Version = winreg.QueryValueEx(asubkey, 'Version')[0]
+        Versions.append(Version)
+      else:
+        continue
+    return Versions
+  except:
+    return Versions
+    
 def check_erlang():
   erlangPath = get_erlangPath()
   
@@ -69,6 +141,24 @@ def check_gruntcli():
   else:
     return True
     
+def check_mysqlServersBitness(MySQLPaths):
+  serversBitness = []
+  
+  for i in range(len(MySQLPaths)):
+    mysqlServerPath = MySQLPaths[i]
+    result = ""
+    if mysqlServerPath == "":
+      serversBitness.append("")
+    else:
+      result = run_command('cd ' + mysqlServerPath + 'bin && mysql --version')
+      if result.find('for Win32') != -1:
+        serversBitness.append('x32')
+      elif result.find('for Win64') != -1:
+        serversBitness.append('x64')
+      else:
+        serversBitness.append('')
+  return serversBitness
+  
 def run_command(sCommand):
   popen = subprocess.Popen(sCommand, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True) 
   result = ''
@@ -84,3 +174,4 @@ def run_command(sCommand):
     popen.stderr.close()
   
   return result
+
