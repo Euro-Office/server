@@ -37,8 +37,8 @@ def run_integration_example():
   base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
   
 try:
-  if checks_develop.run_command('path').find(sys.exec_prefix) == -1:
-    os.environ['PATH'] = sys.exec_prefix + ';' + os.environ['PATH']
+  if os.environ['PATH'].find(sys.exec_prefix) == -1:
+    os.environ['PATH'] = sys.exec_prefix + os.pathsep + os.environ['PATH']
     
   base.cmd_in_dir(os.getcwd(), 'python', ['install_develop.py'])
   
@@ -76,8 +76,5 @@ try:
   run_module('DocService/sources', ['gc.js'])
   run_module('FileConverter/sources', ['convertermaster.js'])
   run_module('SpellChecker/sources', ['server.js'])
-  
-  if bAddToPath:
-    subprocess.call('call setx /M path "%path:' + sys.exec_prefix + '=%"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
 except SystemExit:
   input("Ignoring SystemExit. Press Enter to continue...")
