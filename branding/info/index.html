@@ -221,7 +221,7 @@
         };
         function fillInfo(licenseInfo, serverInfo) {
             var elem = document.getElementById('build-type');
-            elem.innerText = 'Type: ' + ((licenseInfo.packageType == 0) ? 'Open source' : ((licenseInfo.packageType == 1) ? 'Integration Edition' : 'Developer Edition'));
+            elem.innerText = 'Type: ' + ((licenseInfo.packageType == 0) ? 'Open source' : ((licenseInfo.packageType == 1) ? 'Enterprise Edition' : 'Developer Edition'));
 
             elem = document.getElementById('build-date');
             var builddate = new Date(licenseInfo.buildDate);
