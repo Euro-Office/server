@@ -37,10 +37,10 @@ def run_integration_example():
   base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
   
 try:
-  if os.environ['PATH'].find(sys.exec_prefix) == -1:
-    os.environ['PATH'] = sys.exec_prefix + os.pathsep + os.environ['PATH']
+  if base.get_env('PATH').find(sys.exec_prefix) == -1:
+    base.set_env('PATH', sys.exec_prefix + os.pathsep + base.get_env('PATH'))
     
-  base.cmd_in_dir(os.getcwd(), 'python', ['install_develop.py'])
+  #base.cmd_in_dir('./', 'python', ['install_develop.py'])
   
   platform = base.host_platform()
   if ("windows" == platform):

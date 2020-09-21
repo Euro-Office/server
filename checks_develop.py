@@ -4,8 +4,8 @@ import os
 
 def check_nodejs_version():
   nodejs_version = run_command('node -v')
-  if nodejs_version == '':
-    return nodejs_version
+  if nodejs_version.find("'node' is not recognized") != -1:
+    return ""
    
   nodejs_cur_version = int(nodejs_version.split('.')[0][1:])
   return nodejs_cur_version
@@ -159,16 +159,16 @@ def check_mysqlServersBitness(MySQLPaths):
         serversBitness.append('')
   return serversBitness
   
+def check_buildTools():
+  return True
+  
 def run_command(sCommand):
   popen = subprocess.Popen(sCommand, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True) 
   result = ''
   try:
     stdout, stderr = popen.communicate()
     popen.wait()
-    if sCommand == 'node -v':
-      result = stdout.strip().decode("utf-8") 
-    else:
-      result = stdout.strip().decode("utf-8") + stderr.strip().decode("utf-8")
+    result = stdout.strip().decode("utf-8") + stderr.strip().decode("utf-8")
   finally:
     popen.stdout.close()
     popen.stderr.close()

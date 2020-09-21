@@ -7,6 +7,9 @@ import ctypes
 import checks_develop as check
 import shutil
 
+if sys.version_info[0] >= 3:
+    unicode = str
+    
 def is_admin():
   try:
     return ctypes.windll.shell32.IsUserAnAdmin()
@@ -91,6 +94,18 @@ def installingProgram(sProgram, bSilent = False):
       return True
     else:
       print("Error!")
+      return False
+  elif sProgram == "Build Tools":
+    print('Installing Build Tools...')
+    base.download("https://download.visualstudio.microsoft.com/download/pr/11503713/e64d79b40219aea618ce2fe10ebd5f0d/vs_BuildTools.exe", './vs_BuildTools.exe')
+    code = subprocess.call('vs_buildtools.exe --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    if code == 0:
+      print("Install success!")
+      base.delete_file('./vs_buildtools.exe')
+      return True
+    else:
+      print("Error!")
+      base.delete_file('./vs_buildtools.exe')
       return False
 
 def deleteProgram(sName):
@@ -196,18 +211,19 @@ def installMySQLServer(serversBitness, serversVersions, serversPaths, dataPaths)
       continue 
     elif result == 'x32':
       print('MySQL Server bitness is x32, is not valid')
-      deleteProgram('MySQL Server ' + serversVersions[i][0:-3])
+      deleteProgram('MySQL Server ' + serversVersions[i][0:2])
       continue
     elif result == 'x64':
       connectionResult = check.run_command('cd ' + serversPaths[i] + 'bin && mysql -u root -ponlyoffice -e "SHOW GLOBAL VARIABLES LIKE ' + r"'PORT';" + '"')
       if connectionResult.find('port') != -1 and connectionResult.find('3306') != -1:
         if check.run_command('cd ' + serversPaths[i] + 'bin && mysql -u root -ponlyoffice -e "SHOW DATABESES;').find('onlyoffice') == -1:
-          subprocess.call('cd ' + serversPaths[i] + 'bin && mysql -u root -ponlyoffice -e "source ' + os.getcwd() + '\schema\mysql\createdb.sql"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-        print('MySQL Server ' + serversVersions[i][0:-3] + ' is valid')
+          subprocess.call('cd ' + serversPaths[i] + 'bin && mysql -u root -ponlyoffice -e "source ./schema\mysql\createdb.sql"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+          subprocess.call('cd ' + serversPaths[i] + 'bin && mysql -u root -ponlyoffice -e "' + "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'onlyoffice';" + '"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        print('MySQL Server ' + serversVersions[i][0:2] + ' is valid')
         return True
       else:
         print('MySQL Server configuration is not valid')
-        deleteProgram('MySQL Server ' + serversVersions[i][0:-3])
+        deleteProgram('MySQL Server ' + serversVersions[i][0:2])
         shutil.rmtree(dataPaths[i])
         continue
       
@@ -224,7 +240,8 @@ def installMySQLServer(serversBitness, serversVersions, serversPaths, dataPaths)
       connectionResult = run_command('cd ' + dirPaths[i] + 'bin && mysql -u root -ponlyoffice -e "SHOW GLOBAL VARIABLES LIKE ' + r"'PORT';" + '"')
       if connectionResult.find('port') != -1 and connectionResult.find('3306') != -1:
         if run_command('cd ' + dirPaths[i] + 'bin && mysql -u root -ponlyoffice -e "SHOW DATABESES;').find('onlyoffice') == -1:
-          subprocess.call('cd ' + dirPaths[i] + 'bin && mysql -u root -ponlyoffice -e "source ' + os.getcwd() + '\schema\mysql\createdb.sql"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True) 
+          subprocess.call('cd ' + dirPaths[i] + 'bin && mysql -u root -ponlyoffice -e "source ./schema\mysql\createdb.sql"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+          subprocess.call('cd ' + dirPaths[i] + 'bin && mysql -u root -ponlyoffice -e "' + "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'onlyoffice';" + '"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         print('MySQL Server 8.0 is valid')
         return True
     else:
@@ -247,7 +264,8 @@ try:
     installGruntCli(check.check_gruntcli())
     base.print_info('Check MySQL Server')
     installMySQLServer(check.check_mysqlServersBitness(check.get_mysqlServersPaths()), check.get_mysqlServersVersions(), check.get_mysqlServersPaths(), check.get_mysqlServersDataPaths())
-    input()
+    #base.print_info('Check Build Tools')
+    #installMySQLServer(check.check_mysqlServersBitness(check.get_mysqlServersPaths()), check.get_mysqlServersVersions(), check.get_mysqlServersPaths(), check.get_mysqlServersDataPaths())
   else:
     ctypes.windll.shell32.ShellExecuteW(None, u"runas", unicode(sys.executable), unicode(''.join(sys.argv)), None, 1)
     sys.exit()
