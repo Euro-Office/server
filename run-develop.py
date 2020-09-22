@@ -78,3 +78,4 @@ try:
   run_module('SpellChecker/sources', ['server.js'])
 except SystemExit:
   input("Ignoring SystemExit. Press Enter to continue...")
+  
