@@ -11,55 +11,52 @@ pathToValidMySQLServer = ''
 
 def check_nodejs():
   global progsToInstall, progsToUninstall
-  base.print_info('Check Node.js version')
+  base.print_info('Check installed Node.js version')
   nodejs_version = run_command('node -v')['stdout']
   if (nodejs_version == ''):
-    print('Node.js not found.')
+    print('Node.js not found')
     progsToInstall.append('Node.js')
     return False
-  else:
-    nodejs_cur_version = int(nodejs_version.split('.')[0][1:])
-    print('Installed Node.js version: ' + str(nodejs_cur_version))
-    nodejs_min_version = 8
-    nodejs_max_version = 10
-    if (nodejs_min_version > nodejs_cur_version or nodejs_cur_version > nodejs_max_version):
-      print('Node.js version must be 8.x to 10.x')
-      progsToUninstall.append('Node.js')
-      progsToInstall.append('Node.js')
-      return False
-    else:
-      print('Node.js version is valid')
-      return True      
   
-  return nodejs_cur_version
+  nodejs_cur_version = int(nodejs_version.split('.')[0][1:])
+  print('Installed Node.js version: ' + str(nodejs_cur_version))
+  nodejs_min_version = 8
+  nodejs_max_version = 10
+  if (nodejs_min_version > nodejs_cur_version or nodejs_cur_version > nodejs_max_version):
+    print('Installed Node.js version must be 8.x to 10.x')
+    progsToUninstall.append('Node.js')
+    progsToInstall.append('Node.js')
+    return False
   
-def check_java_bitness():
+  print('Installed Node.js version is valid')
+  return True
+  
+def check_java():
   global progsToInstall
-  base.print_info('Check Java bitness')
+  base.print_info('Check installed Java')
   java_version = run_command('java -version')['stderr']
   
   if (java_version.find('64-Bit') != -1):
-    print('Java bitness is valid')
+    print('Installed java is valid')
     return True
-  elif (java_version.find('32-Bit') != -1):
-    print('Installed java: ' + javaBitness)
-    print('Java bitness must be x64')
-    progsToInstall.append('Java')
-    return False
+  
+  if (java_version.find('32-Bit') != -1):
+    print('Installed java must be x64')
   else:
-    print('Java not found.') 
-    pprogsToInstall.append('Java')
+    print('Java not found')
+  
+  progsToInstall.append('Java')
+  return False
     
 def check_rabbitmq():
   global progsToInstall
-  base.print_info('Check RabbitMQ')
+  base.print_info('Check installed RabbitMQ')
   result = run_command('sc query RabbitMQ')['stdout']
   if (result.find('RabbitMQ') == -1):
     progsToInstall.append('RabbitMQ')
     return False
-  else:
-    print('RabbitMQ is installed')
-    return True
+  print('Installed RabbitMQ is valid')
+  return True
 
 def get_erlangPath():
   if (sys.version_info[0] >= 3):
@@ -86,27 +83,23 @@ def get_erlangPath():
     
 def check_erlang():
   global progsToInstall, progsToUninstall
-  base.print_info('Check Erlang')
+  base.print_info('Check installed Erlang')
   erlangPath = get_erlangPath()
   
-  if (erlangPath == ""):
-    print('Erlang not found')
-    progsToInstall.append('Erlang')
-    progsToInstall.append('RabbitMQ')
-    return False
-  else:
-    erlangBitness = run_command('cd ' + erlangPath + '/bin && erl -eval "erlang:display(erlang:system_info(wordsize)), halt()."  -noshell')['stdout']
-    if (erlangBitness == '4'):
-      print('Erlang bitness (x32) is not valid') 
-      progsToUninstall('Erlang')
-      progsToInstall.append('Erlang')
-      progsToInstall.append('RabbitMQ')
-      return False
-    elif (erlangBitness == '8'):
+  if (erlangPath != ""):
+    erlangBitness = run_command('cd ' + erlangPath + '/bin && erl -eval "erlang:display(erlang:system_info(wordsize)), halt()." -noshell')['stdout']
+    if (erlangBitness == '8'):
       if (os.getenv("ERLANG_HOME") != get_erlangPath()):
         progsToInstall.append('ERLANG_HOME')
-      print("Erlang bitness is valid")
+      print("Installed Erlang bitness is valid")
       return True
+    print('Installed Erlang must be x64') 
+    progsToUninstall.append('Erlang')
+  
+  print('Erlang not found')
+  progsToInstall.append('Erlang')
+  progsToInstall.append('RabbitMQ')
+  return False
 
 def check_gruntcli():
   global progsToInstall
@@ -321,7 +314,7 @@ def run_command(sCommand):
 def check_all():
   global progsToInstall, progsToUninstall, pathsToRemove, pathToValidMySQLServer
   check_nodejs()
-  check_java_bitness()
+  check_java()
   check_erlang()
   check_rabbitmq()
   check_gruntcli()
