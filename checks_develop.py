@@ -282,8 +282,10 @@ def check_mysqlServer(serversBitness, serversVersions, serversPaths, dataPaths, 
         if (run_command('cd ' + serversPaths[i] + 'bin && mysql -u root -ponlyoffice -e "SHOW DATABASES;"')['stdout'].find('onlyoffice') == -1):
           print('Database onlyoffice not found')
           progsToInstall.append('MySQLDatabase')
+        if (run_command('cd ' + serversPaths[i] + 'bin && mysql -u root -ponlyoffice -e "SELECT plugin from mysql.user where User=' + "'root';")['stdout'].find('mysql_native_password') == -1):
+          print('Password encryption is not valid')
+          progsToInstall.append('MySQLEncrypt') 
         pathToValidMySQLServer = serversPaths[i]
-        progsToInstall.append('MySQLEncrypt')
         return True
       else:
         print('MySQL Server configuration is not valid')
@@ -333,4 +335,5 @@ def check_all():
   
   check_mysqlServer(mySQLServersBitness, mySQLServersVersions, mySQLServersPaths, mySQLServersDataPaths, True)
   return {'Uninstall': progsToUninstall, 'Install': progsToInstall, 'Paths': pathsToRemove, 'MySQLServer' : pathToValidMySQLServer}
+
 
