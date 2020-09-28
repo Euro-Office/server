@@ -103,16 +103,16 @@ def check_erlang():
 
 def check_gruntcli():
   global progsToInstall
-  base.print_info('Check Grunt-Cli')
+  base.print_info('Check installed Grunt-Cli')
   result = run_command('npm list -g --depth=0')['stdout']
   
   if (result.find('grunt-cli') == -1):
     print('Grunt-Cli not found')
     progsToInstall.append('GruntCli')
     return False
-  else:
-    print('Grunt-Cli is installed')
-    return True
+  
+  print('Grunt-Cli is installed')
+  return True
     
 def get_mysqlServersPaths():
   paths = []
