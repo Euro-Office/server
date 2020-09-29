@@ -135,8 +135,8 @@ def deleteProgram(sName):
   
 def installMySQLServer():
   installingProgram('MySQLServer')
-  mysqlPaths    = check.get_mysqlServersPaths()
-  mysqlVersions = check.get_mysqlServersVersions()
+  mysqlPaths    = check.get_mysqlServersInfo('Location')
+  mysqlVersions = check.get_mysqlServersInfo('Version')
 
   for i in range(len(mysqlVersions)):
     if (mysqlVersions[i] == '8.0.21'):

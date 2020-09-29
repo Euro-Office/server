@@ -107,7 +107,7 @@ def check_erlang():
     erlangBitness = run_command('cd ' + erlangPath + '/bin && erl -eval "erlang:display(erlang:system_info(wordsize)), halt()." -noshell')['stdout']
     if (erlangBitness == '8'):
       if (os.getenv("ERLANG_HOME") != get_erlangPath()):
-        progsToInstall.append('ERLANG_HOME')
+        dependence.progsToInstall.append('ERLANG_HOME')
       print("Installed Erlang bitness is valid")
       return dependence
     print('Installed Erlang must be x64') 
@@ -132,8 +132,8 @@ def check_gruntcli():
   print('Grunt-Cli is installed')
   return dependence
     
-def get_mysqlServersPaths():
-  paths = []
+def get_mysqlServersInfo(sParam):
+  arrInfo = []
   Path = ""
   
   try:
@@ -146,57 +146,13 @@ def get_mysqlServersPaths():
       asubkey_name = winreg.EnumKey(aKey, i)
       if (asubkey_name.find('MySQL Server') != - 1):
         asubkey = winreg.OpenKey(aKey, asubkey_name)
-        Path = winreg.QueryValueEx(asubkey, 'Location')[0]
-        paths.append(Path)
+        Path = winreg.QueryValueEx(asubkey, sParam)[0]
+        arrInfo.append(Path)
       else:
         continue
-    return paths
+    return arrInfo
   except:
-    return paths
-    
-def get_mysqlServersDataPaths():
-  paths = []
-  Path = ""
-  
-  try:
-    keyValue = r"SOFTWARE\WOW6432Node\MySQL AB"
-    
-    aKey = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, keyValue)
-    
-    count_subkey = winreg.QueryInfoKey(aKey)[0]
-    for i in range(count_subkey):
-      asubkey_name = winreg.EnumKey(aKey, i)
-      if (asubkey_name.find('MySQL Server') != - 1):
-        asubkey = winreg.OpenKey(aKey, asubkey_name)
-        Path = winreg.QueryValueEx(asubkey, 'DataLocation')[0]
-        paths.append(Path)
-      else:
-        continue
-    return paths
-  except:
-    return paths
-    
-def get_mysqlServersVersions():
-  Versions = []
-  Version = ""
-  
-  try:
-    keyValue = r"SOFTWARE\WOW6432Node\MySQL AB"
-    
-    aKey = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, keyValue)
-    
-    count_subkey = winreg.QueryInfoKey(aKey)[0]
-    for i in range(count_subkey):
-      asubkey_name = winreg.EnumKey(aKey, i)
-      if (asubkey_name.find('MySQL Server') != - 1):
-        asubkey = winreg.OpenKey(aKey, asubkey_name)
-        Version = winreg.QueryValueEx(asubkey, 'Version')[0]
-        Versions.append(Version)
-      else:
-        continue
-    return Versions
-  except:
-    return Versions
+    return arrInfo
     
 def check_mysqlInstaller():
   dependence = CDependencies()
@@ -312,10 +268,10 @@ def check_dependencies():
   final_dependence.append(check_buildTools())
   final_dependence.append(check_mysqlInstaller())
   
-  mySQLServersPaths     = get_mysqlServersPaths()
+  mySQLServersPaths     = get_mysqlServersInfo('Location')
   mySQLServersBitness   = check_mysqlServersBitness(mySQLServersPaths)
-  mySQLServersVersions  = get_mysqlServersVersions()
-  mySQLServersDataPaths = get_mysqlServersDataPaths()
+  mySQLServersVersions  = get_mysqlServersInfo('Version')
+  mySQLServersDataPaths = get_mysqlServersInfo('DataLocation')
   
   final_dependence.append(check_mysqlServer(mySQLServersBitness, mySQLServersVersions, mySQLServersPaths, mySQLServersDataPaths))
   
