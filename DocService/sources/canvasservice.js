@@ -58,7 +58,6 @@ var cfgImageSize = config_server.get('limits_image_size');
 var cfgImageDownloadTimeout = config_server.get('limits_image_download_timeout');
 var cfgRedisPrefix = config.get('services.CoAuthoring.redis.prefix');
 var cfgTokenEnableBrowser = config.get('services.CoAuthoring.token.enable.browser');
-const cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
 const cfgForgottenFiles = config_server.get('forgottenfiles');
 const cfgForgottenFilesName = config_server.get('forgottenfilesname');
 const cfgOpenProtectedFile = config_server.get('openProtectedFile');
@@ -484,7 +483,7 @@ function* commandImgurls(conn, cmd, outputData) {
       //todo multiple url case
       let url = checkJwtRes.decoded.url;
       urls = [url];
-      if (cfgTokenEnableRequestOutbox) {
+      if (utils.canIncludeOutboxAuthorization(url)) {
         authorization = utils.fillJwtForRequest({url: url});
       }
     } else {

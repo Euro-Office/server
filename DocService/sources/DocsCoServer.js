@@ -77,6 +77,7 @@ const _ = require('underscore');
 const url = require('url');
 const os = require('os');
 const cluster = require('cluster');
+const crypto = require('crypto');
 const cron = require('cron');
 const co = require('co');
 const jwt = require('jsonwebtoken');
@@ -127,7 +128,6 @@ const cfgExpUpdateVersionStatus = ms(config.get('expire.updateVersionStatus'));
 const cfgSockjs = config.get('sockjs');
 const cfgTokenEnableBrowser = config.get('token.enable.browser');
 const cfgTokenEnableRequestInbox = config.get('token.enable.request.inbox');
-const cfgTokenEnableRequestOutbox = config.get('token.enable.request.outbox');
 const cfgTokenSessionAlgorithm = config.get('token.session.algorithm');
 const cfgTokenSessionExpires = ms(config.get('token.session.expires'));
 const cfgTokenInboxHeader = config.get('token.inbox.header');
@@ -135,6 +135,7 @@ const cfgTokenInboxPrefix = config.get('token.inbox.prefix');
 const cfgTokenInboxInBody = config.get('token.inbox.inBody');
 const cfgTokenOutboxInBody = config.get('token.outbox.inBody');
 const cfgTokenBrowserSecretFromInbox = config.get('token.browser.secretFromInbox');
+const cfgTokenVerifyOptions = config.get('token.verifyOptions');
 const cfgSecretBrowser = config.get('secret.browser');
 const cfgSecretInbox = config.get('secret.inbox');
 const cfgSecretSession = config.get('secret.session');
@@ -168,6 +169,7 @@ const MIN_SAVE_EXPIRATION = 60000;
 const FORCE_SAVE_EXPIRATION = Math.min(Math.max(cfgForceSaveInterval, MIN_SAVE_EXPIRATION),
                                        cfgQueueRetentionPeriod * 1000);
 const HEALTH_CHECK_KEY_MAX = 10000;
+const SHARD_ID = crypto.randomBytes(16).toString('base64');//16 as guid
 
 const PRECISION = [{name: 'hour', val: ms('1h')}, {name: 'day', val: ms('1d')}, {name: 'week', val: ms('7d')},
   {name: 'month', val: ms('31d')},
@@ -414,6 +416,38 @@ CRecalcIndex.prototype = {
   }
 };
 
+function updatePresenceCounters(conn, val) {
+  return co(function* () {
+    if (conn.isCloseCoAuthoring || (conn.user && conn.user.view)) {
+      yield editorData.incrViewerConnectionsCountByShard(SHARD_ID, val);
+      if (clientStatsD) {
+        let countView = yield editorData.getViewerConnectionsCount(connections);
+        clientStatsD.gauge('expireDoc.connections.view', countView);
+      }
+    } else {
+      yield editorData.incrEditorConnectionsCountByShard(SHARD_ID, val);
+      if (clientStatsD) {
+        let countEditors = yield editorData.getEditorConnectionsCount(connections);
+        clientStatsD.gauge('expireDoc.connections.edit', countEditors);
+      }
+    }
+  });
+}
+function addPresence(conn, updateCunters) {
+  return co(function* () {
+    yield editorData.addPresence(conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
+    if (updateCunters) {
+      yield updatePresenceCounters(conn, 1);
+    }
+  });
+}
+function removePresence(conn) {
+  return co(function* () {
+    yield editorData.removePresence(conn.docId, conn.user.id);
+    yield updatePresenceCounters(conn, -1);
+  });
+}
+
 function sendData(conn, data) {
   conn.write(JSON.stringify(data));
   const type = data ? data.type : null;
@@ -557,7 +591,7 @@ function* getOriginalParticipantsId(docId) {
 function* sendServerRequest(docId, uri, dataObject, opt_checkAuthorization) {
   logger.debug('postData request: docId = %s;url = %s;data = %j', docId, uri, dataObject);
   let auth;
-  if (cfgTokenEnableRequestOutbox) {
+  if (utils.canIncludeOutboxAuthorization(uri)) {
     auth = utils.fillJwtForRequest(dataObject);
     if (cfgTokenOutboxInBody) {
       dataObject = {token: auth};
@@ -645,10 +679,17 @@ function* startForceSave(docId, type, opt_userdata, opt_userConnectionId, opt_ba
   logger.debug('startForceSave start:docId = %s', docId);
   let res = {code: commonDefines.c_oAscServerCommandErrors.NoError, time: null};
   let startedForceSave;
+  let hasEncrypted = false;
   if (!shutdownFlag) {
-    startedForceSave = yield editorData.checkAndStartForceSave(docId);
+    let hvals = yield editorData.getPresence(docId, connections);
+    hasEncrypted = hvals.some((currentValue) => {
+      return !!JSON.parse(currentValue).encrypted;
+    });
+    if (!hasEncrypted) {
+      startedForceSave = yield editorData.checkAndStartForceSave(docId);
+    }
   }
-  logger.debug('startForceSave canStart:docId = %s; startedForceSave = %j', docId, startedForceSave);
+  logger.debug('startForceSave canStart:docId = %s; hasEncrypted = %s; startedForceSave = %j', docId, hasEncrypted, startedForceSave);
   if (startedForceSave) {
     let baseUrl = opt_baseUrl || startedForceSave.baseUrl;
     let forceSave = new commonDefines.CForceSaveData(startedForceSave);
@@ -950,7 +991,7 @@ function checkJwt(docId, token, type) {
     logger.warn('empty secret: docId = %s token = %s', docId, token);
   }
   try {
-    res.decoded = jwt.verify(token, secret);
+    res.decoded = jwt.verify(token, secret, cfgTokenVerifyOptions);
     logger.debug('checkJwt success: docId = %s decoded = %j', docId, res.decoded);
   } catch (err) {
     logger.warn('checkJwt error: docId = %s name = %s message = %s token = %s', docId, err.name, err.message, token);
@@ -1219,7 +1260,7 @@ exports.install = function(server, callbackFunction) {
       if (reconnected) {
         logger.info("reconnected: userId = %s docId = %s", tmpUser.id, docId);
       } else {
-        yield editorData.removePresence(docId, tmpUser.id);
+        yield removePresence(conn);
         hvals = yield editorData.getPresence(docId, connections);
         participantsTimestamp = Date.now();
         if (hvals.length <= 0) {
@@ -1230,7 +1271,7 @@ exports.install = function(server, callbackFunction) {
       if (!conn.isCloseCoAuthoring) {
         tmpUser.view = true;
         conn.isCloseCoAuthoring = true;
-        yield editorData.addPresence(docId, tmpUser.id, utils.getConnectionInfoStr(conn));
+        yield addPresence(conn, true);
         if (cfgTokenEnableBrowser) {
           sendDataRefreshToken(conn, fillJwtByConnection(conn));
         }
@@ -1329,9 +1370,8 @@ exports.install = function(server, callbackFunction) {
       }
     }
     if (docIdOld !== docIdNew) {
-      var tmpUser = conn.user;
       //remove presence(other data was removed before in closeDocument)
-      yield editorData.removePresence(docIdOld, tmpUser.id);
+      yield removePresence(conn);
       var hvals = yield editorData.getPresence(docIdOld, connections);
       if (hvals.length <= 0) {
         yield editorData.removePresenceDocument(docIdOld);
@@ -1339,7 +1379,7 @@ exports.install = function(server, callbackFunction) {
 
       //apply new
       conn.docId = docIdNew;
-      yield editorData.addPresence(docIdNew, tmpUser.id, utils.getConnectionInfoStr(conn));
+      yield addPresence(conn, true);
       if (cfgTokenEnableBrowser) {
         sendDataRefreshToken(conn, fillJwtByConnection(conn));
       }
@@ -1509,7 +1549,7 @@ exports.install = function(server, callbackFunction) {
     if (constants.CONN_CLOSED !== conn.readyState) {
       // Кладем в массив, т.к. нам нужно отправлять данные для открытия/сохранения документа
       connections.push(conn);
-      yield editorData.addPresence(conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
+      yield addPresence(conn, true);
 
       sendFileError(conn, errorId, code);
     }
@@ -1863,7 +1903,7 @@ exports.install = function(server, callbackFunction) {
         return;
       }
 
-      const curUserId = user.id + curIndexUser;
+      const curUserId = String(user.id) + curIndexUser;
       conn.docId = data.docid;
       conn.permissions = data.permissions;
       conn.user = {
@@ -1912,7 +1952,7 @@ exports.install = function(server, callbackFunction) {
         if (constants.CONN_CLOSED !== conn.readyState) {
           // Кладем в массив, т.к. нам нужно отправлять данные для открытия/сохранения документа
           connections.push(conn);
-          yield editorData.addPresence(docId, conn.user.id, utils.getConnectionInfoStr(conn));
+          yield addPresence(conn, true);
           // Посылаем формальную авторизацию, чтобы подтвердить соединение
           yield* sendAuthInfo(conn, bIsRestore, undefined);
           if (cmd) {
@@ -2027,7 +2067,7 @@ exports.install = function(server, callbackFunction) {
     }
     connections.push(conn);
     let firstParticipantNoView, countNoView = 0;
-    yield editorData.addPresence(docId, tmpUser.id, utils.getConnectionInfoStr(conn));
+    yield addPresence(conn, true);
     let participantsMap = yield* getParticipantMap(docId);
     const participantsTimestamp = Date.now();
     for (let i = 0; i < participantsMap.length; ++i) {
@@ -2647,7 +2687,6 @@ exports.install = function(server, callbackFunction) {
 				licenseWarningLimit = licenseInfo.usersCount * cfgWarningLimitPercents <= execRes.length;
 			}
 		} else {
-			// Warning. Cluster version or if workers > 1 will work with increasing numbers.
 			let connectionsCount = 0;
 			if (constants.PACKAGE_TYPE_OS === licenseInfo.packageType && c_LR.Error === licenseType) {
 				connectionsCount = constants.LICENSE_CONNECTIONS;
@@ -2656,9 +2695,7 @@ exports.install = function(server, callbackFunction) {
 				connectionsCount = licenseInfo.connections;
 			}
 			if (connectionsCount) {
-				const editConnectionsCount = (_.filter(connections, function (el) {
-					return true !== el.isCloseCoAuthoring && el.user.view !== true;
-				})).length;
+				const editConnectionsCount = yield editorData.getEditorConnectionsCount(connections);
 				licenseType = (connectionsCount > editConnectionsCount) ? licenseType : c_LR.Connections;
 				licenseWarningLimit = connectionsCount * cfgWarningLimitPercents <= editConnectionsCount;
 			}
@@ -2891,8 +2928,8 @@ exports.install = function(server, callbackFunction) {
     var cronJob = this;
     return co(function* () {
       try {
-        var countEdit = 0;
-        var countView = 0;
+        var countEditByShard = 0;
+        var countViewByShard = 0;
         logger.debug('expireDoc connections.length = %d', connections.length);
         var nowMs = new Date().getTime();
         var nextMs = cronJob.nextDate();
@@ -2927,16 +2964,20 @@ exports.install = function(server, callbackFunction) {
           if (constants.CONN_CLOSED === conn.readyState) {
             logger.error('expireDoc connection closed docId = %s', conn.docId);
           }
-          yield editorData.addPresence(conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
-          if (conn.user && conn.user.view) {
-            countView++;
+          yield addPresence(conn, false);
+          if (conn.isCloseCoAuthoring || (conn.user && conn.user.view)) {
+            countViewByShard++;
           } else {
-            countEdit++;
+            countEditByShard++;
           }
         }
-        yield* collectStats(countEdit, countView);
+        yield* collectStats(countEditByShard, countViewByShard);
+        yield editorData.setEditorConnectionsCountByShard(SHARD_ID, countEditByShard);
+        yield editorData.setViewerConnectionsCountByShard(SHARD_ID, countViewByShard);
         if (clientStatsD) {
+          let countEdit = yield editorData.getEditorConnectionsCount(connections);
           clientStatsD.gauge('expireDoc.connections.edit', countEdit);
+          let countView = yield editorData.getViewerConnectionsCount(connections);
           clientStatsD.gauge('expireDoc.connections.view', countView);
         }
       } catch (err) {

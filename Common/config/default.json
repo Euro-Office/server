@@ -90,8 +90,10 @@
 			},
 			"requestDefaults": {
 				"headers": {
-					"User-Agent": "Node.js/6.13"
+					"User-Agent": "Node.js/6.13",
+					"Connection": "Keep-Alive"
 				},
+				"gzip": true,
 				"rejectUnauthorized": true
 			},
 			"autoAssembly": {
@@ -103,7 +105,7 @@
 				"utils_common_fontdir": "null",
 				"utils_fonts_search_patterns": "*.ttf;*.ttc;*.otf",
 				"resource_expires": 31536000,
-				"limits_image_types_upload": "jpg;png;gif;bmp"
+				"limits_image_types_upload": "jpg;jpeg;jpe;png;gif;bmp"
 			},
 			"sql": {
 				"type": "postgres",
@@ -182,11 +184,15 @@
 					"prefix": "Bearer ",
 					"algorithm": "HS256",
 					"expires": "5m",
-					"inBody": false
+					"inBody": false,
+					"urlExclusionRegex": ""
 				},
 				"session": {
 					"algorithm": "HS256",
 					"expires": "30d"
+				},
+				"verifyOptions": {
+					"clockTolerance": 60
 				}
 			},
 			"plugins": {

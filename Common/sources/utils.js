@@ -73,10 +73,16 @@ var cfgVisibilityTimeout = config.get('queue.visibilityTimeout');
 var cfgQueueRetentionPeriod = config.get('queue.retentionPeriod');
 var cfgRequestDefaults = config.get('services.CoAuthoring.requestDefaults');
 const cfgTokenOutboxInBody = config.get('services.CoAuthoring.token.outbox.inBody');
+const cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
+const cfgTokenOutboxUrlExclusionRegex = config.get('services.CoAuthoring.token.outbox.urlExclusionRegex');
 
 var ANDROID_SAFE_FILENAME = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-+,@£$€!½§~\'=()[]{}0123456789';
 
 var baseRequest = request.defaults(cfgRequestDefaults);
+let outboxUrlExclusionRegex = null;
+if ("" !== cfgTokenOutboxUrlExclusionRegex) {
+  outboxUrlExclusionRegex = new RegExp(cfgTokenOutboxUrlExclusionRegex);
+}
 
 var g_oIpFilterRules = function() {
   var res = [];
@@ -316,7 +322,9 @@ function postRequestPromise(uri, postData, optTimeout, opt_Authorization) {
         if (200 == response.statusCode || 204 == response.statusCode) {
           resolve(body);
         } else {
-          let error = new Error('Error response: statusCode:' + response.statusCode + ' ;body:\r\n' + body);
+          let code = response.statusCode;
+          let responseHeaders = JSON.stringify(response.headers);
+          let error = new Error(`Error response: statusCode:${code}; headers:${responseHeaders}; body:\r\n${body}`);
           error.statusCode = response.statusCode;
           reject(error);
         }
@@ -778,10 +786,23 @@ exports.getConnectionInfo = function(conn){
       indexUser: user.indexUser,
       view: user.view,
       connectionId: conn.id,
-      isCloseCoAuthoring: conn.isCloseCoAuthoring
+      isCloseCoAuthoring: conn.isCloseCoAuthoring,
+      encrypted: conn.encrypted
     };
     return data;
 };
 exports.getConnectionInfoStr = function(conn){
   return JSON.stringify(exports.getConnectionInfo(conn));
+};
+exports.canIncludeOutboxAuthorization = function (url) {
+  if (cfgTokenEnableRequestOutbox) {
+    if (!outboxUrlExclusionRegex) {
+      return true;
+    } else if (!outboxUrlExclusionRegex.test(url)) {
+      return true;
+    } else {
+      logger.debug('canIncludeOutboxAuthorization excluded by token.outbox.urlExclusionRegex url=%s', url);
+    }
+  }
+  return false;
 };

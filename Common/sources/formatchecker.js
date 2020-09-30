@@ -200,6 +200,7 @@ exports.getFormatFromString = function(ext) {
     case 'docx':
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOCX;
     case 'doc':
+    case 'wps':
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_DOC;
     case 'odt':
       return constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_ODT;
@@ -234,6 +235,7 @@ exports.getFormatFromString = function(ext) {
     case 'pptx':
       return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPTX;
     case 'ppt':
+    case 'dps':
       return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_PPT;
     case 'odp':
       return constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODP;
@@ -255,6 +257,7 @@ exports.getFormatFromString = function(ext) {
     case 'xlsx':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSX;
     case 'xls':
+    case 'et':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLS;
     case 'ods':
       return constants.AVS_OFFICESTUDIO_FILE_SPREADSHEET_ODS;
@@ -379,7 +382,7 @@ exports.getStringFromFormat = function(format) {
     case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_POTM:
       return 'potm';
     case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_ODP_FLAT:
-      return 'fodt';
+      return 'fodp';
     case constants.AVS_OFFICESTUDIO_FILE_PRESENTATION_OTP:
       return 'otp';
 
