@@ -1,32 +1,10 @@
-#!/usr/bin/env python
 import sys
 sys.path.append('../build_tools/scripts')
 import os
 import base
+import ctypes
+import checks_develop as checks
 import subprocess
-
-def check_nodejs_version():
-  get_version_command = 'node -v'
-  popen = subprocess.Popen(get_version_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-  retvalue = ''
-  try:
-    stdout, stderr = popen.communicate()
-    popen.wait()
-
-    nodejs_version = stdout.strip().decode("utf-8")
-
-  finally:
-    popen.stdout.close()
-    popen.stderr.close()
-
-  print('Installed Node.js version: ' + nodejs_version)
-  nodejs_min_version = 8
-  nodejs_cur_version = int(nodejs_version.split('.')[0][1:])
-  if (nodejs_min_version > nodejs_cur_version):
-    print('Node.js version!', nodejs_min_version, 'more than', nodejs_cur_version, '. Min version Node.js 8.x')
-    return False
-
-  return True
 
 def install_module(path):
   base.print_info('Install: ' + path)
@@ -57,12 +35,11 @@ def start_mac_services():
 
 def run_integration_example():
   base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
-
+  
 try:
-  base.print_info('check Node.js version')
-  if (True != check_nodejs_version()):
-    exit(0)
-
+  checks.check_pythonPath()
+  base.cmd_in_dir('./', 'python', ['install_develop.py'])
+  
   platform = base.host_platform()
   if ("windows" == platform):
     restart_win_rabbit()
@@ -96,3 +73,4 @@ try:
   run_module('SpellChecker/sources', ['server.js'])
 except SystemExit:
   input("Ignoring SystemExit. Press Enter to continue...")
+  
