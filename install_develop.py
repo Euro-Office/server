@@ -113,7 +113,7 @@ def installingProgram(sProgram, sParam = ''):
   elif (sProgram == "BuildTools"):
     print('Installing Build Tools...')
     base.download("https://download.visualstudio.microsoft.com/download/pr/11503713/e64d79b40219aea618ce2fe10ebd5f0d/vs_BuildTools.exe", './vs_BuildTools.exe')
-    code = subprocess.call('vs_buildtools.exe --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    code = os.system('vs_BuildTools.exe --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait')
     if (code == 0):
       print("Install success!")
       base.delete_file('./vs_buildtools.exe')
