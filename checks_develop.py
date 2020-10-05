@@ -74,6 +74,7 @@ def check_rabbitmq():
   base.print_info('Check installed RabbitMQ')
   result = run_command('sc query RabbitMQ')['stdout']
   if (result.find('RabbitMQ') == -1):
+    print('RabbitMQ not found')
     dependence.progsToInstall.append('RabbitMQ')
     return dependence
   print('Installed RabbitMQ is valid')
