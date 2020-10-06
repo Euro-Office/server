@@ -134,10 +134,8 @@ def deleteProgram(sName):
       info = '"' + info + '" /S'
       
     print(info)  
-    code = os.system(info)
-      
-    if (code == 1):
-      print("Error!")
+    if (os.system(info) != 0):
+      print("Deleting was failed!")
       return False
       
   return True
