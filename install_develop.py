@@ -129,6 +129,8 @@ def deleteProgram(sName):
   
   for info in delInfo:
     if (base.is_file(info) == False):
+      info = info.replace('/I', '/x')
+      info = info.replace('/i', '/x')
       code = os.system(info)
     else:
       print('"' + info + '" /S')
@@ -138,6 +140,9 @@ def deleteProgram(sName):
       print("Delete success!")
     else:
       print("Error!")
+      return False
+      
+  return True
       
   
 def installMySQLServer():

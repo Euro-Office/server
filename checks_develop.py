@@ -267,30 +267,18 @@ def get_programDelInfoByFlag(sName, flag):
       asubkey_name = winreg.EnumKey(aKey, i)
       asubkey = winreg.OpenKey(aKey, asubkey_name)
       progName = winreg.QueryValueEx(asubkey, 'DisplayName')[0]
-    except:
-      continue
-
-    if (progName.find(sName) != -1):
-      try:
+    
+      if (progName.find(sName) != -1):
         uninstallString = winreg.QueryValueEx(asubkey, 'UninstallString')[0]
-        if (base.is_file(uninstallString) == False):
-          uninstallString = uninstallString.replace('/I', '/x')
-          uninstallString = uninstallString.replace('/i', '/x')
         info.append(uninstallString)
-      except:
-        continue
+      
+    except:
+      pass
       
   return info 
   
 def get_programDelInfo(sName):
-  delInfo = []
-  
-  flag1 = winreg.KEY_WOW64_32KEY
-  flag2 = winreg.KEY_WOW64_64KEY
-  
-  delInfo += get_programDelInfoByFlag(sName, flag1) + get_programDelInfoByFlag(sName, flag2)
-  
-  return delInfo
+  return get_programDelInfoByFlag(sName, winreg.KEY_WOW64_32KEY) + get_programDelInfoByFlag(sName, winreg.KEY_WOW64_64KEY)
 
 def check_dependencies():
   final_dependence = CDependencies()
@@ -312,4 +300,3 @@ def check_dependencies():
   
   return final_dependence
   
-
