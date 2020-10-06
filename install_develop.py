@@ -164,7 +164,7 @@ try:
           installMySQLServer()
         else:
           installingProgram(checkResults.progsToInstall[i])
-      input('Done')
+      print('All installations completed!')
     else:
       ctypes.windll.shell32.ShellExecuteW(None, unicode("runas"), unicode(sys.executable), unicode(''.join(sys.argv)), None, 1)
       sys.exit(0)
