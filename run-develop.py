@@ -19,7 +19,7 @@ def find_rabbitmqctl(base_path):
 
 def restart_win_rabbit():
   base.print_info('restart RabbitMQ node to prevent "Erl.exe high CPU usage every Monday morning on Windows" https://groups.google.com/forum/#!topic/rabbitmq-users/myl74gsYyYg')
-  rabbitmqctl = find_rabbitmqctl(os.environ['ProgramFiles']) or find_rabbitmqctl(os.environ['ProgramFiles(x86)'])
+  rabbitmqctl = find_rabbitmqctl(os.environ['PROGRAMW6432']) or find_rabbitmqctl(os.environ['ProgramFiles(x86)'])
   if rabbitmqctl is not None:
     base.cmd_in_dir(base.get_script_dir(rabbitmqctl), 'rabbitmqctl.bat', ['stop_app'])
     base.cmd_in_dir(base.get_script_dir(rabbitmqctl), 'rabbitmqctl.bat', ['start_app'])
