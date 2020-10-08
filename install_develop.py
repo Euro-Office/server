@@ -66,12 +66,6 @@ def installingProgram(sProgram, sParam = ''):
       print("Error!")
       base.delete_file('./erlang.exe')
       return False
-  elif (sProgram == 'ERLANG_HOME'):
-    code = subprocess.call('SETX /M ERLANG_HOME "' + check.get_erlangPath() + '"')
-    if (code == 0):
-      return True
-    else:
-      return False
   elif (sProgram == 'GruntCli'):
     print('Installing Grunt-Cli...')
     code = subprocess.call('npm install -g grunt-cli',  stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
