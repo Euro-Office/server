@@ -43,14 +43,6 @@ def installingProgram(sProgram, sParam = ''):
     else:
       print("Error!")
       return False
-  elif (sProgram == 'MySQLDatabase'):
-    print('Setting database...')
-    subprocess.call('"' + sParam + 'bin\\mysql" -u root -ponlyoffice -e "source ' + os.getcwd() + '\\schema\\mysql\\createdb.sql"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-    return True
-  elif (sProgram == 'MySQLEncrypt'):
-    print('Setting MySQL password encrypting...')
-    subprocess.call('"' + sParam + 'bin\\mysql" -u root -ponlyoffice -e "' + "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'onlyoffice';" + '"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-    return True   
   elif (sProgram == "BuildTools"):
     dependence.installProgram(sProgram)
     return True

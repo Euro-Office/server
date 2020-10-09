@@ -62,7 +62,8 @@ def check_mysqlServer():
   for info in arrInfo:
     dependence.append_uninstall('MySQL Server')
     dependence.append_removepath(info['DataLocation'])
-    
+  dependence.append_removepath(os.environ['ProgramData'] + '\\MySQL\\MySQL Server 8.0\\')
+  
   dependence.append_install('MySQLServer')
   
   return dependence
