@@ -59,36 +59,43 @@ def check_mysqlServer():
       
   print('Valid MySQL Server not found')
   
-  for info in arrInfo:
-    dependence.append_uninstall('MySQL Server')
-    dependence.append_removepath(info['DataLocation'])
-  dependence.append_removepath(os.environ['ProgramData'] + '\\MySQL\\MySQL Server 8.0\\')
-  
+  dependence.append_uninstall('MySQL Server')
   dependence.append_install('MySQLServer')
+  
+  dir = os.listdir(os.environ['ProgramData'] + '\\MySQL\\')
+  for path in dir:
+    if (path.find('MySQL Server') != -1) and (base.is_file(os.environ['ProgramData'] + '\\MySQL\\' + path) == False):
+      dependence.append_removepath(os.environ['ProgramData'] + '\\MySQL\\' + path)
   
   return dependence
 
-def check_MySQLConfig():
+def check_MySQLConfig(mysqlPath = ''):
   dependence = _dependence.CDependencies()
-  mysqlInfo = get_mysqlServersInfo()
   
-  for info in mysqlInfo:
-    if (info['Version'] == '8.0.21'):
-      if (base.run_command('"' + info['Location'] + 'bin\\mysql" -u root -ponlyoffice -e "SHOW DATABASES;"')['stdout'].find('onlyoffice') == -1):
-          print('Database onlyoffice not found')
-          dependence.append_install('MySQLDatabase')
-      if (base.run_command('"' + info['Location'] + 'bin\\mysql" -u root -ponlyoffice -e "SELECT plugin from mysql.user where User=' + "'root';")['stdout'].find('mysql_native_password') == -1):
-          print('Password encryption is not valid')
-          dependence.append_install('MySQLEncrypt') 
-      dependence.mysqlPath = info['Location']
+  if (mysqlPath == ''):
+    mysqlInfo = get_mysqlServersInfo()
+    for info in mysqlInfo:
+      if (info['Version'] == '8.0.21'):
+        mysqlPath = info['Location']
+        
+  if (base.run_command('"' + mysqlPath + 'bin\\mysql" -u root -ponlyoffice -e "SHOW DATABASES;"')['stdout'].find('onlyoffice') == -1):
+    print('Database onlyoffice not found')
+    dependence.append_install('MySQLDatabase')
+  if (base.run_command('"' + mysqlPath + 'bin\\mysql" -u root -ponlyoffice -e "SELECT plugin from mysql.user where User=' + "'root';")['stdout'].find('mysql_native_password') == -1):
+    print('Password encryption is not valid')
+    dependence.append_install('MySQLEncrypt') 
+    
+  dependence.mysqlPath = mysqlPath
+  
   return dependence     
       
 def execMySQLScript(mysqlPath, scriptPath):
-   print('Setting database...')
+   print('Execution ' + scriptPath)
    code = subprocess.call('"' + mysqlPath + 'bin\\mysql" -u root -ponlyoffice -e "source ' + scriptPath + '"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
    if (code != 0):
-    print('Setting database was failed!')
+    print('Execution was failed!')
     return False
+   print('Completed!')
   
 def set_MySQLEncrypt(mysqlPath, sEncrypt):
   print('Setting MySQL password encrypting...')
@@ -96,6 +103,7 @@ def set_MySQLEncrypt(mysqlPath, sEncrypt):
   if (code != 0):
     print('Setting password encryption was failed!')
     return False
+  print('Completed!')
     
 def check_dependencies():
   final_dependence = _dependence.CDependencies()
@@ -111,3 +119,30 @@ def check_dependencies():
   
   return final_dependence
   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
