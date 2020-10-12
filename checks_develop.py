@@ -54,7 +54,7 @@ def check_mysqlServer():
         dependence.mysqlPath = info['Location']
         return dependence
       print('MySQL Server ' + info['Version'] + ' configuration is not valid')
-    else: 
+    else:
       print('MySQL Server ' + info['Version'] + ' bitness is not valid')
       
   print('Valid MySQL Server not found')
@@ -62,10 +62,11 @@ def check_mysqlServer():
   dependence.append_uninstall('MySQL Server')
   dependence.append_install('MySQLServer')
   
-  dir = os.listdir(os.environ['ProgramData'] + '\\MySQL\\')
+  MySQLData = os.environ['ProgramData'] + '\\MySQL\\'
+  dir = os.listdir(MySQLData)
   for path in dir:
-    if (path.find('MySQL Server') != -1) and (base.is_file(os.environ['ProgramData'] + '\\MySQL\\' + path) == False):
-      dependence.append_removepath(os.environ['ProgramData'] + '\\MySQL\\' + path)
+    if (path.find('MySQL Server') != -1) and (base.is_file(MySQLData + path) == False):
+      dependence.append_removepath(MySQLData + path)
   
   return dependence
 
