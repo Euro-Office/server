@@ -47,19 +47,6 @@ def installingProgram(sProgram, sParam = ''):
     dependence.installProgram(sProgram)
     return True
 
-def installMySQLServer():
-  installingProgram('MySQLServer')
-  mysqlInfo = check.get_mysqlServersInfo()
-  
-  for info in mysqlInfo:
-    if (info['Version'] == '8.0.21'):
-      print('Setting MySQL database...')
-      subprocess.call('"' + info['Location'] + 'bin\\mysql" -u root -ponlyoffice -e "source ' + os.getcwd() + '\\schema\\mysql\\createdb.sql"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-      subprocess.call('"' + info['Location'] + 'bin\\mysql" -u root -ponlyoffice -e "' + "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'onlyoffice';" + '"', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-      print('MySQL Server ' + info['Version'] + ' is valid')
-      return True
-  return False
-
 arguments = sys.argv[1:]
 
 parser = optparse.OptionParser()
@@ -77,7 +64,4 @@ for item in configOptions["remove-path"]:
   if (base.is_dir(item) == True):
     shutil.rmtree(item)
 for item in configOptions["install"]:
-  if (item == 'MySQLServer'):
-    installMySQLServer()
-  else:
-    installingProgram(item)
+  installingProgram(item)
