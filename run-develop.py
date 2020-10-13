@@ -6,8 +6,7 @@ import base
 import libwindows
 import dependence
 import checks_develop as check
-import subprocess
-import json
+import traceback
 
 if (sys.version_info[0] >= 3):
   unicode = str
@@ -56,7 +55,7 @@ try:
     install_args += ['--mysql-path', unicode(checksResult.mysqlPath)]
     code = libwindows.sudo(unicode(sys.executable), install_args)
 
-  if not check.check_MySQLConfig(checksResult.mysqlPath):
+  if not dependence.check_MySQLConfig(checksResult.mysqlPath):
     sys.exit()
   
   platform = base.host_platform()
@@ -92,4 +91,5 @@ try:
   run_module('SpellChecker/sources', ['server.js'])
 except SystemExit:
   input("Ignoring SystemExit. Press Enter to continue...")
-  
+except:
+  input("Unexpected error. " + traceback.format_exc() + "Press Enter to continue...")
