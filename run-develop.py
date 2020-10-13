@@ -91,5 +91,7 @@ try:
   run_module('SpellChecker/sources', ['server.js'])
 except SystemExit:
   input("Ignoring SystemExit. Press Enter to continue...")
+except KeyboardInterrupt:
+  pass
 except:
   input("Unexpected error. " + traceback.format_exc() + "Press Enter to continue...")
