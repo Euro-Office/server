@@ -41,7 +41,7 @@ def run_integration_example():
   base.cmd_in_dir('../document-server-integration/web/documentserver-example/nodejs', 'python', ['run-develop.py'])
 
 def check_dependencies():
-  checksResult = _dependence.CDependencies()
+  checksResult = dependence.CDependencies()
   
   checksResult.append(dependence.check_nodejs())
   checksResult.append(dependence.check_java())
