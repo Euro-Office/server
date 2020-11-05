@@ -66,7 +66,8 @@ exports.LICENSE_RESULT = {
   SuccessLimit  : 7,
   UsersCount    : 8,
   ConnectionsOS : 9,
-  UsersCountOS  : 10
+  UsersCountOS  : 10,
+  ExpiredLimited: 11
 };
 
 exports.LICENSE_CONNECTIONS = 20;
