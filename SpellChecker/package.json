@@ -8,7 +8,7 @@
     "co": "^4.6.0",
     "config": "^2.0.1",
     "express": "^4.16.4",
-    "nodehun": "git+https://git@github.com/ONLYOFFICE/nodehun.git#3059449be948ae12b00602f337f42ec2316fa3b5",
+    "nodehun": "git+https://git@github.com/ONLYOFFICE/nodehun.git#631d3f3c48500bf2f2ec44f8a676423d5c92e3d3",
     "sockjs": "^0.3.19"
   },
   "pkg": {
