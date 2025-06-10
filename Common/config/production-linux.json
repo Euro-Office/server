@@ -3,7 +3,7 @@
     "filePath": "/etc/onlyoffice/documentserver/log4js/production.json"
   },
   "runtimeConfig": {
-    "filePath": "/var/www/onlyoffice/documentserver/../Data/runtime.json"
+    "filePath": "/etc/onlyoffice/documentserver/runtime.json"
   },
   "storage": {
     "fs": {
