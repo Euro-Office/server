@@ -111,7 +111,7 @@ body {
 }
 
 #custom-providers-button{
-    display: inline-flex;
+    display: none;
 }
 #custom-providers-button label{
     cursor: pointer;
