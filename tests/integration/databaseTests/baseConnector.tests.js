@@ -210,7 +210,14 @@ afterAll(async () => {
   const updateIfIds = Object.values(updateIfCases);
 
   const tableChangesIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...changesIds, ...insertIds];
-  const tableResultIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...getExpiredCase, ...getCountWithStatusCase, ...upsertIds, ...updateIfIds];
+  const tableResultIds = [
+    ...emptyCallbacksCase,
+    ...documentsWithChangesCase,
+    ...getExpiredCase,
+    ...getCountWithStatusCase,
+    ...upsertIds,
+    ...updateIfIds
+  ];
 
   const deletionPool = [
     deleteRowsByIds(cfgTableChanges, tableChangesIds),
@@ -482,10 +489,7 @@ describe('Base database connector', () => {
       const taskEmptyCallback = createTask(updateIfCases.emptyCallback, '');
 
       // Insert two rows: one with callback, one without
-      await Promise.all([
-        insertIntoResultTable(date, taskWithCallback),
-        insertIntoResultTable(date, taskEmptyCallback)
-      ]);
+      await Promise.all([insertIntoResultTable(date, taskWithCallback), insertIntoResultTable(date, taskEmptyCallback)]);
 
       // Update mask: only update rows with non-empty callback and status=None
       const mask = new taskResult.TaskResultData();

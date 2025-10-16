@@ -145,7 +145,7 @@ function select(ctx, docId) {
  *
  * Special mask values:
  * - Use 'NOT_EMPTY' as field value in mask mode to check for non-empty callback
- * - Generates "LENGTH(callback) > 0" (universal for all databases including Oracle NCLOB)
+ * - Uses baseConnector.getNotEmptyCondition() for database-specific SQL generation
  */
 function toUpdateArray(task, updateTime, isMask, values, setPassword) {
   const res = [];
@@ -177,8 +177,8 @@ function toUpdateArray(task, updateTime, isMask, values, setPassword) {
   }
   // Add callback non-empty check for mask
   if (isMask && task.callback === 'NOT_EMPTY') {
-    // Universal check: LENGTH() works with NCLOB in Oracle and strings in other databases
-    res.push(`LENGTH(callback) > 0`);
+    // Use database-specific condition (Oracle NCLOB needs special handling)
+    res.push(sqlBase.getNotEmptyCondition('callback'));
   }
   if (null != task.baseurl) {
     const sqlParam = addSqlParam(task.baseurl, values);
