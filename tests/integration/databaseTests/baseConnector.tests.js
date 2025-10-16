@@ -299,17 +299,23 @@ describe('Base database connector', () => {
 
     describe('Add changes', () => {
       for (const testCase in insertCases) {
-        test(`${testCase} rows inserted`, async () => {
-          const docId = insertCases[testCase];
-          const objChanges = createChanges(+testCase, date);
+        // Increase timeout for large inserts (5000+ rows can take longer on some databases)
+        const timeout = +testCase >= 5000 ? 15000 : 5000;
+        test(
+          `${testCase} rows inserted`,
+          async () => {
+            const docId = insertCases[testCase];
+            const objChanges = createChanges(+testCase, date);
 
-          await noRowsExistenceCheck(cfgTableChanges, docId);
+            await noRowsExistenceCheck(cfgTableChanges, docId);
 
-          await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
-          const result = await getRowsCountById(cfgTableChanges, docId);
+            await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
+            const result = await getRowsCountById(cfgTableChanges, docId);
 
-          expect(result).toEqual(objChanges.length);
-        });
+            expect(result).toEqual(objChanges.length);
+          },
+          timeout
+        );
       }
     });
 
