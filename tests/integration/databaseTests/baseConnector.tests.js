@@ -476,7 +476,7 @@ describe('Base database connector', () => {
   });
 
   describe('updateIf() method', () => {
-    test('Update with NOT_EMPTY callback mask', async () => {
+    test('Update with NOT_EMPTY callback mask ', async () => {
       const date = new Date();
       const taskWithCallback = createTask(updateIfCases.notEmpty, 'http://example.com/callback');
       const taskEmptyCallback = createTask(updateIfCases.emptyCallback, '');
