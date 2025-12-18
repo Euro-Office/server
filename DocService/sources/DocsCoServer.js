@@ -3225,6 +3225,9 @@ exports.install = function (server, app, callbackFunction) {
         const forgotten = yield storage.listObjects(ctx, docId, tenForgottenFiles);
         hasForgotten = forgotten.length > 0;
         ctx.logger.debug('endAuth hasForgotten %s', hasForgotten);
+        if (hasForgotten) {
+          sendDataWarning(ctx, conn, constants.FILE_NOT_ASSEMBLED, 'File not assembled');
+        }
       }
     }
 
