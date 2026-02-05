@@ -4,6 +4,10 @@ const CopyPlugin = require('copy-webpack-plugin');
 const webpack = require('webpack');
 const dotenv = require('dotenv');
 
+const outputDir = process.env.BUILD_ROOT
+                  ? path.resolve(process.env.BUILD_ROOT, 'build')
+                  : path.resolve(__dirname, 'build');
+
 module.exports = (env, argv) => {
   const mode = argv && argv.mode ? argv.mode : 'development';
 
@@ -16,7 +20,7 @@ module.exports = (env, argv) => {
     entry: './src/index.js',
     output: {
       filename: 'main.[contenthash].js',
-      path: path.resolve(__dirname, 'build'),
+      path: outputDir,
       // Use relative URLs so assets load under any prefix (e.g., /admin)
       publicPath: '',
       // Clean the output directory before emit to avoid stale files (e.g., js/js duplicates)
