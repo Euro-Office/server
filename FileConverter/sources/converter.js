@@ -1051,6 +1051,32 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
     writeProcessOutputToLog(ctx, childRes, true);
     ctx.logger.debug('ExitCode (code=%d;signal=%s;error:%d)', exitCode, exitSignal, error);
   }
+  let existFile = false;
+  try {
+    existFile = fs.lstatSync(dataConvert.fileTo).isFile();
+  } catch (_err) {
+    existFile = false;
+  }
+  if (!existFile && dataConvert.fileTo) {
+    //todo review. the stub in the case of AVS_OFFICESTUDIO_FILE_OTHER_OOXML x2t changes the file extension.
+    const fileToBasename = path.basename(dataConvert.fileTo, path.extname(dataConvert.fileTo));
+    const fileToDir = path.dirname(dataConvert.fileTo);
+    const files = fs.readdirSync(fileToDir);
+    for (let i = 0; i < files.length; ++i) {
+      const fileCur = files[i];
+      if (0 == fileCur.indexOf(fileToBasename)) {
+        dataConvert.fileTo = path.join(fileToDir, fileCur);
+        existFile = true;
+        break;
+      }
+    }
+    if (constants.NO_ERROR === error && !existFile) {
+      //return CONVERT error so canvasservice treats this as a failed conversion,
+      //not as missing cache (empty storage), which would trigger an infinite retry loop
+      ctx.logger.error('Conversion produced no output file');
+      error = constants.CONVERT;
+    }
+  }
   if (-1 !== exitCodesUpload.indexOf(error)) {
     if (-1 !== exitCodesCopyOrigin.indexOf(error)) {
       const originPath = path.join(path.dirname(dataConvert.fileTo), 'origin' + path.extname(dataConvert.fileFrom));
@@ -1075,25 +1101,6 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
     ctx.logger.debug('processUploadToStorage complete');
   }
   cmd.setStatusInfo(error);
-  let existFile = false;
-  try {
-    existFile = fs.lstatSync(dataConvert.fileTo).isFile();
-  } catch (_err) {
-    existFile = false;
-  }
-  if (!existFile) {
-    //todo review. the stub in the case of AVS_OFFICESTUDIO_FILE_OTHER_OOXML x2t changes the file extension.
-    const fileToBasename = path.basename(dataConvert.fileTo, path.extname(dataConvert.fileTo));
-    const fileToDir = path.dirname(dataConvert.fileTo);
-    const files = fs.readdirSync(fileToDir);
-    for (let i = 0; i < files.length; ++i) {
-      const fileCur = files[i];
-      if (0 == fileCur.indexOf(fileToBasename)) {
-        dataConvert.fileTo = path.join(fileToDir, fileCur);
-        break;
-      }
-    }
-  }
   cmd.setOutputPath(path.basename(dataConvert.fileTo));
   if (!cmd.getTitle()) {
     cmd.setTitle(cmd.getOutputPath());
