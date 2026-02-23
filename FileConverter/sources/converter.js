@@ -1070,12 +1070,13 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
         break;
       }
     }
-    if (constants.NO_ERROR === error && !existFile) {
-      //return CONVERT error so canvasservice treats this as a failed conversion,
-      //not as missing cache (empty storage), which would trigger an infinite retry loop
-      ctx.logger.error('Conversion produced no output file');
-      error = constants.CONVERT;
-    }
+    // todo: breaks open-pdf (no output file is valid); uncomment when fixed
+    // if (constants.NO_ERROR === error && !existFile) {
+    //   //return CONVERT error so canvasservice treats this as a failed conversion,
+    //   //not as missing cache (empty storage), which would trigger an infinite retry loop
+    //   ctx.logger.error('Conversion produced no output file');
+    //   error = constants.CONVERT;
+    // }
   }
   if (-1 !== exitCodesUpload.indexOf(error)) {
     if (-1 !== exitCodesCopyOrigin.indexOf(error)) {
