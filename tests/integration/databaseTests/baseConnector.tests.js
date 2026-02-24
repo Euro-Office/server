@@ -82,6 +82,7 @@ const insertCases = {
   10000: 'baseConnector-insert()-tester-10000-rows'
 };
 const largeChangeCase = 'baseConnector-insert()-tester-large-change';
+const mediumChangeCase = 'baseConnector-insert()-tester-medium-change';
 const changesCases = {
   range: 'baseConnector-getChangesPromise()-tester',
   index: 'baseConnector-getChangesIndexPromise()-tester',
@@ -211,7 +212,7 @@ afterAll(async () => {
   const upsertIds = Object.values(upsertCases);
   const updateIfIds = Object.values(updateIfCases);
 
-  const tableChangesIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...changesIds, ...insertIds, largeChangeCase];
+  const tableChangesIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...changesIds, ...insertIds, largeChangeCase, mediumChangeCase];
   const tableResultIds = [
     ...emptyCallbacksCase,
     ...documentsWithChangesCase,
@@ -348,6 +349,37 @@ describe('Base database connector', () => {
       const changes = await baseConnector.getChangesPromise(ctx, docId, index, 1);
       expect(changes.length).toEqual(1);
       expect(changes[0].change_data).toEqual(largeString);
+    });
+
+    test('Insert change with realistic XLSX change_data (~3450 chars, below 8188 threshold)', async () => {
+      const docId = mediumChangeCase;
+      // Realistic ONLYOFFICE change format: "changeId;base64EncodedPayload".
+      // A typical XLSX operation produces a payload of ~2500 raw bytes → ~3400 base64 chars.
+      // Bug 79123: on strict Dameng configurations, a plain :N bind to a CLOB column fails
+      // with "Bind param data failed by invalid param data type" even for strings well under
+      // 8188 bytes, because DM enforces TYPE_FLAG_EXACT (CLOB) for the parameter.
+      // Fixed by addClobParameter() which always wraps in TO_CLOB(:N).
+      const rawPayload = Buffer.alloc(2588, 0xa7); // 2588 bytes → 3452 base64 chars
+      const changeString = `3450;${rawPayload.toString('base64')}`; // total ~3457 chars
+      const objChanges = [
+        {
+          docid: docId,
+          change: changeString,
+          time: date,
+          user: 'uid-medium',
+          useridoriginal: 'uid-medium-orig'
+        }
+      ];
+
+      await noRowsExistenceCheck(cfgTableChanges, docId);
+
+      await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
+      const rowCount = await getRowsCountById(cfgTableChanges, docId);
+      expect(rowCount).toEqual(1);
+
+      const changes = await baseConnector.getChangesPromise(ctx, docId, index, 1);
+      expect(changes.length).toEqual(1);
+      expect(changes[0].change_data).toEqual(changeString);
     });
 
     describe('Get and delete changes', () => {
