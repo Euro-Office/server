@@ -351,7 +351,7 @@ describe('Base database connector', () => {
       expect(changes[0].change_data).toEqual(largeString);
     });
 
-    test('Insert change with realistic XLSX change_data (~3450 chars, below 8188 threshold)', async () => {
+    test('Insert change with realistic XLSX change_data (~3450 chars, below 8188 threshold) ', async () => {
       const docId = mediumChangeCase;
       // Realistic ONLYOFFICE change format: "changeId;base64EncodedPayload".
       // A typical XLSX operation produces a payload of ~2500 raw bytes → ~3400 base64 chars.
