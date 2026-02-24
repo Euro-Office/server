@@ -82,6 +82,7 @@ const insertCases = {
   10000: 'baseConnector-insert()-tester-10000-rows'
 };
 const largeChangeCase = 'baseConnector-insert()-tester-large-change';
+const largeChangeMbyteCase = 'baseConnector-insert()-tester-large-change-mbyte';
 const changesCases = {
   range: 'baseConnector-getChangesPromise()-tester',
   index: 'baseConnector-getChangesIndexPromise()-tester',
@@ -211,7 +212,7 @@ afterAll(async () => {
   const upsertIds = Object.values(upsertCases);
   const updateIfIds = Object.values(updateIfCases);
 
-  const tableChangesIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...changesIds, ...insertIds, largeChangeCase];
+  const tableChangesIds = [...emptyCallbacksCase, ...documentsWithChangesCase, ...changesIds, ...insertIds, largeChangeCase, largeChangeMbyteCase];
   const tableResultIds = [
     ...emptyCallbacksCase,
     ...documentsWithChangesCase,
@@ -324,8 +325,9 @@ describe('Base database connector', () => {
 
     test('Insert change with large change_data (> 8188 bytes)', async () => {
       const docId = largeChangeCase;
-      // Create string > 8188 bytes to trigger CLOB handling in Dameng
-      // VARCHAR_PREC in dmdb is 8188 bytes, strings longer than this are treated as CLOB
+      // 10 000 ASCII bytes — triggers char-count path (len >= VARCHAR_PREC).
+      // Regression for bug 79123: dmdb inferred CLOB type for plain :N || :M params
+      // causing "Bind param data failed by invalid param data type". Fixed by TO_CLOB(:N).
       const largeString = 'A'.repeat(10000);
       const objChanges = [
         {
@@ -340,9 +342,40 @@ describe('Base database connector', () => {
       await noRowsExistenceCheck(cfgTableChanges, docId);
 
       await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
-      const result = await getRowsCountById(cfgTableChanges, docId);
+      const rowCount = await getRowsCountById(cfgTableChanges, docId);
+      expect(rowCount).toEqual(1);
 
-      expect(result).toEqual(1);
+      // Verify full content round-trip: data must be stored and retrieved without truncation.
+      const changes = await baseConnector.getChangesPromise(ctx, docId, index, 1);
+      expect(changes.length).toEqual(1);
+      expect(changes[0].change_data).toEqual(largeString);
+    });
+
+    test('Insert change with large change_data exceeding 8188 bytes via multibyte chars', async () => {
+      const docId = largeChangeMbyteCase;
+      // 2 048 emoji × 4 UTF-8 bytes = 8 192 bytes > 8 188, but only 2 048 chars.
+      // Triggers the Buffer.byteLength branch in addSqlParameter (Dameng connector).
+      const fourByteChar = '\u{1F600}';
+      const largeString = fourByteChar.repeat(2048);
+      const objChanges = [
+        {
+          docid: docId,
+          change: largeString,
+          time: date,
+          user: 'uid-large-mb',
+          useridoriginal: 'uid-large-mb-orig'
+        }
+      ];
+
+      await noRowsExistenceCheck(cfgTableChanges, docId);
+
+      await baseConnector.insertChangesPromise(ctx, objChanges, docId, index, user);
+      const rowCount = await getRowsCountById(cfgTableChanges, docId);
+      expect(rowCount).toEqual(1);
+
+      const changes = await baseConnector.getChangesPromise(ctx, docId, index, 1);
+      expect(changes.length).toEqual(1);
+      expect(changes[0].change_data).toEqual(largeString);
     });
 
     describe('Get and delete changes', () => {
