@@ -2034,15 +2034,30 @@ exports.install = function (server, app, callbackFunction) {
   });
   io.engine.on('connection_error', err => {
     let logger = operationContext.global.logger;
+    let url;
+    let headers = {};
     if (err.req) {
       const ctx = new operationContext.Context();
       // Ensure raw IncomingMessage has Express properties for consistent context init
       utils.expressifyIncomingMessage(err.req, app);
       ctx.initFromConnectionRequest(err.req);
       logger = ctx.logger;
+      url = err.req.url;
+      headers = err.req.headers || {};
     }
-    logger.warn('io.connection_error code=%s, message=%s, url=%s', err?.code, err?.message, err?.req?.url);
+    logger.warn(
+      'io.connection_error code=%s, message=%s, url=%s, x_forwarded_proto=%s, upgrade=%s, connection=%s, sec_websocket_key=%s, sec_websocket_version=%s',
+      err?.code,
+      err?.message,
+      url,
+      headers['x-forwarded-proto'],
+      headers.upgrade,
+      headers.connection,
+      headers['sec-websocket-key'],
+      headers['sec-websocket-version']
+    );
   });
+
   /**
    *
    * @param ctx
@@ -3131,7 +3146,7 @@ exports.install = function (server, app, callbackFunction) {
                     wopiParamsFull.userAuth
                   );
                 }
-                if (wopiLockRes) {
+                if (!wopiLockRes.error) {
                   yield* authRestore(ctx, conn, data.sessionId);
                 } else {
                   yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'Restore error. Wopi lock error.', constants.RESTORE_CODE, true);
@@ -3210,6 +3225,9 @@ exports.install = function (server, app, callbackFunction) {
         const forgotten = yield storage.listObjects(ctx, docId, tenForgottenFiles);
         hasForgotten = forgotten.length > 0;
         ctx.logger.debug('endAuth hasForgotten %s', hasForgotten);
+        if (hasForgotten) {
+          sendDataWarning(ctx, conn, constants.FILE_NOT_ASSEMBLED, 'File not assembled');
+        }
       }
     }
 
@@ -4770,6 +4788,25 @@ function getConnections() {
 }
 
 exports.getConnections = getConnections;
+
+/**
+ * Get shutdown status
+ * @param {Object} req - Express request
+ * @param {Object} res - Express response
+ */
+exports.getShutdownStatus = function (req, res) {
+  const ctx = new operationContext.Context();
+  try {
+    ctx.initFromRequest(req);
+    res.setHeader('Content-Type', 'application/json');
+    res.json({
+      shutdown: getIsShutdown()
+    });
+  } catch (err) {
+    ctx.logger.error('getShutdownStatus error %s', err.stack);
+    res.status(500).json({error: 'Internal server error'});
+  }
+};
 exports.getEditorConnectionsCount = function (req, res) {
   const ctx = new operationContext.Context();
   let count = 0;
