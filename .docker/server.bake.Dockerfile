@@ -4,10 +4,6 @@
 # docker-bake.hcl files in the parent monorepos.
 # ==============================================================================
 
-ARG PRODUCT_VERSION
-ARG BUILD_ROOT
-ARG TARGETARCH
-
 #### BASE ####
 FROM ubuntu:24.04 AS web-base
     RUN apt-get update && \
@@ -19,6 +15,10 @@ FROM ubuntu:24.04 AS web-base
 
 #### SERVER ####
 FROM web-base AS server
+
+ARG PRODUCT_VERSION
+ARG BUILD_ROOT
+ARG TARGETARCH
 
 ENV PRODUCT_VERSION=${PRODUCT_VERSION}
 
