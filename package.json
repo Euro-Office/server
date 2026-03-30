@@ -1,8 +1,9 @@
 {
   "name": "builder",
   "version": "1.0.1",
-  "homepage": "https://www.onlyoffice.com",
+  "homepage": "https://github.com/Euro-Office",
   "private": true,
+  "license": "AGPL-3.0",
   "dependencies": {
     "license-downloader": "1.0.8",
     "license-report": "6.5.0",
