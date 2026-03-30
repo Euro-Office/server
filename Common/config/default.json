@@ -385,16 +385,6 @@
           "query_timeout  ": 60000,
           "connectionTimeoutMillis": 60000
         },
-        "damengExtraOptions": {
-          "columnNameUpperCase": false,
-          "columnNameCase": "lower",
-          "connectTimeout": 60000,
-          "loginEncrypt": false,
-          "localTimezone": 0,
-          "poolTimeout": 60,
-          "socketTimeout": 60000,
-          "queueTimeout": 60000
-        },
         "oracleExtraOptions": {
           "thin": true,
           "connectTimeout": 60

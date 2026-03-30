@@ -182,7 +182,7 @@
               "properties": {
                 "type": {
                   "type": "string",
-                  "description": "Database type (e.g., 'mysql', 'mariadb', 'mssql', 'postgres', 'dameng', 'oracle')",
+                  "description": "Database type (e.g., 'mysql', 'mariadb', 'mssql', 'postgres', 'oracle')",
                   "examples": ["postgres"]
                 },
                 "dbHost": {
