@@ -191,28 +191,23 @@ function closeActive(conn) {
   return activeMQCore.closePromise(conn);
 }
 
-function healthCheckRabbit(pubsub) {
-  return co(function* () {
-    if (!pubsub.channelPublish) {
-      return false;
-    }
-    const exchange = yield rabbitMQCore.assertExchangePromise(
-      pubsub.channelPublish,
-      cfgRabbitExchangePubSub.name,
-      'fanout',
-      cfgRabbitExchangePubSub.options
-    );
-    return !!exchange;
-  });
+async function healthCheckRabbit(pubsub) {
+  if (!pubsub.channelPublish) {
+    return false;
+  }
+  const exchange = await rabbitMQCore.assertExchangePromise(
+    pubsub.channelPublish,
+    cfgRabbitExchangePubSub.name,
+    'fanout',
+    cfgRabbitExchangePubSub.options
+  );
+  return !!exchange;
 }
-function healthCheckActive(pubsub) {
-  return co(function* () {
-    if (!pubsub.connection) {
-      return false;
-    }
-    yield null;
-    return pubsub.connection.is_open();
-  });
+async function healthCheckActive(pubsub) {
+  if (!pubsub.connection) {
+    return false;
+  }
+  return pubsub.connection.is_open();
 }
 
 let init;
