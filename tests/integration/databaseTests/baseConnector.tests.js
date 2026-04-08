@@ -51,10 +51,6 @@ const dbTypes = {
     number: 'INT',
     string: 'VARCHAR(50)'
   },
-  dameng: {
-    number: 'INT',
-    string: 'VARCHAR(50)'
-  },
   postgres: {
     number: 'INT',
     string: 'VARCHAR(50)'
@@ -127,7 +123,7 @@ function createChanges(changesLength, date) {
 
 async function getRowsCountById(table, id) {
   const result = await executeSql(`SELECT COUNT(id) AS count FROM ${table} WHERE id = '${id}';`);
-  // Return type of COUNT() in postgres is bigint which treats as string by connector. Dameng DB returns js bigint type.
+  // Return type of COUNT() in postgres is bigint which treats as string by connector. Some DBs return js bigint type.
   return Number(result[0].count);
 }
 
@@ -317,8 +313,7 @@ describe('Base database connector', () => {
 
     test('Insert change with large change_data (> 8188 bytes)', async () => {
       const docId = largeChangeCase;
-      // Create string > 8188 bytes to trigger CLOB handling in Dameng
-      // VARCHAR_PREC in dmdb is 8188 bytes, strings longer than this are treated as CLOB
+      // Create string > 8188 bytes to trigger CLOB handling in databases with VARCHAR limits
       const largeString = 'A'.repeat(10000);
       const objChanges = [
         {
