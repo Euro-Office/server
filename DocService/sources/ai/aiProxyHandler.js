@@ -338,7 +338,7 @@ async function proxyRequest(req, res) {
  */
 async function getPluginSettings(ctx) {
   return {
-    version: 3,
+    version: ctx.getCfg('aiSettings.version', cfgAiSettings.version),
     actions: ctx.getCfg('aiSettings.actions', cfgAiSettings.actions),
     providers: ctx.getCfg('aiSettings.providers', cfgAiSettings.providers),
     customProviders: ctx.getCfg('aiSettings.customProviders', cfgAiSettings.customProviders),
