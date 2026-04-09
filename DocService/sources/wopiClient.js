@@ -91,9 +91,9 @@ const cfgWopiHost = config.get('wopi.host');
 const cfgWopiDummySampleFilePath = config.get('wopi.dummy.sampleFilePath');
 const cfgDocumentFormatsFile = config.get('services.CoAuthoring.server.documentFormatsFile');
 
-let templatesFolderLocalesCache = null;
+const templatesFolderLocalesCache = Object.create(null);
 let templatesFolderExtsCache = null;
-const templateFilesSizeCache = {};
+const templateFilesSizeCache = Object.create(null);
 let shutdownFlag = false;
 
 //patch mimeDB
@@ -512,7 +512,7 @@ function checkAndInvalidateCache(ctx, docId, fileInfo) {
 }
 function parsePutFileResponse(ctx, postRes) {
   let body = null;
-  if (postRes.body) {
+  if (postRes?.body) {
     try {
       //collabora nexcloud connector
       body = JSON.parse(postRes.body);
@@ -522,45 +522,101 @@ function parsePutFileResponse(ctx, postRes) {
   }
   return body;
 }
+/**
+ * @param {object} fileInfo
+ * @param {number} size
+ * @param {object|null} info
+ */
+function applyFileInfo(fileInfo, size, info) {
+  fileInfo.Size = size;
+  if (info?.LastModifiedTime != null) {
+    fileInfo.LastModifiedTime = info.LastModifiedTime;
+  }
+}
+/**
+ * @param {object} ctx
+ * @param {string} lang
+ * @param {string} ui
+ * @param {string} fileType
+ * @returns {Promise<{filePath: string, size: number}>}
+ */
+async function getNewFileTemplateMeta(ctx, lang, ui, fileType) {
+  const tenNewFileTemplate = ctx.getCfg('services.CoAuthoring.server.newFileTemplate', cfgNewFileTemplate);
+  if (!templatesFolderLocalesCache[tenNewFileTemplate]) {
+    templatesFolderLocalesCache[tenNewFileTemplate] = readdir(`${tenNewFileTemplate}/`, {withFileTypes: true})
+      .then(dirContent => dirContent.filter(x => x.isDirectory()).map(x => x.name))
+      .catch(err => {
+        delete templatesFolderLocalesCache[tenNewFileTemplate];
+        throw err;
+      });
+  }
+  const locales = await templatesFolderLocalesCache[tenNewFileTemplate];
+  const localePrefix = lang || ui || 'en';
+  const locale =
+    constants.TEMPLATES_FOLDER_LOCALE_COLLISON_MAP[localePrefix] ??
+    locales.find(x => x.startsWith(localePrefix)) ??
+    constants.TEMPLATES_DEFAULT_LOCALE;
+  const filePath = `${tenNewFileTemplate}/${locale}/new.${fileType}`;
+  if (!templateFilesSizeCache[filePath]) {
+    templateFilesSizeCache[filePath] = lstat(filePath).catch(err => {
+      delete templateFilesSizeCache[filePath];
+      throw err;
+    });
+  }
+  const stat = await templateFilesSizeCache[filePath];
+  return {filePath, size: stat.size};
+}
+/**
+ * @param {object} ctx
+ * @param {object} fileInfo
+ * @param {string} wopiSrc
+ * @param {string} access_token
+ * @param {number} access_token_ttl
+ * @param {string} lang
+ * @param {string} ui
+ * @param {string} fileType
+ */
 async function checkAndReplaceEmptyFile(ctx, fileInfo, wopiSrc, access_token, access_token_ttl, lang, ui, fileType) {
   // TODO: throw error if format not supported?
-  if (fileInfo.Size === 0 && fileType.length !== 0) {
-    const tenNewFileTemplate = ctx.getCfg('services.CoAuthoring.server.newFileTemplate', cfgNewFileTemplate);
-
-    //Create new files using Office for the web
-    const wopiParams = getWopiParams(undefined, fileInfo, wopiSrc, access_token, access_token_ttl);
-
-    if (templatesFolderLocalesCache === null) {
-      const dirContent = await readdir(`${tenNewFileTemplate}/`, {withFileTypes: true});
-      templatesFolderLocalesCache = dirContent.filter(dirObject => dirObject.isDirectory()).map(dirObject => dirObject.name);
-    }
-
-    const localePrefix = lang || ui || 'en';
-    let locale =
-      constants.TEMPLATES_FOLDER_LOCALE_COLLISON_MAP[localePrefix] ?? templatesFolderLocalesCache.find(locale => locale.startsWith(localePrefix));
-    if (locale === undefined) {
-      locale = constants.TEMPLATES_DEFAULT_LOCALE;
-    }
-
-    const filePath = `${tenNewFileTemplate}/${locale}/new.${fileType}`;
-    if (!templateFilesSizeCache[filePath]) {
-      templateFilesSizeCache[filePath] = await lstat(filePath);
-    }
-
-    const templateFileInfo = templateFilesSizeCache[filePath];
-    const templateFileStream = createReadStream(filePath);
-    const postRes = await putFile(ctx, wopiParams, undefined, templateFileStream, templateFileInfo.size, fileInfo.UserId, false, false, false);
-    if (postRes) {
-      //update Size
-      fileInfo.Size = templateFileInfo.size;
-      const body = parsePutFileResponse(ctx, postRes);
-      //collabora nexcloud connector
-      if (body?.LastModifiedTime) {
-        //update LastModifiedTime
-        fileInfo.LastModifiedTime = body.LastModifiedTime;
-      }
-    }
+  if (fileInfo.Size !== 0 || !fileType.length) {
+    return;
   }
+  const {filePath, size} = await getNewFileTemplateMeta(ctx, lang, ui, fileType);
+
+  // Canonical WOPI editnew flow: unlocked PutFile on zero-byte file (spec §createnew).
+  // X-WOPI-Lock is not included during document creation per WOPI spec.
+  const wopiParams = getWopiParams(undefined, fileInfo, wopiSrc, access_token, access_token_ttl);
+  const postRes = await putFile(ctx, wopiParams, undefined, createReadStream(filePath), size, fileInfo.UserId, false, false, false, true);
+
+  if (!postRes?.putFileError) {
+    if (postRes) {
+      //update Size; collabora nexcloud connector
+      applyFileInfo(fileInfo, size, parsePutFileResponse(ctx, postRes));
+    }
+    return;
+  }
+
+  if (postRes.statusCode !== 409) {
+    ctx.logger.error('checkAndReplaceEmptyFile: PutFile failed with status=%d', postRes.statusCode);
+    return;
+  }
+
+  // 409 on an unlocked zero-byte PutFile means another session already initialized the file.
+  // Re-fetch to confirm and pick up the size set by the winning session.
+  ctx.logger.debug(
+    'checkAndReplaceEmptyFile: 409 X-WOPI-Lock=%s X-WOPI-LockFailureReason=%s',
+    postRes.responseHeaders?.['x-wopi-lock'],
+    postRes.responseHeaders?.['x-wopi-lockfailurereason']
+  );
+  const {fileInfo: updatedFileInfo} = await checkFileInfo(ctx, wopiSrc, access_token);
+  if (updatedFileInfo && !updatedFileInfo.error && updatedFileInfo.Size > 0) {
+    applyFileInfo(fileInfo, updatedFileInfo.Size, updatedFileInfo);
+    ctx.logger.info('checkAndReplaceEmptyFile: concurrent create-new 409 resolved — file initialized by another session');
+    return;
+  }
+
+  // Reread still shows Size=0: winner session is mid-write or reread failed.
+  ctx.logger.warn('checkAndReplaceEmptyFile: 409 on create-new PutFile but file is still zero-byte after reread');
 }
 function createDocId(ctx, wopiSrc, mode, fileInfo) {
   const fileId = wopiSrc.substring(wopiSrc.lastIndexOf('/') + 1);
@@ -819,7 +875,7 @@ function getConverterHtml(req, res) {
     }
   });
 }
-function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, isModifiedByUser, isAutosave, isExitSave) {
+function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, isModifiedByUser, isAutosave, isExitSave, opt_returnErrorDetails) {
   return co(function* () {
     let postRes = null;
     try {
@@ -874,7 +930,12 @@ function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, 
       }
     } catch (err) {
       const errorMsg = getWopiErrorMessage(err.statusCode);
-      ctx.logger.error('wopi PutFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+      if (opt_returnErrorDetails) {
+        ctx.logger.debug('wopi PutFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+        postRes = {putFileError: true, statusCode: err.statusCode || 0, responseHeaders: err.response?.headers};
+      } else {
+        ctx.logger.error('wopi PutFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+      }
     } finally {
       ctx.logger.info('wopi PutFile end');
     }
