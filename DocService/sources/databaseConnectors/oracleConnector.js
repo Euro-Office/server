@@ -28,8 +28,8 @@
 const oracledb = require('oracledb');
 const config = require('config');
 const connectorUtilities = require('./connectorUtilities');
-const utils = require('../../../Common/sources/utils');
-const operationContext = require('../../../Common/sources/operationContext');
+const utils = require('common/sources/utils');
+const operationContext = require('common/sources/operationContext');
 
 const configSql = config.get('services.CoAuthoring.sql');
 const cfgTableResult = configSql.get('tableResult');

@@ -27,8 +27,8 @@
 
 const sockjs = require('sockjs');
 const nodehun = require('nodehun');
-const logger = require('./../../Common/sources/logger');
-const utils = require('./../../Common/sources/utils');
+const logger = require('common/sources/logger');
+const utils = require('common/sources/utils');
 const fs = require('fs');
 const co = require('co');
 const cfgSockjs = require('config').get('services.CoAuthoring.sockjs');

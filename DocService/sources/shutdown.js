@@ -29,9 +29,9 @@ const configCoAuthoring = config.get('services.CoAuthoring');
 const co = require('co');
 const pubsubService = require('./pubsubRabbitMQ');
 const sqlBase = require('./databaseConnectors/baseConnector');
-const commonDefines = require('./../../Common/sources/commondefines');
-const constants = require('./../../Common/sources/constants');
-const utils = require('./../../Common/sources/utils');
+const commonDefines = require('common/sources/commondefines');
+const constants = require('common/sources/constants');
+const utils = require('common/sources/utils');
 
 const cfgRedisPrefix = configCoAuthoring.get('redis.prefix');
 const redisKeyShutdown = cfgRedisPrefix + constants.REDIS_KEY_SHUTDOWN;

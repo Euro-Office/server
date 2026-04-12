@@ -27,7 +27,7 @@
 
 const http = require('http');
 const cors = require('cors');
-const operationContext = require('../../../Common/sources/operationContext');
+const operationContext = require('common/sources/operationContext');
 
 /**
  * Setup development proxy to DocService

@@ -52,8 +52,8 @@
  */
 
 const {signPdfWithSigner, OID, HASH_OID, parsePemChain, parsePemChainContent} = require('./pdfSigningCore');
-const {axios} = require('./../../../Common/sources/utils');
-const {fetchOAuthToken} = require('./../../../Common/sources/signing/cscOAuth');
+const {axios} = require('common/sources/utils');
+const {fetchOAuthToken} = require('common/sources/signing/cscOAuth');
 const crypto = require('crypto');
 
 const DEFAULT_TIMEOUT_MS = 60000;

@@ -26,7 +26,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const runtimeConfigManager = require('../../../Common/sources/runtimeConfigManager');
+const runtimeConfigManager = require('common/sources/runtimeConfigManager');
 const passwordManager = require('./passwordManager');
 
 const BOOTSTRAP_TOKEN_TTL = 1 * 60 * 60 * 1000; // 1 hour
@@ -78,7 +78,7 @@ function generateShortCode(timestamp) {
  * Code is deterministic based on time window and secret (cluster-safe)
  * All pods with same secret will generate same code for current time window
  *
- * @param {import('../../../Common/sources/operationContext').Context} ctx - Operation context
+ * @param {import('common/sources/operationContext').Context} ctx - Operation context
  * @returns {Promise<{code: string, expiresAt: Date}>}
  */
 async function generateBootstrapToken(ctx) {
@@ -103,7 +103,7 @@ async function generateBootstrapToken(ctx) {
  * Stateless verification - works across all cluster nodes with same secret
  * Verifies that code matches HMAC signature for current or previous time window
  *
- * @param {import('../../../Common/sources/operationContext').Context} ctx - Operation context
+ * @param {import('common/sources/operationContext').Context} ctx - Operation context
  * @param {string} providedCode - Code provided by user (e.g. "AB12CD34EF56")
  * @returns {Promise<boolean>} True if code is valid and not expired
  */
@@ -182,7 +182,7 @@ function hasValidBootstrapToken() {
 /**
  * Invalidate bootstrap code cache (for reset scenarios)
  * Note: Code itself remains valid across cluster until time window expires
- * @param {import('../../../Common/sources/operationContext').Context} ctx - Operation context
+ * @param {import('common/sources/operationContext').Context} ctx - Operation context
  */
 async function invalidateBootstrapToken(ctx) {
   cachedBootstrapCode = null;

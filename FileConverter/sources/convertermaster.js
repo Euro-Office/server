@@ -26,16 +26,16 @@
 'use strict';
 
 const cluster = require('cluster');
-const moduleReloader = require('./../../Common/sources/moduleReloader');
+const moduleReloader = require('common/sources/moduleReloader');
 const config = moduleReloader.requireConfigWithRuntime();
-const logger = require('./../../Common/sources/logger');
-const operationContext = require('./../../Common/sources/operationContext');
-const runtimeConfigManager = require('./../../Common/sources/runtimeConfigManager');
+const logger = require('common/sources/logger');
+const operationContext = require('common/sources/operationContext');
+const runtimeConfigManager = require('common/sources/runtimeConfigManager');
 
 if (cluster.isMaster) {
   const fs = require('fs');
   const os = require('os');
-  const license = require('./../../Common/sources/license');
+  const license = require('common/sources/license');
 
   const cfgLicenseFile = config.get('license.license_file');
   const cfgMaxProcessCount = config.get('FileConverter.converter.maxprocesscount');

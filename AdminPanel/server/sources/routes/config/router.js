@@ -2,13 +2,13 @@
 const config = require('config');
 const express = require('express');
 const bodyParser = require('body-parser');
-const tenantManager = require('../../../../../Common/sources/tenantManager');
-const runtimeConfigManager = require('../../../../../Common/sources/runtimeConfigManager');
+const tenantManager = require('common/sources/tenantManager');
+const runtimeConfigManager = require('common/sources/runtimeConfigManager');
 const {getScopedConfig, validateScoped} = require('./config.service');
 const {validateJWT} = require('../../middleware/auth');
 const cookieParser = require('cookie-parser');
-const utils = require('../../../../../Common/sources/utils');
-const supersetSchema = require('../../../../../Common/config/schemas/config.schema.json');
+const utils = require('common/sources/utils');
+const supersetSchema = require('common/config/schemas/config.schema.json');
 
 const router = express.Router();
 router.use(cookieParser());

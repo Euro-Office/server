@@ -27,9 +27,9 @@
 
 const crypto = require('crypto');
 const sqlBase = require('./databaseConnectors/baseConnector');
-const constants = require('./../../Common/sources/constants');
-const commonDefines = require('./../../Common/sources/commondefines');
-const tenantManager = require('./../../Common/sources/tenantManager');
+const constants = require('common/sources/constants');
+const commonDefines = require('common/sources/commondefines');
+const tenantManager = require('common/sources/tenantManager');
 const config = require('config');
 
 const cfgTableResult = config.get('services.CoAuthoring.sql.tableResult');

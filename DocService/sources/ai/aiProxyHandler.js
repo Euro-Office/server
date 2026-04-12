@@ -28,12 +28,12 @@
 const {pipeline} = require('stream/promises');
 const {URL} = require('url');
 const config = require('config');
-const utils = require('./../../../Common/sources/utils');
-const operationContext = require('./../../../Common/sources/operationContext');
-const commonDefines = require('./../../../Common/sources/commondefines');
-const tenantManager = require('./../../../Common/sources/tenantManager');
+const utils = require('common/sources/utils');
+const operationContext = require('common/sources/operationContext');
+const commonDefines = require('common/sources/commondefines');
+const tenantManager = require('common/sources/tenantManager');
 const docsCoServer = require('./../DocsCoServer');
-const statsDClient = require('./../../../Common/sources/statsdclient');
+const statsDClient = require('common/sources/statsdclient');
 
 const cfgAiApiAllowedOrigins = config.get('aiSettings.allowedCorsOrigins');
 const cfgAiApiProxy = config.get('aiSettings.proxy');

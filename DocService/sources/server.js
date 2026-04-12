@@ -25,12 +25,12 @@
 
 'use strict';
 
-const moduleReloader = require('./../../Common/sources/moduleReloader');
+const moduleReloader = require('common/sources/moduleReloader');
 const config = moduleReloader.requireConfigWithRuntime();
 //process.env.NODE_ENV = config.get('services.CoAuthoring.server.mode');
-const logger = require('./../../Common/sources/logger');
+const logger = require('common/sources/logger');
 const co = require('co');
-const license = require('./../../Common/sources/license');
+const license = require('common/sources/license');
 const fs = require('fs');
 
 const express = require('express');
@@ -44,17 +44,17 @@ const canvasService = require('./canvasservice');
 const converterService = require('./converterservice');
 const fileUploaderService = require('./fileuploaderservice');
 const wopiClient = require('./wopiClient');
-const constants = require('./../../Common/sources/constants');
-const utils = require('./../../Common/sources/utils');
-const commonDefines = require('./../../Common/sources/commondefines');
-const operationContext = require('./../../Common/sources/operationContext');
-const tenantManager = require('./../../Common/sources/tenantManager');
+const constants = require('common/sources/constants');
+const utils = require('common/sources/utils');
+const commonDefines = require('common/sources/commondefines');
+const operationContext = require('common/sources/operationContext');
+const tenantManager = require('common/sources/tenantManager');
 const staticRouter = require('./routes/static');
 const infoRouter = require('./routes/info');
 const metaRouter = require('./routes/meta');
 const ms = require('ms');
 const aiProxyHandler = require('./ai/aiProxyHandler');
-const runtimeConfigManager = require('./../../Common/sources/runtimeConfigManager');
+const runtimeConfigManager = require('common/sources/runtimeConfigManager');
 
 const cfgWopiEnable = config.get('wopi.enable');
 const cfgWopiDummyEnable = config.get('wopi.dummy.enable');

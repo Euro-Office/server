@@ -28,11 +28,11 @@ const crypto = require('crypto');
 const co = require('co');
 const utilsDocService = require('./utilsDocService');
 const docsCoServer = require('./DocsCoServer');
-const utils = require('./../../Common/sources/utils');
-const storageBase = require('./../../Common/sources/storage/storage-base');
-const formatChecker = require('./../../Common/sources/formatchecker');
-const commonDefines = require('./../../Common/sources/commondefines');
-const operationContext = require('./../../Common/sources/operationContext');
+const utils = require('common/sources/utils');
+const storageBase = require('common/sources/storage/storage-base');
+const formatChecker = require('common/sources/formatchecker');
+const commonDefines = require('common/sources/commondefines');
+const operationContext = require('common/sources/operationContext');
 const config = require('config');
 
 const cfgImageSize = config.get('services.CoAuthoring.server.limits_image_size');

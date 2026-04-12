@@ -1,7 +1,7 @@
 'use strict';
 
 const jwt = require('jsonwebtoken');
-const operationContext = require('../../../../Common/sources/operationContext');
+const operationContext = require('common/sources/operationContext');
 const adminPanelJwtSecret = require('../jwtSecret');
 
 /**
