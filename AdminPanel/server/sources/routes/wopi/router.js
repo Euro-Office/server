@@ -28,11 +28,11 @@
 const config = require('config');
 const express = require('express');
 const crypto = require('crypto');
-const utils = require('../../../../../Common/sources/utils');
-const runtimeConfigManager = require('../../../../../Common/sources/runtimeConfigManager');
-const tenantManager = require('../../../../../Common/sources/tenantManager');
+const utils = require('common/sources/utils');
+const runtimeConfigManager = require('common/sources/runtimeConfigManager');
+const tenantManager = require('common/sources/tenantManager');
 const {validateJWT} = require('../../middleware/auth');
-const {getConfig} = require('../../../../../Common/sources/runtimeConfigManager');
+const {getConfig} = require('common/sources/runtimeConfigManager');
 const cookieParser = require('cookie-parser');
 
 const cfgWopiPublicKey = config.get('wopi.publicKey');
