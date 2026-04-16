@@ -417,8 +417,6 @@ If you want to change it, you can use the \`local.json\` file, where all the edi
 :::warning
 Please do not edit the contents of the \`default.json\` file directly. The default values will be restored each time you restart Docker container or upgrade **ONLYOFFICE Docs** to a new version, and all your changes will be lost.
 :::
-
-Default server settings are described below.
 `;
   fs.writeFileSync(path.join(outDir, 'intro.md'), introContent);
 
