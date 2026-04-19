@@ -37,6 +37,7 @@ const util = require('util');
 const co = require('co');
 const constants = require('./../../Common/sources/constants');
 const commonDefines = require('./../../Common/sources/commondefines');
+const operationContext = require('./../../Common/sources/operationContext');
 const rabbitMQCore = require('./../../Common/sources/rabbitMQCore');
 const activeMQCore = require('./../../Common/sources/activeMQCore');
 
@@ -58,7 +59,8 @@ function initRabbit(pubsub, callback) {
         }
       });
       pubsub.connection = conn;
-      pubsub.channelPublish = yield rabbitMQCore.createChannelPromise(conn);
+      const onChannelDead = rabbitMQCore.createOnChannelDead(pubsub, conn);
+      pubsub.channelPublish = yield rabbitMQCore.createChannelPromise(conn, onChannelDead);
       pubsub.exchangePublish = yield rabbitMQCore.assertExchangePromise(
         pubsub.channelPublish,
         cfgRabbitExchangePubSub.name,
@@ -66,9 +68,9 @@ function initRabbit(pubsub, callback) {
         cfgRabbitExchangePubSub.options
       );
 
-      pubsub.channelReceive = yield rabbitMQCore.createChannelPromise(conn);
+      pubsub.channelReceive = yield rabbitMQCore.createChannelPromise(conn, onChannelDead);
       const queue = yield rabbitMQCore.assertQueuePromise(pubsub.channelReceive, cfgRabbitQueuePubsub.name, cfgRabbitQueuePubsub.options);
-      pubsub.channelReceive.bindQueue(queue, cfgRabbitExchangePubSub.name, '');
+      yield rabbitMQCore.bindQueuePromise(pubsub.channelReceive, queue, cfgRabbitExchangePubSub.name, '');
       yield rabbitMQCore.consumePromise(
         pubsub.channelReceive,
         queue,
@@ -77,11 +79,12 @@ function initRabbit(pubsub, callback) {
             if (message) {
               pubsub.emit('message', message.content.toString());
             }
-            pubsub.channelReceive.ack(message);
+            rabbitMQCore.safeAck(pubsub.channelReceive, message, 'pubsub');
           }
         },
         {noAck: false}
       );
+      pubsub.reconnecting = false;
       //process messages received while reconnection time
       yield repeat(pubsub);
     } catch (err) {
@@ -147,6 +150,8 @@ function clear(pubsub) {
   pubsub.channelPublish = null;
   pubsub.exchangePublish = null;
   pubsub.channelReceive = null;
+  pubsub.connection = null;
+  pubsub.reconnecting = false;
 }
 function repeat(pubsub) {
   return co(function* () {
@@ -158,14 +163,38 @@ function repeat(pubsub) {
 }
 function publishRabbit(pubsub, data) {
   return new Promise((resolve, _reject) => {
-    //Channels act like stream.Writable when you call publish or sendToQueue: they return either true, meaning “keep sending”, or false, meaning “please wait for a ‘drain’ event”.
-    const keepSending = pubsub.channelPublish.publish(pubsub.exchangePublish, '', data);
-    if (!keepSending) {
-      //todo (node:4308) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 drain listeners added to [Sender]. Use emitter.setMaxListeners() to increase limit
-      pubsub.channelPublish.once('drain', resolve);
-    } else {
-      resolve();
+    const ch = pubsub.channelPublish;
+    if (!ch) {
+      // channel was cleared between null-check and publish (reconnect)
+      return resolve();
     }
+    let keepSending;
+    try {
+      // Channels behave like stream.Writable; publish() returns false when backpressured.
+      keepSending = ch.publish(pubsub.exchangePublish, '', data);
+    } catch (err) {
+      // sync throw from a closed channel (IllegalOperationError)
+      operationContext.global.logger.error('[AMQP] publish error: %s', err?.stack || err);
+      return resolve();
+    }
+    if (keepSending) {
+      return resolve();
+    }
+    // On backpressure wait for 'drain'; release listeners on channel close to avoid leaks.
+    const cleanup = () => {
+      ch.removeListener('drain', onDrain);
+      ch.removeListener('close', onClose);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onClose = () => {
+      cleanup();
+      resolve();
+    };
+    ch.once('drain', onDrain);
+    ch.once('close', onClose);
   });
 }
 
@@ -192,18 +221,14 @@ function closeActive(conn) {
 }
 
 function healthCheckRabbit(pubsub) {
-  return co(function* () {
-    if (!pubsub.channelPublish) {
-      return false;
-    }
-    const exchange = yield rabbitMQCore.assertExchangePromise(
-      pubsub.channelPublish,
-      cfgRabbitExchangePubSub.name,
-      'fanout',
-      cfgRabbitExchangePubSub.options
-    );
-    return !!exchange;
-  });
+  if (!pubsub.connection || !pubsub.channelPublish) {
+    return Promise.resolve(false);
+  }
+  return rabbitMQCore.runHealthCheck(
+    rabbitMQCore.assertExchangePromise(pubsub.channelPublish, cfgRabbitExchangePubSub.name, 'fanout', cfgRabbitExchangePubSub.options),
+    5000,
+    'pubsub healthCheck'
+  );
 }
 function healthCheckActive(pubsub) {
   return co(function* () {
@@ -233,6 +258,7 @@ if (commonDefines.c_oAscQueueType.rabbitmq === cfgQueueType) {
 
 function PubsubRabbitMQ() {
   this.isClose = false;
+  this.reconnecting = false;
   this.connection = null;
   this.channelPublish = null;
   this.exchangePublish = null;
