@@ -126,8 +126,14 @@ function createCacheMiddleware(prefix, cfgStorage, rout, configKey) {
 
         res.sendFile(filePath, sendFileOptions, err => {
           if (err) {
-            operationContext.global.logger.error(err);
-            res.status(400).end();
+            if (err.code === 'ERR_STREAM_PREMATURE_CLOSE' || err.code === 'ECONNRESET' || err.code === 'ECONNABORTED') {
+              operationContext.global.logger.debug('client disconnected during sendFile: %s', err.stack);
+            } else {
+              operationContext.global.logger.error(err);
+            }
+            if (!res.headersSent) {
+              res.status(400).end();
+            }
           }
         });
       } else if (['storage-s3', 'storage-az'].includes(tenantStorageCfg.name)) {
@@ -144,8 +150,14 @@ function createCacheMiddleware(prefix, cfgStorage, rout, configKey) {
         res.sendStatus(404);
       }
     } catch (e) {
-      operationContext.global.logger.error(e);
-      res.sendStatus(400);
+      if (e.code === 'ERR_STREAM_PREMATURE_CLOSE') {
+        operationContext.global.logger.debug('client disconnected during cache streaming: %s', e.stack);
+      } else {
+        operationContext.global.logger.error(e);
+      }
+      if (!res.headersSent) {
+        res.sendStatus(400);
+      }
     }
   };
 }
