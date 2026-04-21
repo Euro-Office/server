@@ -48,6 +48,7 @@ const utils = require('./../../Common/sources/utils');
 const constants = require('./../../Common/sources/constants');
 const commonDefines = require('./../../Common/sources/commondefines');
 const wopiUtils = require('./wopiUtils');
+const newFileTemplateUtils = require('./newFileTemplateUtils');
 const documentFormats = require('./../../Common/sources/documentFormats');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
@@ -243,8 +244,17 @@ function discovery(req, res) {
             xmlApp.ele('action', {name: 'edit', ext: ext.edit[j], default: 'true', requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
           }
           xmlApp.ele('action', {name: 'mobileEdit', ext: ext.edit[j], requires: 'locks,update', urlsrc: urlTemplateMobileEdit}).up();
-          if (templatesFolderExtsCache[ext.edit[j]]) {
-            xmlApp.ele('action', {name: 'editnew', ext: ext.edit[j], requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
+          const editNewTemplateExt = newFileTemplateUtils.getNewFileTemplateExt(ext.edit[j]);
+          if (templatesFolderExtsCache[editNewTemplateExt]) {
+            xmlApp
+              .ele('action', {
+                name: 'editnew',
+                ext: ext.edit[j],
+                requires: 'locks,update',
+                newext: newFileTemplateUtils.getNewFileCreatedExt(ext.edit[j]),
+                urlsrc: urlTemplateEdit
+              })
+              .up();
           }
         }
         xmlApp.up();
@@ -299,8 +309,17 @@ function discovery(req, res) {
                 xmlApp.ele('action', {name: 'edit', ext: '', default: 'true', requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
               }
               xmlApp.ele('action', {name: 'mobileEdit', ext: '', requires: 'locks,update', urlsrc: urlTemplateMobileEdit}).up();
-              if (templatesFolderExtsCache[ext.edit[j]]) {
-                xmlApp.ele('action', {name: 'editnew', ext: '', requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
+              const editNewTemplateExt = newFileTemplateUtils.getNewFileTemplateExt(ext.edit[j]);
+              if (templatesFolderExtsCache[editNewTemplateExt]) {
+                xmlApp
+                  .ele('action', {
+                    name: 'editnew',
+                    ext: '',
+                    requires: 'locks,update',
+                    newext: newFileTemplateUtils.getNewFileCreatedExt(ext.edit[j]),
+                    urlsrc: urlTemplateEdit
+                  })
+                  .up();
               }
               xmlApp.up();
             });
@@ -542,14 +561,26 @@ async function checkAndReplaceEmptyFile(ctx, fileInfo, wopiSrc, access_token, ac
       locale = constants.TEMPLATES_DEFAULT_LOCALE;
     }
 
-    const filePath = `${tenNewFileTemplate}/${locale}/new.${fileType}`;
+    const templateFileType = newFileTemplateUtils.getNewFileTemplateExt(fileType);
+    const filePath = `${tenNewFileTemplate}/${locale}/new.${templateFileType}`;
     if (!templateFilesSizeCache[filePath]) {
       templateFilesSizeCache[filePath] = await lstat(filePath);
     }
 
     const templateFileInfo = templateFilesSizeCache[filePath];
     const templateFileStream = createReadStream(filePath);
-    const postRes = await putFile(ctx, wopiParams, undefined, templateFileStream, templateFileInfo.size, fileInfo.UserId, false, false, false);
+    const postRes = await putFile(
+      ctx,
+      wopiParams,
+      undefined,
+      templateFileStream,
+      templateFileInfo.size,
+      fileInfo.UserId,
+      false,
+      false,
+      false,
+      templateFileType
+    );
     if (postRes) {
       //update Size
       fileInfo.Size = templateFileInfo.size;
@@ -814,7 +845,7 @@ function getConverterHtml(req, res) {
     }
   });
 }
-function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, isModifiedByUser, isAutosave, isExitSave) {
+function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, isModifiedByUser, isAutosave, isExitSave, optContentTypeExt) {
   return co(function* () {
     let postRes = null;
     try {
@@ -846,7 +877,7 @@ function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, 
           //collabora nexcloud connector
           headers['X-LOOL-WOPI-Timestamp'] = wopiParams.LastModifiedTime;
         }
-        headers['Content-Type'] = mime.getType(getFileTypeByInfo(fileInfo));
+        headers['Content-Type'] = mime.getType(optContentTypeExt || getFileTypeByInfo(fileInfo));
 
         ctx.logger.debug('wopi PutFile request uri=%s headers=%j', uri, headers);
         //isInJwtToken is true because it passed checkIpFilter for wopi
