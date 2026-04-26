@@ -68,19 +68,18 @@ function initRabbit(pubsub, callback) {
         cfgRabbitExchangePubSub.options
       );
 
-      pubsub.channelReceive = yield rabbitMQCore.createChannelPromise(conn, onChannelDead);
-      const queue = yield rabbitMQCore.assertQueuePromise(pubsub.channelReceive, cfgRabbitQueuePubsub.name, cfgRabbitQueuePubsub.options);
-      yield rabbitMQCore.bindQueuePromise(pubsub.channelReceive, queue, cfgRabbitExchangePubSub.name, '');
+      const receiveChannel = yield rabbitMQCore.createChannelPromise(conn, onChannelDead);
+      pubsub.channelReceive = receiveChannel;
+      const queue = yield rabbitMQCore.assertQueuePromise(receiveChannel, cfgRabbitQueuePubsub.name, cfgRabbitQueuePubsub.options);
+      yield rabbitMQCore.bindQueuePromise(receiveChannel, queue, cfgRabbitExchangePubSub.name, '');
       yield rabbitMQCore.consumePromise(
-        pubsub.channelReceive,
+        receiveChannel,
         queue,
         message => {
-          if (null != pubsub.channelReceive) {
-            if (message) {
-              pubsub.emit('message', message.content.toString());
-            }
-            rabbitMQCore.safeAck(pubsub.channelReceive, message, 'pubsub');
+          if (message) {
+            pubsub.emit('message', message.content.toString());
           }
+          rabbitMQCore.safeAck(receiveChannel, message, 'pubsub');
         },
         {noAck: false}
       );
