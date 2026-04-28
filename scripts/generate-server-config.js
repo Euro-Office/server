@@ -133,8 +133,8 @@ function schemaTypeToDoc(node) {
   if (t === 'object') return 'object';
   if (t === 'array') {
     const itemType = node.items && node.items.type;
-    if (itemType === 'object') return 'array of objects';
-    if (itemType) return `array of ${itemType}s`;
+    if (itemType === 'object') return 'object[]';
+    if (itemType) return `${itemType}[]`;
     return 'array';
   }
   return String(t);
