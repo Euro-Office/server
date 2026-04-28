@@ -545,6 +545,9 @@ function* downloadFile(ctx, uri, fileFrom, withAuthorization, isInJwtToken, opt_
         } else if (err.code === 'EMSGSIZE') {
           res = constants.CONVERT_LIMITS;
           break;
+        } else if (err.code === 'E_CHECKSUM_MISMATCH' || err.code === 'E_CONTENT_LENGTH_MISMATCH') {
+          ctx.logger.warn('integrity check failed downloading file, retrying: url=%s;attempt=%d;code=%s', uri, downloadAttemptCount, err.code);
+          yield utils.sleep(tenDownloadAttemptDelay);
         } else {
           yield utils.sleep(tenDownloadAttemptDelay);
         }

@@ -64,6 +64,7 @@ const util = require('util');
 
 const contentDisposition = require('content-disposition');
 const operationContext = require('./operationContext');
+const {HashTransform} = require('./checksumVerification');
 
 //Clone sealed config objects before passing to external libraries using config.util.cloneDeep
 const cfgDnsCache = config.util.cloneDeep(config.get('dnscache'));
@@ -79,6 +80,7 @@ const cfgTokenOutboxExpires = config.get('services.CoAuthoring.token.outbox.expi
 const cfgVisibilityTimeout = config.get('queue.visibilityTimeout');
 const cfgQueueRetentionPeriod = config.get('queue.retentionPeriod');
 const cfgRequestDefaults = config.util.cloneDeep(config.get('services.CoAuthoring.requestDefaults'));
+const cfgChecksumVerification = config.get('services.CoAuthoring.requestDefaults.checksumVerification');
 const cfgTokenEnableRequestOutbox = config.get('services.CoAuthoring.token.enable.request.outbox');
 const cfgTokenOutboxUrlExclusionRegex = config.get('services.CoAuthoring.token.outbox.urlExclusionRegex');
 const cfgSecret = config.get('aesEncrypt.secret');
@@ -359,6 +361,7 @@ async function downloadUrlPromise(
   const tenTenantRequestDefaults = ctx.getCfg('services.CoAuthoring.requestDefaults', cfgRequestDefaults);
   const tenTokenOutboxHeader = ctx.getCfg('services.CoAuthoring.token.outbox.header', cfgTokenOutboxHeader);
   const tenTokenOutboxPrefix = ctx.getCfg('services.CoAuthoring.token.outbox.prefix', cfgTokenOutboxPrefix);
+  const tenChecksumVerification = ctx.getCfg('services.CoAuthoring.requestDefaults.checksumVerification', cfgChecksumVerification);
   const sizeLimit = limit || Number.MAX_VALUE;
   uri = URI.serialize(URI.parse(uri));
   const options = config.util.cloneDeep(tenTenantRequestDefaults);
@@ -383,6 +386,9 @@ async function downloadUrlPromise(
   }
   if (extraHeaders) {
     Object.assign(headers, extraHeaders);
+  }
+  if (tenChecksumVerification) {
+    headers['Want-Repr-Digest'] = 'sha-256=10';
   }
 
   const axiosConfig = {
@@ -415,6 +421,16 @@ async function downloadUrlPromise(
       throw error;
     }
     const limitedStream = new SizeLimitStream(limit);
+    if (tenChecksumVerification) {
+      const hashTransform = new HashTransform({validate: true, headers, response, ctx});
+      if (returnStream) {
+        // .pipe() does not forward errors, so propagate manually
+        limitedStream.on('error', err => hashTransform.destroy(err));
+        return {response, body: null, stream: response.data.pipe(limitedStream).pipe(hashTransform)};
+      }
+      const body = await pipeline(response.data, limitedStream, hashTransform, buffer);
+      return {response, body, stream: null, checksumVerification: hashTransform._lastVerification};
+    }
     if (returnStream) {
       return {response, body: null, stream: response.data.pipe(limitedStream)};
     }
