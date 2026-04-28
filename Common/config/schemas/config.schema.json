@@ -3003,7 +3003,7 @@
         "sendAuthorizationHeader": {
           "type": "boolean",
           "default": false,
-          "description": "Adds the Authorization: Bearer <token> header to WOPI requests. Optional by specification, but may be needed for older SharePoint integrations.",
+          "description": "Adds the `Authorization: Bearer <token>` header to WOPI requests. Optional by specification, but may be needed for older SharePoint integrations.",
           "x-scope": ["admin", "tenant"]
         },
         "favIconUrlWord": {
