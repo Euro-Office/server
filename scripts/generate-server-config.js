@@ -482,9 +482,9 @@ Please do not edit the contents of the \`default.json\` file directly. The defau
 
         w(`${headingLevel} ${param.key}\n\n`);
         if (defaultBadge !== null) {
-          w(`\`Type: ${param.docTypeRaw}\`   \`Default: ${defaultBadge}\`\n\n`);
+          w(`**type:** \`${param.docTypeRaw}\` | **default:** \`${defaultBadge}\`\n\n`);
         } else {
-          w(`\`Type: ${param.docTypeRaw}\`\n\n`);
+          w(`**type:** \`${param.docTypeRaw}\`\n\n`);
         }
         w(`${desc}\n\n`);
         w(getAdmonitions(param));
