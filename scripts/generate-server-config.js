@@ -151,7 +151,6 @@ function walkSchema(node, prefix, out) {
       docTypeRaw: schemaTypeToDoc(node),
       description: node.description,
       defaultValue: node.default, // may be undefined
-      xExample: node['x-example'], // custom example override (optional)
       xNote: node['x-note'], // custom :::note admonition text (optional)
       xWarning: node['x-warning'] // explicit :::warning override (optional)
     });

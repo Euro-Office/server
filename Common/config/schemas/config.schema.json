@@ -1813,13 +1813,11 @@
                 "type": {
                   "type": "string",
                   "description": "Defines the database type (`mysql`, `mariadb`, `mssql`, `postgres`, `dameng`, `oracle`).",
-                  "examples": ["postgres"],
                   "default": "postgres"
                 },
                 "dbHost": {
                   "type": "string",
                   "description": "Defines the database server host (host name or IP address).",
-                  "examples": ["localhost"],
                   "default": "localhost"
                 },
                 "dbPort": {
@@ -1827,13 +1825,11 @@
                   "minimum": 1,
                   "maximum": 65535,
                   "description": "Defines the database server port.",
-                  "examples": [5432],
                   "default": 5432
                 },
                 "dbName": {
                   "type": "string",
                   "description": "Defines a name of a database to be created on the image startup.",
-                  "examples": ["onlyoffice"],
                   "default": "onlyoffice"
                 },
                 "charset": {
@@ -2261,7 +2257,7 @@
               "properties": {
                 "browser": {
                   "type": "object",
-                  "description": "Defines the parameters of a secret key to generate a token in the client-side browser requests to ONLYOFFICE Docs:\n\n- **string** - the secret key, **type**: string, **example**: \"secret\";\n\n- **file** - the PEM file where the secret is stored, **type**: string, **example**: \"\".",
+                  "description": "Defines the parameters of a secret key to generate a token in the client-side browser requests to ONLYOFFICE Docs.",
                   "default": {
                     "string": "secret",
                     "file": ""
@@ -2281,7 +2277,7 @@
                 },
                 "inbox": {
                   "type": "object",
-                  "description": "Defines the parameters of a secret key to generate a token in the incoming HTTP requests with the commands from the **document storage service** to the **document command service**, **document conversion service** and **document builder service**:\n\n- **string** - the secret key, **type**: string, **example**: \"secret\";\n\n- **file** - the PEM file where the secret is stored, **type**: string, **example**: \"\".",
+                  "description": "Defines the parameters of a secret key to generate a token in the incoming HTTP requests with the commands from the **document storage service** to the **document command service**, **document conversion service** and **document builder service**.",
                   "default": {
                     "string": "secret",
                     "file": ""
@@ -2301,7 +2297,7 @@
                 },
                 "outbox": {
                   "type": "object",
-                  "description": "Defines the parameters of a secret key to generate a token in the outgoing HTTP requests to the `callbackUrl` address by **document editing service**:\n\n- **string** - the secret key, **type**: string, **example**: \"secret\";\n\n- **file** - the PEM file where the secret is stored, **type**: string, **example**: \"\".",
+                  "description": "Defines the parameters of a secret key to generate a token in the outgoing HTTP requests to the `callbackUrl` address by **document editing service**.",
                   "default": {
                     "string": "secret",
                     "file": ""
@@ -2321,7 +2317,7 @@
                 },
                 "session": {
                   "type": "object",
-                  "description": "Defines the parameters of a secret key to generate the session token:\n\n- **string** - the secret key, **type**: string, **example**: \"secret\";\n\n- **file** - the PEM file where the secret is stored, **type**: string, **example**: \"\".",
+                  "description": "Defines the parameters of a secret key to generate the session token.",
                   "default": {
                     "string": "secret",
                     "file": ""
@@ -3053,7 +3049,6 @@
           "default": [],
           "description": "Defines the file types that can be viewed in the PDF editor.",
           "x-scope": "admin",
-          "x-example": ["djvu", "xps", "oxps"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "pdfEdit": {
@@ -3064,7 +3059,6 @@
           "default": [],
           "description": "Defines the file types that can be edited in the PDF editor.",
           "x-scope": "admin",
-          "x-example": ["pdf"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "forms": {
@@ -3075,7 +3069,6 @@
           "default": [],
           "description": "Defines the form file types.",
           "x-scope": "admin",
-          "x-example": ["pdf"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "wordView": {
@@ -3086,7 +3079,6 @@
           "default": [],
           "description": "Defines the file types that can be viewed in the document editor.",
           "x-scope": "admin",
-          "x-example": ["doc", "dotm", "dot", "fodt", "ott", "rtf", "mht", "mhtml", "html", "htm", "xml", "epub", "fb2", "sxw", "stw", "wps", "wpt", "pages", "docxf", "oform", "hwp", "hwpx", "md"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "wordEdit": {
@@ -3097,7 +3089,6 @@
           "default": [],
           "description": "Defines the file types that can be edited in the document editor.",
           "x-scope": "admin",
-          "x-example": ["docx", "dotx", "docm", "odt", "txt"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "cellView": {
@@ -3108,7 +3099,6 @@
           "default": [],
           "description": "Defines the file types that can be viewed in the spreadsheet editor.",
           "x-scope": "admin",
-          "x-example": ["xls", "xltm", "xlt", "fods", "ots", "sxc", "xml", "et", "ett", "numbers"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "cellEdit": {
@@ -3119,7 +3109,6 @@
           "default": [],
           "description": "Defines the file types that can be edited in the spreadsheet editor.",
           "x-scope": "admin",
-          "x-example": ["xlsx", "xlsb", "xltx", "xlsm", "ods", "csv"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "slideView": {
@@ -3130,7 +3119,6 @@
           "default": [],
           "description": "Defines the file types that can be viewed in the presentation editor.",
           "x-scope": "admin",
-          "x-example": ["ppt", "ppsx", "ppsm", "pps", "potm", "pot", "fodp", "otp", "sxi", "dps", "dpt", "key", "odg"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "slideEdit": {
@@ -3141,7 +3129,6 @@
           "default": [],
           "description": "Defines the file types that can be edited in the presentation editor.",
           "x-scope": "admin",
-          "x-example": ["pptx", "potx", "pptm", "odp"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "diagramView": {
@@ -3152,7 +3139,6 @@
           "default": [],
           "description": "Defines the file types that can be viewed in the diagram editor.",
           "x-scope": "admin",
-          "x-example": ["vsdx", "vstx", "vssx", "vsdm", "vstm", "vssm"],
           "x-note": "The value of this parameter is stored in the *onlyoffice-docs-formats.json* file."
         },
         "diagramEdit": {
