@@ -39,13 +39,112 @@ const sqlBase = require('./databaseConnectors/baseConnector');
 const commonDefines = require('./../../Common/sources/commondefines');
 const constants = require('./../../Common/sources/constants');
 const utils = require('./../../Common/sources/utils');
+const storage = require('./../../Common/sources/storage/storage-base');
+const taskResult = require('./taskresult');
 
+const cfgForgottenFiles = configCoAuthoring.get('server.forgottenfiles');
+const cfgTableResult = configCoAuthoring.get('sql.tableResult');
 const cfgRedisPrefix = configCoAuthoring.get('redis.prefix');
 const redisKeyShutdown = cfgRedisPrefix + constants.REDIS_KEY_SHUTDOWN;
 
 const WAIT_TIMEOUT = 30000;
 const LOOP_TIMEOUT = 1000;
 const EXEC_TIMEOUT = WAIT_TIMEOUT + utils.getConvertionTimeout(undefined);
+
+/**
+ * UPDATE task_result SET status=Ok, callback='' WHERE tenant=? AND id=?.
+ * Writes literal '' — NOT the UserCallback JSON envelope that taskResult.update() produces.
+ */
+function clearCallback(ctx, docId) {
+  return new Promise((resolve, reject) => {
+    const values = [];
+    const p1 = sqlBase.addSqlParameter(commonDefines.FileStatus.Ok, values);
+    const p2 = sqlBase.addSqlParameter('', values);
+    const p3 = sqlBase.addSqlParameter(ctx.tenant, values);
+    const p4 = sqlBase.addSqlParameter(docId, values);
+    const sql = `UPDATE ${cfgTableResult} SET status=${p1},callback=${p2} WHERE tenant=${p3} AND id=${p4};`;
+    sqlBase.sqlQuery(ctx, sql, (err, res) => (err ? reject(err) : resolve(res)), undefined, undefined, values);
+  });
+}
+
+/**
+ * Phase 2: recover documents that have leftover changes in the DB but no fresh forgotten file.
+ * Destructive: clears callback, deletes doc_changes rows, removes forgotten storage.
+ * Fixes two pre-existing defects in the standalone changes2forgotten script:
+ *  - WOPI unlock executed BEFORE callback is cleared (otherwise wopiParams are lost).
+ *  - Direct call to cleanDocumentOnExitNoChangesPromise (no createSaveTimer indirection).
+ */
+function* recoverChanges(ctx) {
+  const docsCoServer = require('./DocsCoServer');
+  const documentsWithChanges = yield sqlBase.getDocumentsWithChanges(ctx);
+  ctx.logger.debug('shutdown phase2 docs with changes = %s', documentsWithChanges.length);
+
+  const docsToConvert = [];
+  for (let i = 0; i < documentsWithChanges.length; ++i) {
+    const tenant = documentsWithChanges[i].tenant;
+    const docId = documentsWithChanges[i].id;
+    ctx.setTenant(tenant);
+    yield ctx.initTenantCache();
+    const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+    const forgotten = yield storage.listObjects(ctx, docId, tenForgottenFiles);
+    if (forgotten.length > 0) {
+      const selectRes = yield taskResult.select(ctx, docId);
+      if (selectRes.length > 0) {
+        const row = selectRes[0];
+        if (row.status !== commonDefines.FileStatus.SaveVersion && row.status !== commonDefines.FileStatus.UpdateVersion) {
+          docsToConvert.push([tenant, docId]);
+        }
+      }
+    } else {
+      docsToConvert.push([tenant, docId]);
+    }
+  }
+  ctx.initDefault();
+  ctx.logger.debug('shutdown phase2 docs to recover = %s', docsToConvert.length);
+
+  for (let i = 0; i < docsToConvert.length; ++i) {
+    const tenant = docsToConvert[i][0];
+    const docId = docsToConvert[i][1];
+    ctx.setTenant(tenant);
+    yield ctx.initTenantCache();
+
+    // Defensive re-check: a peer node could have completed a save between enumeration and processing.
+    const recheck = yield taskResult.select(ctx, docId);
+    if (
+      recheck.length > 0 &&
+      (recheck[0].status === commonDefines.FileStatus.SaveVersion || recheck[0].status === commonDefines.FileStatus.UpdateVersion)
+    ) {
+      ctx.logger.debug('shutdown phase2 skip (status changed) %s', docId);
+      continue;
+    }
+
+    // Unlock WOPI BEFORE clearing the callback (mirrors canvasservice storeForgotten pattern).
+    yield docsCoServer.unlockWopiDoc(ctx, docId);
+
+    // Clear callback to literal '' so cleanup proceeds without sending integrator notification.
+    yield clearCallback(ctx, docId);
+
+    ctx.logger.debug('shutdown phase2 cleanup %s', docId);
+    yield docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId, null, null, false, true);
+  }
+  ctx.initDefault();
+  // Wait for the fire-and-forget sqlBase.deleteChanges to land before verifying.
+  yield utils.sleep(LOOP_TIMEOUT);
+
+  // Verification pass: confirm processed docs no longer have changes in the DB.
+  const remaining = yield sqlBase.getDocumentsWithChanges(ctx);
+  const remainingSet = new Set(remaining.map(r => `${r.tenant}\x00${r.id}`));
+  let cleaned = 0;
+  for (let i = 0; i < docsToConvert.length; ++i) {
+    const [tenant, docId] = docsToConvert[i];
+    if (!remainingSet.has(`${tenant}\x00${docId}`)) {
+      cleaned++;
+    } else {
+      ctx.logger.warn('shutdown phase2 still has changes:%s', docId);
+    }
+  }
+  ctx.logger.debug('shutdown phase2 cleaned:%d still_pending:%d', cleaned, docsToConvert.length - cleaned);
+}
 
 exports.shutdown = function (ctx, editorStat, status) {
   return co(function* () {
@@ -84,6 +183,12 @@ exports.shutdown = function (ctx, editorStat, status) {
         }
         yield utils.sleep(LOOP_TIMEOUT);
       }
+      // Phase 2: recover orphan DB changes (only on shutdown, not uncordon).
+      // Skip if Phase 1 timed out — active saves may still be in progress.
+      if (status && res) {
+        yield* recoverChanges(ctx);
+      }
+
       //todo need to check the queues, because there may be long conversions running before Shutdown
       //clean up
       yield editorStat.cleanupShutdown(redisKeyShutdown);
