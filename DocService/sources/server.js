@@ -350,12 +350,9 @@ docsCoServer.install(server, app, () => {
 
   app.use('/ai-proxy', rawFileParser, aiProxyHandler.proxyRequest);
 
-  app.post('/dummyCallback', utils.checkClientIp, apicache.middleware('5 minutes'), rawFileParser, (req, res) => {
-    const ctx = new operationContext.Context();
-    ctx.initFromRequest(req);
-    //yield ctx.initTenantCache();//no need
-    ctx.logger.debug(`dummyCallback req.body:%s`, req.body);
-    utils.fillResponseSimple(res, JSON.stringify({error: 0}, 'application/json'));
+  app.post('/dummyCallback', utils.checkClientIp, rawFileParser, (req, res) => {
+    operationContext.global.logger.debug('dummyCallback body length:%d', req.body.length);
+    utils.fillResponseSimple(res, JSON.stringify({error: 0}), 'application/json');
   });
 
   const sendUserPlugins = (res, data) => {
