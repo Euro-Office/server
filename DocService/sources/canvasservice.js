@@ -1803,16 +1803,7 @@ exports.downloadFile = function (req, res) {
       const authRes = yield docsCoServer.getRequestParams(ctx, req);
       if (authRes.code === constants.NO_ERROR) {
         const decoded = authRes.params;
-        if (decoded.changesUrl) {
-          url = decoded.changesUrl;
-          isInJwtToken = authRes.isDecoded;
-        } else if (decoded.document && -1 !== tenDownloadFileAllowExt.indexOf(decoded.document.fileType)) {
-          url = decoded.document.url;
-          isInJwtToken = authRes.isDecoded;
-        } else if (decoded.url && -1 !== tenDownloadFileAllowExt.indexOf(decoded.fileType)) {
-          url = decoded.url;
-          isInJwtToken = authRes.isDecoded;
-        } else if (wopiClient.isWopiJwtToken(decoded)) {
+        if (wopiClient.isWopiJwtToken(decoded)) {
           if (decoded.fileInfo.Size === 0) {
             //editnew case
             fromTemplate = pathModule.extname(decoded.fileInfo.BaseFileName).substring(1);
@@ -1827,6 +1818,15 @@ exports.downloadFile = function (req, res) {
               errorDescription = 'access deny';
             }
           }
+        } else if (decoded.changesUrl) {
+          url = decoded.changesUrl;
+          isInJwtToken = authRes.isDecoded;
+        } else if (decoded.document && -1 !== tenDownloadFileAllowExt.indexOf(decoded.document.fileType)) {
+          url = decoded.document.url;
+          isInJwtToken = authRes.isDecoded;
+        } else if (decoded.url && -1 !== tenDownloadFileAllowExt.indexOf(decoded.fileType)) {
+          url = decoded.url;
+          isInJwtToken = authRes.isDecoded;
         } else if (!tenTokenEnableBrowser) {
           //todo token required
           if (decoded.url) {

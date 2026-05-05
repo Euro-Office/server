@@ -1649,6 +1649,8 @@ function getRequestParams(ctx, req, _opt_isNotInBody) {
   return co(function* () {
     const tenTokenEnableRequestInbox = ctx.getCfg('services.CoAuthoring.token.enable.request.inbox', cfgTokenEnableRequestInbox);
     const tenTokenRequiredParams = ctx.getCfg('services.CoAuthoring.server.tokenRequiredParams', cfgTokenRequiredParams);
+    const tenTokenInboxHeader = ctx.getCfg('services.CoAuthoring.token.inbox.header', cfgTokenInboxHeader);
+    const tenTokenInboxPrefix = ctx.getCfg('services.CoAuthoring.token.inbox.prefix', cfgTokenInboxPrefix);
 
     const res = {code: constants.NO_ERROR, description: '', isDecoded: false, params: undefined};
     if (req.body && Buffer.isBuffer(req.body) && req.body.length > 0) {
@@ -1661,7 +1663,10 @@ function getRequestParams(ctx, req, _opt_isNotInBody) {
     if (!res.params) {
       res.params = req.query;
     }
-    if (tenTokenEnableRequestInbox) {
+    const authorization = req.get(tenTokenInboxHeader);
+    const hasBodyToken = !!res.params?.token;
+    const hasHeaderToken = authorization && authorization.startsWith(tenTokenInboxPrefix);
+    if (tenTokenEnableRequestInbox || hasBodyToken || hasHeaderToken) {
       res.code = constants.VKEY;
       let checkJwtRes;
       if (res.params.token) {
