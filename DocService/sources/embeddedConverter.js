@@ -15,7 +15,7 @@ const profile = require('../../Common/sources/runtime/profile');
 const operationContext = require('../../Common/sources/operationContext');
 const InprocTaskQueue = require('../../Common/sources/taskqueueMemory');
 
-let started = false;
+let startPromise = null;
 let runnerQueue = null;
 
 /**
@@ -30,12 +30,7 @@ function readMaxProcessCount() {
   }
 }
 
-/**
- * Start the embedded converter runner. Idempotent once the runner is up.
- * @returns {Promise<void>}
- */
-async function start() {
-  if (started) return;
+async function _doStart() {
   if (!profile.isMemoryRuntime()) return;
 
   // Lazy-require: keeps FileConverter out of the module graph in Enterprise deployments.
@@ -58,8 +53,22 @@ async function start() {
   await queue.initPromise(true, true, true, false, false, false);
 
   runnerQueue = queue;
-  started = true;
   operationContext.global.logger.warn('embedded converter started');
+}
+
+/**
+ * Start the embedded converter runner. Idempotent - concurrent calls share the same Promise.
+ * A failed start clears the promise so the caller can retry.
+ * @returns {Promise<void>}
+ */
+function start() {
+  if (!startPromise) {
+    startPromise = _doStart().catch(err => {
+      startPromise = null;
+      throw err;
+    });
+  }
+  return startPromise;
 }
 
 /**
@@ -67,14 +76,14 @@ async function start() {
  * @returns {Promise<void>}
  */
 async function stop() {
-  if (!started || !runnerQueue) return;
+  startPromise = null;
+  if (!runnerQueue) return;
   try {
     await runnerQueue.close();
   } catch (err) {
     operationContext.global.logger.warn('embedded converter close error: %s', err && err.stack);
   } finally {
     runnerQueue = null;
-    started = false;
   }
 }
 
@@ -82,7 +91,7 @@ async function stop() {
  * @returns {boolean}
  */
 function isStarted() {
-  return started;
+  return runnerQueue !== null;
 }
 
 module.exports = {start, stop, isStarted};

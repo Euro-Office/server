@@ -108,7 +108,7 @@ if (require('../../Common/sources/runtime/profile').isMemoryRuntime()) {
    */
   async function selectWithCache(ctx, docId) {
     //todo merge with select and remove on update
-    if (ctx.taskResultCache && ctx.taskResultCache[0].id === docId) {
+    if (ctx.taskResultCache && ctx.taskResultCache.length > 0 && ctx.taskResultCache[0].id === docId) {
       return ctx.taskResultCache;
     }
     ctx.taskResultCache = await select(ctx, docId);

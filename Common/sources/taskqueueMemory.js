@@ -193,7 +193,8 @@ class InprocBackend {
         receiver.emit('task', item.content, ack);
       } catch (err) {
         ack();
-        throw err;
+        // rethrowing from a setImmediate callback becomes an uncaught exception - log and continue
+        require('./operationContext').global.logger.error('InprocBackend dispatch error: %s', err.stack);
       }
     }
   }

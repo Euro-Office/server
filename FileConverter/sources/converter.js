@@ -627,12 +627,12 @@ function* processDownloadFromStorage(ctx, dataConvert, cmd, task, tempDirs, auth
   if (concatDir) {
     yield* concatFiles(concatDir, concatTemplate);
     if (concatTemplate) {
-      const filenames = fs.readdirSync(concatDir);
-      filenames.forEach(file => {
+      const filenames = yield fs.promises.readdir(concatDir);
+      for (const file of filenames) {
         if (file.match(new RegExp(`${concatTemplate}\\d+\\.`))) {
-          fs.rmSync(path.join(concatDir, file));
+          yield fs.promises.rm(path.join(concatDir, file));
         }
-      });
+      }
     }
   }
   //todo rework
@@ -793,7 +793,7 @@ function* processChangesBin(ctx, tempDirs, task, cmd, authorProps, sha256) {
   }
   cmd.setUserId(changesAuthor);
   cmd.setUserIndex(changesIndex);
-  fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
+  yield fs.promises.writeFile(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
   ctx.logger.debug('processChanges end');
   return res;
 }
@@ -925,7 +925,7 @@ function* processChangesBase64(ctx, tempDirs, task, cmd, authorProps, sha256) {
   }
   cmd.setUserId(changesAuthor);
   cmd.setUserIndex(changesIndex);
-  fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
+  yield fs.promises.writeFile(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
   ctx.logger.debug('processChanges end');
   return res;
 }
@@ -1058,7 +1058,7 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
     //todo review. the stub in the case of AVS_OFFICESTUDIO_FILE_OTHER_OOXML x2t changes the file extension.
     const fileToBasename = path.basename(dataConvert.fileTo, path.extname(dataConvert.fileTo));
     const fileToDir = path.dirname(dataConvert.fileTo);
-    const files = fs.readdirSync(fileToDir);
+    const files = yield fs.promises.readdir(fileToDir);
     for (let i = 0; i < files.length; ++i) {
       const fileCur = files[i];
       if (0 == fileCur.indexOf(fileToBasename)) {
@@ -1079,7 +1079,7 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
     if (-1 !== exitCodesCopyOrigin.indexOf(error)) {
       const originPath = path.join(path.dirname(dataConvert.fileTo), 'origin' + path.extname(dataConvert.fileFrom));
       if (!fs.existsSync(dataConvert.fileTo)) {
-        fs.copyFileSync(dataConvert.fileFrom, originPath);
+        yield fs.promises.copyFile(dataConvert.fileFrom, originPath);
         ctx.logger.debug('copyOrigin complete');
       }
     }
@@ -1299,7 +1299,7 @@ function* ExecuteTask(ctx, task) {
     curDate = new Date();
   }
   if (tempDirs) {
-    fs.rmSync(tempDirs.temp, {recursive: true, force: true});
+    yield fs.promises.rm(tempDirs.temp, {recursive: true, force: true});
     ctx.logger.debug('deleteFolderRecursive');
     if (clientStatsD) {
       clientStatsD.timing('conv.deleteFolderRecursive', new Date() - curDate);
@@ -1334,11 +1334,14 @@ function receiveTaskSetTimeout(ctx, task, ack, outParams) {
   //add DownloadTimeout to upload results
   const delay = task.getVisibilityTimeout() * 1000 + ms(cfgDownloadTimeout.wholeCycle);
   return setTimeout(() => {
-    return co(function* () {
+    co(function* () {
       outParams.isAck = true;
       ctx.logger.error('receiveTask timeout %d', delay);
       yield ackTask(ctx, null, task, ack);
       yield queue.closeOrWait();
+      process.exit(1);
+    }).catch(err => {
+      ctx.logger.error('receiveTask timeout handler error %s', err.stack);
       process.exit(1);
     });
   }, delay);
@@ -1432,3 +1435,4 @@ function run() {
 exports.createRunner = createRunner;
 exports.simulateErrorResponse = simulateErrorResponse;
 exports.run = run;
+exports._receiveTaskSetTimeoutForTesting = receiveTaskSetTimeout;
