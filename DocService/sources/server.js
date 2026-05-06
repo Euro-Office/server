@@ -51,6 +51,7 @@ const canvasService = require('./canvasservice');
 const converterService = require('./converterservice');
 const fileUploaderService = require('./fileuploaderservice');
 const wopiClient = require('./wopiClient');
+const embeddedConverter = require('./embeddedConverter');
 const constants = require('./../../Common/sources/constants');
 const utils = require('./../../Common/sources/utils');
 const commonDefines = require('./../../Common/sources/commondefines');
@@ -166,6 +167,13 @@ try {
 // If error handling is needed, now it's like this https://github.com/expressjs/errorhandler
 docsCoServer.install(server, app, () => {
   operationContext.global.logger.info('Start callbackFunction');
+
+  // Start the embedded converter runner when the runtime profile selects
+  // standalone/community mode. In Enterprise/distributed mode this is a no-op
+  // and the convertermaster worker pool keeps running as a separate process.
+  embeddedConverter.start().catch(err => {
+    operationContext.global.logger.error('embeddedConverter.start error: %s', err && err.stack);
+  });
 
   server.listen(config.get('services.CoAuthoring.server.port'), () => {
     operationContext.global.logger.warn(

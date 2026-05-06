@@ -58,6 +58,7 @@ const tenantManager = require('./../../Common/sources/tenantManager');
 const {detectCertType} = require('./signing/pdfSigningCore');
 const {signPdfFile: signPdfFileKms} = require('./signing/pdfAwsKmsSigner');
 const {signPdfFile: signPdfFileCsc} = require('./signing/pdfCscSigner');
+const {resolveConverterPath} = require('./converterPaths');
 
 const cfgMaxDownloadBytes = config.get('FileConverter.converter.maxDownloadBytes');
 const cfgDownloadTimeout = config.get('FileConverter.converter.downloadTimeout');
@@ -81,11 +82,11 @@ const cfgSigning = config.get('FileConverter.converter.signing');
  * @returns {string} resolved signing certificate path (new or legacy)
  */
 function resolveSigningPath(ctx) {
-  return (
+  const raw =
     ctx.getCfg('FileConverter.converter.signing.keyStorePath', null) ||
     ctx.getCfg('FileConverter.converter.signingKeyStorePath', cfgSigningKeyStorePath) ||
-    ''
-  );
+    '';
+  return resolveConverterPath(raw);
 }
 
 /**
@@ -204,13 +205,9 @@ function TaskQueueDataConvert(ctx, task) {
   this.fromChanges = task.getFromChanges();
   //todo
   const tenFontDir = ctx.getCfg('FileConverter.converter.fontDir', cfgFontDir);
-  if (tenFontDir) {
-    this.fontDir = path.resolve(tenFontDir);
-  } else {
-    this.fontDir = null;
-  }
+  this.fontDir = resolveConverterPath(tenFontDir) || null;
   const tenPresentationThemesDir = ctx.getCfg('FileConverter.converter.presentationThemesDir', cfgPresentationThemesDir);
-  this.themeDir = path.resolve(tenPresentationThemesDir);
+  this.themeDir = resolveConverterPath(tenPresentationThemesDir);
   this.mailMergeSend = cmd.mailmergesend;
   this.thumbnail = cmd.thumbnail;
   this.textParams = cmd.getTextParams();
@@ -1115,8 +1112,8 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
 }
 
 function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, getTaskTime, task, isInJwtToken) {
-  const tenX2tPath = ctx.getCfg('FileConverter.converter.x2tPath', cfgX2tPath);
-  const tenDocbuilderPath = ctx.getCfg('FileConverter.converter.docbuilderPath', cfgDocbuilderPath);
+  const tenX2tPath = resolveConverterPath(ctx.getCfg('FileConverter.converter.x2tPath', cfgX2tPath));
+  const tenDocbuilderPath = resolveConverterPath(ctx.getCfg('FileConverter.converter.docbuilderPath', cfgDocbuilderPath));
   const tenArgs = ctx.getCfg('FileConverter.converter.args', cfgArgs);
   let childRes,
     isTimeout = false;
@@ -1392,13 +1389,46 @@ function simulateErrorResponse(data) {
   //yield ctx.initTenantCache();
   return createErrorResponse(ctx, task);
 }
-function run() {
-  queue = new queueService(simulateErrorResponse);
+/**
+ * Bind task processing to an externally-supplied queue.
+ *
+ * Used by:
+ *  - {@link run} for the distributed/external (RabbitMQ/ActiveMQ) mode
+ *    where the converter worker process owns its queue handle.
+ *  - DocService embedded runner in the standalone/community runtime, which
+ *    passes a TaskQueuePort instance whose backend is shared with the
+ *    DocsCoServer queue handle.
+ *
+ * The caller is responsible for initialising the queue with the appropriate
+ * receive flags before or after calling this function. The internal module
+ * variable `queue` is also assigned so that downstream functions
+ * ({@link ackTask}, {@link receiveTask} timeout handlers) can publish
+ * responses through the same handle.
+ *
+ * @param {Object} externalQueue - TaskQueuePort-compatible instance
+ * @returns {Object} same queue, for chaining
+ */
+function createRunner(externalQueue) {
+  queue = externalQueue;
   queue.on('task', receiveTask);
-  queue.init(true, true, true, false, false, false, err => {
+  return queue;
+}
+
+/**
+ * Distributed/external entry point used by {@link convertermaster.js} workers.
+ * Instantiates a queue via the legacy `taskqueueRabbitMQ` module and wires
+ * task processing through {@link createRunner}.
+ */
+function run() {
+  const q = new queueService(simulateErrorResponse);
+  createRunner(q);
+  q.init(true, true, true, false, false, false, err => {
     if (null != err) {
       operationContext.global.logger.error('createTaskQueue error: %s', err.stack);
     }
   });
 }
+
+exports.createRunner = createRunner;
+exports.simulateErrorResponse = simulateErrorResponse;
 exports.run = run;
