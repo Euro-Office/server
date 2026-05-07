@@ -49,7 +49,6 @@ const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatS
 const editorStatStorage = require('./' + (cfgEditorStatStorage || cfgEditorDataStorage));
 
 const cfgForgottenFiles = config.get('services.CoAuthoring.server.forgottenfiles');
-const cfgTableResult = config.get('services.CoAuthoring.sql.tableResult');
 
 const cfgRedisPrefix = configCoAuthoring.get('redis.prefix');
 const redisKeyShutdown = cfgRedisPrefix + constants.REDIS_KEY_SHUTDOWN;
@@ -57,33 +56,6 @@ const redisKeyShutdown = cfgRedisPrefix + constants.REDIS_KEY_SHUTDOWN;
 const WAIT_TIMEOUT = 30000;
 const LOOP_TIMEOUT = 1000;
 const EXEC_TIMEOUT = WAIT_TIMEOUT + utils.getConvertionTimeout(undefined);
-
-const addSqlParam = sqlBase.addSqlParameter;
-
-function updateDoc(ctx, docId, status, callback) {
-  return new Promise((resolve, reject) => {
-    const values = [];
-    const p1 = addSqlParam(status, values);
-    const p2 = addSqlParam(callback, values);
-    const p3 = addSqlParam(ctx.tenant, values);
-    const p4 = addSqlParam(docId, values);
-    const sqlCommand = `UPDATE ${cfgTableResult} SET status=${p1},callback=${p2} WHERE tenant=${p3} AND id=${p4};`;
-    sqlBase.sqlQuery(
-      ctx,
-      sqlCommand,
-      (error, result) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(result);
-        }
-      },
-      undefined,
-      undefined,
-      values
-    );
-  });
-}
 
 function shutdown() {
   return co(function* () {
@@ -138,7 +110,7 @@ function shutdown() {
         ctx.setTenant(tenant);
         yield ctx.initTenantCache();
 
-        yield updateDoc(ctx, docId, commonDefines.FileStatus.Ok, '');
+        yield taskResult.updateStatusAndClearCallback(ctx, docId, commonDefines.FileStatus.Ok);
         yield editorStat.addShutdown(redisKeyShutdown, docId);
         ctx.logger.debug('shutdown createSaveTimerPromise %s', docId);
         yield docsCoServer.createSaveTimer(ctx, docId, null, null, null, queue, true);

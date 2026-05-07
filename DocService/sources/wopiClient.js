@@ -48,6 +48,7 @@ const utils = require('./../../Common/sources/utils');
 const constants = require('./../../Common/sources/constants');
 const commonDefines = require('./../../Common/sources/commondefines');
 const wopiUtils = require('./wopiUtils');
+const newFileTemplateUtils = require('./newFileTemplateUtils');
 const documentFormats = require('./../../Common/sources/documentFormats');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
@@ -243,8 +244,17 @@ function discovery(req, res) {
             xmlApp.ele('action', {name: 'edit', ext: ext.edit[j], default: 'true', requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
           }
           xmlApp.ele('action', {name: 'mobileEdit', ext: ext.edit[j], requires: 'locks,update', urlsrc: urlTemplateMobileEdit}).up();
-          if (templatesFolderExtsCache[ext.edit[j]]) {
-            xmlApp.ele('action', {name: 'editnew', ext: ext.edit[j], requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
+          const editNewTemplateExt = newFileTemplateUtils.getNewFileTemplateExt(ext.edit[j]);
+          if (templatesFolderExtsCache[editNewTemplateExt]) {
+            xmlApp
+              .ele('action', {
+                name: 'editnew',
+                ext: ext.edit[j],
+                requires: 'locks,update',
+                newext: newFileTemplateUtils.getNewFileCreatedExt(ext.edit[j]),
+                urlsrc: urlTemplateEdit
+              })
+              .up();
           }
         }
         xmlApp.up();
@@ -299,8 +309,17 @@ function discovery(req, res) {
                 xmlApp.ele('action', {name: 'edit', ext: '', default: 'true', requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
               }
               xmlApp.ele('action', {name: 'mobileEdit', ext: '', requires: 'locks,update', urlsrc: urlTemplateMobileEdit}).up();
-              if (templatesFolderExtsCache[ext.edit[j]]) {
-                xmlApp.ele('action', {name: 'editnew', ext: '', requires: 'locks,update', urlsrc: urlTemplateEdit}).up();
+              const editNewTemplateExt = newFileTemplateUtils.getNewFileTemplateExt(ext.edit[j]);
+              if (templatesFolderExtsCache[editNewTemplateExt]) {
+                xmlApp
+                  .ele('action', {
+                    name: 'editnew',
+                    ext: '',
+                    requires: 'locks,update',
+                    newext: newFileTemplateUtils.getNewFileCreatedExt(ext.edit[j]),
+                    urlsrc: urlTemplateEdit
+                  })
+                  .up();
               }
               xmlApp.up();
             });
@@ -538,7 +557,7 @@ function applyFileInfo(fileInfo, size, info) {
  * @param {string} lang
  * @param {string} ui
  * @param {string} fileType
- * @returns {Promise<{filePath: string, size: number}>}
+ * @returns {Promise<{filePath: string, size: number, templateFileType: string}>}
  */
 async function getNewFileTemplateMeta(ctx, lang, ui, fileType) {
   const tenNewFileTemplate = ctx.getCfg('services.CoAuthoring.server.newFileTemplate', cfgNewFileTemplate);
@@ -556,7 +575,8 @@ async function getNewFileTemplateMeta(ctx, lang, ui, fileType) {
     constants.TEMPLATES_FOLDER_LOCALE_COLLISON_MAP[localePrefix] ??
     locales.find(x => x.startsWith(localePrefix)) ??
     constants.TEMPLATES_DEFAULT_LOCALE;
-  const filePath = `${tenNewFileTemplate}/${locale}/new.${fileType}`;
+  const templateFileType = newFileTemplateUtils.getNewFileTemplateExt(fileType);
+  const filePath = `${tenNewFileTemplate}/${locale}/new.${templateFileType}`;
   if (!templateFilesSizeCache[filePath]) {
     templateFilesSizeCache[filePath] = lstat(filePath).catch(err => {
       delete templateFilesSizeCache[filePath];
@@ -564,7 +584,7 @@ async function getNewFileTemplateMeta(ctx, lang, ui, fileType) {
     });
   }
   const stat = await templateFilesSizeCache[filePath];
-  return {filePath, size: stat.size};
+  return {filePath, size: stat.size, templateFileType};
 }
 /**
  * @param {object} ctx
@@ -581,12 +601,15 @@ async function checkAndReplaceEmptyFile(ctx, fileInfo, wopiSrc, access_token, ac
   if (fileInfo.Size !== 0 || !fileType.length) {
     return;
   }
-  const {filePath, size} = await getNewFileTemplateMeta(ctx, lang, ui, fileType);
+  const {filePath, size, templateFileType} = await getNewFileTemplateMeta(ctx, lang, ui, fileType);
 
   // Canonical WOPI editnew flow: unlocked PutFile on zero-byte file (spec §createnew).
   // X-WOPI-Lock is not included during document creation per WOPI spec.
   const wopiParams = getWopiParams(undefined, fileInfo, wopiSrc, access_token, access_token_ttl);
-  const postRes = await putFile(ctx, wopiParams, undefined, createReadStream(filePath), size, fileInfo.UserId, false, false, false, true);
+  const postRes = await putFile(ctx, wopiParams, undefined, createReadStream(filePath), size, fileInfo.UserId, false, false, false, {
+    returnErrorDetails: true,
+    contentTypeExt: templateFileType
+  });
 
   if (!postRes?.putFileError) {
     if (postRes) {
@@ -875,7 +898,7 @@ function getConverterHtml(req, res) {
     }
   });
 }
-function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, isModifiedByUser, isAutosave, isExitSave, opt_returnErrorDetails) {
+function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, isModifiedByUser, isAutosave, isExitSave, optOptions) {
   return co(function* () {
     let postRes = null;
     try {
@@ -907,7 +930,13 @@ function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, 
           //collabora nexcloud connector
           headers['X-LOOL-WOPI-Timestamp'] = wopiParams.LastModifiedTime;
         }
-        headers['Content-Type'] = mime.getType(getFileTypeByInfo(fileInfo));
+        let contentTypeExt;
+        if (typeof optOptions === 'object' && optOptions !== null) {
+          contentTypeExt = optOptions.contentTypeExt;
+        } else if (typeof optOptions === 'string') {
+          contentTypeExt = optOptions;
+        }
+        headers['Content-Type'] = mime.getType(contentTypeExt || getFileTypeByInfo(fileInfo));
 
         ctx.logger.debug('wopi PutFile request uri=%s headers=%j', uri, headers);
         if (typeof dataStream === 'function') {
@@ -930,7 +959,9 @@ function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, 
       }
     } catch (err) {
       const errorMsg = getWopiErrorMessage(err.statusCode);
-      if (opt_returnErrorDetails) {
+      const returnErrorDetails =
+        typeof optOptions === 'object' && optOptions !== null ? optOptions.returnErrorDetails : typeof optOptions === 'boolean' && optOptions;
+      if (returnErrorDetails) {
         ctx.logger.debug('wopi PutFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
         postRes = {putFileError: true, statusCode: err.statusCode || 0, responseHeaders: err.response?.headers};
       } else {

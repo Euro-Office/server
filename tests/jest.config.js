@@ -126,7 +126,10 @@ module.exports = {
 
   // A map from regular expressions to module names or to arrays of module names that allow to stub out resources with a single module
   moduleNameMapper: {
-    '^axios$': '../../Common/node_modules/axios/dist/node/axios.cjs'
+    '^axios$': '../../Common/node_modules/axios/dist/node/axios.cjs',
+    // Map bare 'config' to a single canonical location so doMock('config', …)
+    // intercepts require('config') from all source subdirectories.
+    '^config$': '<rootDir>/../Common/node_modules/config'
   },
 
   // An array of regexp pattern strings, matched against all module paths before considered 'visible' to the module loader

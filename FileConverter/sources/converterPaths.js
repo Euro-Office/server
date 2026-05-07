@@ -31,4 +31,33 @@
  */
 
 'use strict';
-module.exports = require('./databaseConnectors/memoryConnector');
+
+const path = require('path');
+
+// In pkg builds __dirname resolves inside the virtual snapshot, which cannot
+// hold native binaries.  Use the real executable location instead.
+// Both DocService (docservice) and FileConverter (converter) pkg targets sit
+// one level below the install root, so ../FileConverter always lands correctly.
+const FC_DEFAULT_BASE = process.pkg ? path.resolve(path.dirname(process.execPath), '..', 'FileConverter') : path.resolve(__dirname, '..');
+
+/**
+ * Resolve a FileConverter path config value to an absolute path.
+ *
+ * - Absolute paths are returned unchanged.
+ * - Falsy values or the literal string 'null' (the default.json sentinel)
+ *   return an empty string.
+ * - Relative paths are resolved against FC_DEFAULT_BASE (FileConverter/).
+ *
+ * Do NOT use this for FileConverter.converter.errorfiles: that is a storage
+ * route/prefix, not a local filesystem path.
+ *
+ * @param {string|null|undefined} value - raw config value
+ * @returns {string} absolute path, or '' if value is absent/null sentinel
+ */
+function resolveConverterPath(value) {
+  if (!value || value === 'null') return '';
+  if (path.isAbsolute(value)) return value;
+  return path.resolve(FC_DEFAULT_BASE, value);
+}
+
+module.exports = {resolveConverterPath, FC_DEFAULT_BASE};

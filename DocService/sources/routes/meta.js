@@ -48,17 +48,28 @@ const LOCALE_SUBDIR = path.join('apps', 'documenteditor', 'main', 'locale');
 let cachedLocales = null;
 
 /**
- * Returns list of supported UI locale codes from documenteditor locale JSON files.
- * Result is cached for the lifetime of the process (locale files only change on product upgrade).
+ * Returns UI locale codes from documenteditor locale files, normalized to canonical BCP 47
+ * via Intl.getCanonicalLocales. Cached for process lifetime.
+ * @param {object} ctx - Operation context for logging
  * @param {string} webAppsPath - Resolved path to web-apps root
- * @returns {Promise<string[]>} Sorted list of locale codes (e.g. ['de', 'en', 'ru'])
+ * @returns {Promise<string[]>} Sorted canonical locale tags (e.g. ['de', 'en', 'ru', 'zh-CN'])
  */
-async function getSupportedLocales(webAppsPath) {
+async function getSupportedLocales(ctx, webAppsPath) {
   if (cachedLocales) return cachedLocales;
   const localeDir = path.resolve(webAppsPath, LOCALE_SUBDIR);
   try {
     const entries = await fs.readdir(localeDir, {withFileTypes: true});
-    cachedLocales = entries.filter(e => e.isFile() && e.name.endsWith('.json')).map(e => path.basename(e.name, '.json'));
+    cachedLocales = entries
+      .filter(e => e.isFile() && e.name.endsWith('.json'))
+      .map(e => {
+        const tag = path.basename(e.name, '.json');
+        try {
+          return Intl.getCanonicalLocales(tag)[0];
+        } catch {
+          ctx.logger.warn('getSupportedLocales: invalid BCP 47 locale tag in filename: %s', tag);
+          return tag;
+        }
+      });
     cachedLocales.sort((a, b) => a.localeCompare(b));
     return cachedLocales;
   } catch {
@@ -89,7 +100,7 @@ router.get('/config', async (req, res) => {
     await ctx.initTenantCache();
 
     const webAppsPath = ctx.config?.services?.CoAuthoring?.server?.static_content?.['/web-apps']?.path;
-    const langs = webAppsPath ? await getSupportedLocales(webAppsPath) : [];
+    const langs = webAppsPath ? await getSupportedLocales(ctx, webAppsPath) : [];
 
     const clientConfig = {
       authorization: {

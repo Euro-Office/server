@@ -31,4 +31,26 @@
  */
 
 'use strict';
-module.exports = require('./databaseConnectors/memoryConnector');
+
+const editNewExtMap = Object.freeze({
+  dotx: 'docx',
+  xltx: 'xlsx',
+  potx: 'pptx'
+});
+
+function normalizeExt(fileExt) {
+  return (fileExt || '').toLowerCase();
+}
+
+function getNewFileCreatedExt(fileExt) {
+  return editNewExtMap[normalizeExt(fileExt)];
+}
+
+function getNewFileTemplateExt(fileExt) {
+  return getNewFileCreatedExt(fileExt) || normalizeExt(fileExt);
+}
+
+module.exports = {
+  getNewFileCreatedExt,
+  getNewFileTemplateExt
+};

@@ -51,6 +51,7 @@ const canvasService = require('./canvasservice');
 const converterService = require('./converterservice');
 const fileUploaderService = require('./fileuploaderservice');
 const wopiClient = require('./wopiClient');
+const embeddedConverter = require('./embeddedConverter');
 const constants = require('./../../Common/sources/constants');
 const utils = require('./../../Common/sources/utils');
 const commonDefines = require('./../../Common/sources/commondefines');
@@ -167,6 +168,13 @@ try {
 // If error handling is needed, now it's like this https://github.com/expressjs/errorhandler
 docsCoServer.install(server, app, () => {
   operationContext.global.logger.info('Start callbackFunction');
+
+  // Start the embedded converter runner when the runtime profile selects
+  // standalone/community mode. In Enterprise/distributed mode this is a no-op
+  // and the convertermaster worker pool keeps running as a separate process.
+  embeddedConverter.start().catch(err => {
+    operationContext.global.logger.error('embeddedConverter.start error: %s', err && err.stack);
+  });
 
   server.listen(config.get('services.CoAuthoring.server.port'), () => {
     operationContext.global.logger.warn(
@@ -350,12 +358,9 @@ docsCoServer.install(server, app, () => {
 
   app.use('/ai-proxy', rawFileParser, aiProxyHandler.proxyRequest);
 
-  app.post('/dummyCallback', utils.checkClientIp, apicache.middleware('5 minutes'), rawFileParser, (req, res) => {
-    const ctx = new operationContext.Context();
-    ctx.initFromRequest(req);
-    //yield ctx.initTenantCache();//no need
-    ctx.logger.debug(`dummyCallback req.body:%s`, req.body);
-    utils.fillResponseSimple(res, JSON.stringify({error: 0}, 'application/json'));
+  app.post('/dummyCallback', utils.checkClientIp, rawFileParser, (req, res) => {
+    operationContext.global.logger.debug('dummyCallback body length:%d', req.body.length);
+    utils.fillResponseSimple(res, JSON.stringify({error: 0}), 'application/json');
   });
 
   const sendUserPlugins = (res, data) => {
