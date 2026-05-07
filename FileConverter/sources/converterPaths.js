@@ -30,22 +30,34 @@
  *
  */
 
+'use strict';
+
 const path = require('path');
 
-const platforms = {
-  win32: 'windows',
-  darwin: 'mac',
-  linux: 'linux'
-};
-const platform = platforms[process.platform];
+// In pkg builds __dirname resolves inside the virtual snapshot, which cannot
+// hold native binaries.  Use the real executable location instead.
+// Both DocService (docservice) and FileConverter (converter) pkg targets sit
+// one level below the install root, so ../FileConverter always lands correctly.
+const FC_DEFAULT_BASE = process.pkg ? path.resolve(path.dirname(process.execPath), '..', 'FileConverter') : path.resolve(__dirname, '..');
 
-process.env.NODE_ENV = `development-${platform}`;
-// Use an absolute path so tests work regardless of which directory jest is
-// invoked from (e.g. repo root vs tests/).
-process.env.NODE_CONFIG_DIR = path.join(__dirname, '..', 'Common', 'config');
-
-if (platform === 'mac') {
-  process.env.DYLD_LIBRARY_PATH = '../FileConverter/bin/';
-} else if (platform === 'linux') {
-  process.env.LD_LIBRARY_PATH = '../FileConverter/bin/';
+/**
+ * Resolve a FileConverter path config value to an absolute path.
+ *
+ * - Absolute paths are returned unchanged.
+ * - Falsy values or the literal string 'null' (the default.json sentinel)
+ *   return an empty string.
+ * - Relative paths are resolved against FC_DEFAULT_BASE (FileConverter/).
+ *
+ * Do NOT use this for FileConverter.converter.errorfiles: that is a storage
+ * route/prefix, not a local filesystem path.
+ *
+ * @param {string|null|undefined} value - raw config value
+ * @returns {string} absolute path, or '' if value is absent/null sentinel
+ */
+function resolveConverterPath(value) {
+  if (!value || value === 'null') return '';
+  if (path.isAbsolute(value)) return value;
+  return path.resolve(FC_DEFAULT_BASE, value);
 }
+
+module.exports = {resolveConverterPath, FC_DEFAULT_BASE};

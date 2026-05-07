@@ -58,6 +58,7 @@ const tenantManager = require('./../../Common/sources/tenantManager');
 const {detectCertType} = require('./signing/pdfSigningCore');
 const {signPdfFile: signPdfFileKms} = require('./signing/pdfAwsKmsSigner');
 const {signPdfFile: signPdfFileCsc} = require('./signing/pdfCscSigner');
+const {resolveConverterPath} = require('./converterPaths');
 
 const cfgMaxDownloadBytes = config.get('FileConverter.converter.maxDownloadBytes');
 const cfgDownloadTimeout = config.get('FileConverter.converter.downloadTimeout');
@@ -81,11 +82,11 @@ const cfgSigning = config.get('FileConverter.converter.signing');
  * @returns {string} resolved signing certificate path (new or legacy)
  */
 function resolveSigningPath(ctx) {
-  return (
+  const raw =
     ctx.getCfg('FileConverter.converter.signing.keyStorePath', null) ||
     ctx.getCfg('FileConverter.converter.signingKeyStorePath', cfgSigningKeyStorePath) ||
-    ''
-  );
+    '';
+  return resolveConverterPath(raw);
 }
 
 /**
@@ -204,13 +205,9 @@ function TaskQueueDataConvert(ctx, task) {
   this.fromChanges = task.getFromChanges();
   //todo
   const tenFontDir = ctx.getCfg('FileConverter.converter.fontDir', cfgFontDir);
-  if (tenFontDir) {
-    this.fontDir = path.resolve(tenFontDir);
-  } else {
-    this.fontDir = null;
-  }
+  this.fontDir = resolveConverterPath(tenFontDir) || null;
   const tenPresentationThemesDir = ctx.getCfg('FileConverter.converter.presentationThemesDir', cfgPresentationThemesDir);
-  this.themeDir = path.resolve(tenPresentationThemesDir);
+  this.themeDir = resolveConverterPath(tenPresentationThemesDir);
   this.mailMergeSend = cmd.mailmergesend;
   this.thumbnail = cmd.thumbnail;
   this.textParams = cmd.getTextParams();
@@ -630,12 +627,12 @@ function* processDownloadFromStorage(ctx, dataConvert, cmd, task, tempDirs, auth
   if (concatDir) {
     yield* concatFiles(concatDir, concatTemplate);
     if (concatTemplate) {
-      const filenames = fs.readdirSync(concatDir);
-      filenames.forEach(file => {
+      const filenames = yield fs.promises.readdir(concatDir);
+      for (const file of filenames) {
         if (file.match(new RegExp(`${concatTemplate}\\d+\\.`))) {
-          fs.rmSync(path.join(concatDir, file));
+          yield fs.promises.rm(path.join(concatDir, file));
         }
-      });
+      }
     }
   }
   //todo rework
@@ -796,7 +793,7 @@ function* processChangesBin(ctx, tempDirs, task, cmd, authorProps, sha256) {
   }
   cmd.setUserId(changesAuthor);
   cmd.setUserIndex(changesIndex);
-  fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
+  yield fs.promises.writeFile(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
   ctx.logger.debug('processChanges end');
   return res;
 }
@@ -928,7 +925,7 @@ function* processChangesBase64(ctx, tempDirs, task, cmd, authorProps, sha256) {
   }
   cmd.setUserId(changesAuthor);
   cmd.setUserIndex(changesIndex);
-  fs.writeFileSync(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
+  yield fs.promises.writeFile(path.join(tempDirs.result, 'changesHistory.json'), JSON.stringify(changesHistory), 'utf8');
   ctx.logger.debug('processChanges end');
   return res;
 }
@@ -1061,7 +1058,7 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
     //todo review. the stub in the case of AVS_OFFICESTUDIO_FILE_OTHER_OOXML x2t changes the file extension.
     const fileToBasename = path.basename(dataConvert.fileTo, path.extname(dataConvert.fileTo));
     const fileToDir = path.dirname(dataConvert.fileTo);
-    const files = fs.readdirSync(fileToDir);
+    const files = yield fs.promises.readdir(fileToDir);
     for (let i = 0; i < files.length; ++i) {
       const fileCur = files[i];
       if (0 == fileCur.indexOf(fileToBasename)) {
@@ -1082,7 +1079,7 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
     if (-1 !== exitCodesCopyOrigin.indexOf(error)) {
       const originPath = path.join(path.dirname(dataConvert.fileTo), 'origin' + path.extname(dataConvert.fileFrom));
       if (!fs.existsSync(dataConvert.fileTo)) {
-        fs.copyFileSync(dataConvert.fileFrom, originPath);
+        yield fs.promises.copyFile(dataConvert.fileFrom, originPath);
         ctx.logger.debug('copyOrigin complete');
       }
     }
@@ -1115,8 +1112,8 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
 }
 
 function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, getTaskTime, task, isInJwtToken) {
-  const tenX2tPath = ctx.getCfg('FileConverter.converter.x2tPath', cfgX2tPath);
-  const tenDocbuilderPath = ctx.getCfg('FileConverter.converter.docbuilderPath', cfgDocbuilderPath);
+  const tenX2tPath = resolveConverterPath(ctx.getCfg('FileConverter.converter.x2tPath', cfgX2tPath));
+  const tenDocbuilderPath = resolveConverterPath(ctx.getCfg('FileConverter.converter.docbuilderPath', cfgDocbuilderPath));
   const tenArgs = ctx.getCfg('FileConverter.converter.args', cfgArgs);
   let childRes,
     isTimeout = false;
@@ -1302,7 +1299,7 @@ function* ExecuteTask(ctx, task) {
     curDate = new Date();
   }
   if (tempDirs) {
-    fs.rmSync(tempDirs.temp, {recursive: true, force: true});
+    yield fs.promises.rm(tempDirs.temp, {recursive: true, force: true});
     ctx.logger.debug('deleteFolderRecursive');
     if (clientStatsD) {
       clientStatsD.timing('conv.deleteFolderRecursive', new Date() - curDate);
@@ -1337,11 +1334,14 @@ function receiveTaskSetTimeout(ctx, task, ack, outParams) {
   //add DownloadTimeout to upload results
   const delay = task.getVisibilityTimeout() * 1000 + ms(cfgDownloadTimeout.wholeCycle);
   return setTimeout(() => {
-    return co(function* () {
+    co(function* () {
       outParams.isAck = true;
       ctx.logger.error('receiveTask timeout %d', delay);
       yield ackTask(ctx, null, task, ack);
       yield queue.closeOrWait();
+      process.exit(1);
+    }).catch(err => {
+      ctx.logger.error('receiveTask timeout handler error %s', err.stack);
       process.exit(1);
     });
   }, delay);
@@ -1392,13 +1392,47 @@ function simulateErrorResponse(data) {
   //yield ctx.initTenantCache();
   return createErrorResponse(ctx, task);
 }
-function run() {
-  queue = new queueService(simulateErrorResponse);
+/**
+ * Bind task processing to an externally-supplied queue.
+ *
+ * Used by:
+ *  - {@link run} for the distributed/external (RabbitMQ/ActiveMQ) mode
+ *    where the converter worker process owns its queue handle.
+ *  - DocService embedded runner in the standalone/community runtime, which
+ *    passes a TaskQueuePort instance whose backend is shared with the
+ *    DocsCoServer queue handle.
+ *
+ * The caller is responsible for initialising the queue with the appropriate
+ * receive flags before or after calling this function. The internal module
+ * variable `queue` is also assigned so that downstream functions
+ * ({@link ackTask}, {@link receiveTask} timeout handlers) can publish
+ * responses through the same handle.
+ *
+ * @param {Object} externalQueue - TaskQueuePort-compatible instance
+ * @returns {Object} same queue, for chaining
+ */
+function createRunner(externalQueue) {
+  queue = externalQueue;
   queue.on('task', receiveTask);
-  queue.init(true, true, true, false, false, false, err => {
+  return queue;
+}
+
+/**
+ * Distributed/external entry point used by {@link convertermaster.js} workers.
+ * Instantiates a queue via the legacy `taskqueueRabbitMQ` module and wires
+ * task processing through {@link createRunner}.
+ */
+function run() {
+  const q = new queueService(simulateErrorResponse);
+  createRunner(q);
+  q.init(true, true, true, false, false, false, err => {
     if (null != err) {
       operationContext.global.logger.error('createTaskQueue error: %s', err.stack);
     }
   });
 }
+
+exports.createRunner = createRunner;
+exports.simulateErrorResponse = simulateErrorResponse;
 exports.run = run;
+exports._receiveTaskSetTimeoutForTesting = receiveTaskSetTimeout;
