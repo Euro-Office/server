@@ -479,8 +479,14 @@ docsCoServer.install(server, app, () => {
 });
 
 server.on('clientError', (err, socket) => {
-  // Silently ignore client-side connection errors
-  if (err.code === 'ECONNRESET' || err.code === 'EPIPE' || err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') {
+  // Silently ignore client-side close and parser-after-close errors
+  if (
+    err.code === 'ECONNRESET' ||
+    err.code === 'EPIPE' ||
+    err.code === 'ETIMEDOUT' ||
+    err.code === 'ECONNABORTED' ||
+    err.code === 'HPE_CLOSED_CONNECTION'
+  ) {
     socket.destroy();
     return;
   }
