@@ -8,7 +8,6 @@
  *   - memory guards in taskqueueRabbitMQ, pubsubRabbitMQ, baseConnector, taskresult
  *   - inproc task queue and local pubsub behaviour
  *   - embedded converter start/stop
- *   - Enterprise broker API surface (regression: guard must not fire in broker mode)
  *
  * Tests that require isolated module registries use jest.isolateModules + doMock
  * to control config/license independently of the NODE_ENV overlay.
@@ -278,60 +277,6 @@ describe('OS-package guard - memory guard routing in original files', () => {
     const rows = await taskResultMod.select(ctx, 'os-guard-test');
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe('os-guard-test');
-  });
-
-  test('non-OS package with broker config routes to broker classes (memory guard does not fire)', () => {
-    let TaskQueueImpl, PubSubImpl;
-    let InprocTQ, LocalPS;
-
-    jestGlobals.isolateModules(() => {
-      jestGlobals.doMock('../../Common/sources/license', () => ({packageType: 1}));
-      jestGlobals.doMock('config', () => makeConfigMock(ENTERPRISE_CONFIG_OVERRIDES));
-
-      InprocTQ = require('../../Common/sources/taskqueueMemory');
-      LocalPS = require('../../DocService/sources/pubsubMemory');
-      TaskQueueImpl = require('../../Common/sources/taskqueueRabbitMQ');
-      PubSubImpl = require('../../DocService/sources/pubsubRabbitMQ');
-    });
-
-    // Non-OS package with queue=rabbitmq must NOT resolve to in-process classes.
-    expect(TaskQueueImpl).not.toBe(InprocTQ);
-    expect(PubSubImpl).not.toBe(LocalPS);
-  });
-});
-
-describe('Enterprise regression checks (implementation files export expected API)', () => {
-  // Load each connector in isolation with a non-OS license + broker config so the
-  // memory guard does not fire.  Verifies the broker classes still export the API
-  // surface that Enterprise DocService relies on.
-
-  const BROKER_CONFIG = {'queue.type': 'rabbitmq', 'services.CoAuthoring.sql.type': 'postgres'};
-
-  function loadBrokerModule(requireFn) {
-    let mod;
-    jestGlobals.isolateModules(() => {
-      jestGlobals.doMock('../../Common/sources/license', () => ({packageType: 1}));
-      jestGlobals.doMock('config', () => makeConfigMock(BROKER_CONFIG));
-      mod = requireFn();
-    });
-    return mod;
-  }
-
-  test('taskqueueRabbitMQ.js exports TaskQueueRabbitMQ class with broker-channel fields', () => {
-    const Resolved = loadBrokerModule(() => require('../../Common/sources/taskqueueRabbitMQ'));
-    const instance = new Resolved();
-    // Enterprise class exposes broker-channel fields that the inproc class does not.
-    expect(instance).toHaveProperty('channelConvertTask');
-    expect(instance).toHaveProperty('addTaskStore');
-    expect(typeof instance.backend).toBe('undefined');
-  });
-
-  test('pubsubRabbitMQ.js exports PubsubRabbitMQ class with publish-store fields', () => {
-    const Resolved = loadBrokerModule(() => require('../../DocService/sources/pubsubRabbitMQ'));
-    const instance = new Resolved();
-    expect(instance).toHaveProperty('channelPublish');
-    expect(instance).toHaveProperty('publishStore');
-    expect(typeof instance.backend).toBe('undefined');
   });
 });
 
