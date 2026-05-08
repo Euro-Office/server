@@ -63,16 +63,12 @@ describe('DocsCoServer sendServerRequest', () => {
 
     await docsCoServer.sendServerRequest(ctx, 'https://example.com/callback', dataObject);
 
-    expect(postRequestPromise).toHaveBeenCalledWith(
-      ctx,
-      'https://example.com/callback',
-      JSON.stringify(dataObject),
-      undefined,
-      undefined,
-      expect.anything(),
-      undefined,
-      expect.anything(),
-      {'Content-Type': 'application/json', Connection: 'close'}
-    );
+    expect(postRequestPromise).toHaveBeenCalledWith(ctx, 'https://example.com/callback', {
+      data: JSON.stringify(dataObject),
+      timeout: expect.anything(),
+      authorization: undefined,
+      isInJwtToken: expect.anything(),
+      headers: {'Content-Type': 'application/json', Connection: 'close'}
+    });
   });
 });
