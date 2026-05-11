@@ -1,42 +1,42 @@
 {
   "log": {
-    "filePath": "/etc/onlyoffice/documentserver/log4js/production.json"
+    "filePath": "/etc/euro-office/documentserver/log4js/production.json"
   },
   "runtimeConfig": {
-    "filePath": "/var/www/onlyoffice/documentserver/../Data/runtime.json"
+    "filePath": "/var/www/euro-office/documentserver/../Data/runtime.json"
   },
   "storage": {
     "fs": {
-      "folderPath": "/var/lib/onlyoffice/documentserver/App_Data/cache/files"
+      "folderPath": "/var/lib/euro-office/documentserver/App_Data/cache/files"
     }
   },
   "wopi": {
-    "htmlTemplate": "/var/www/onlyoffice/documentserver/web-apps/apps/api/wopi"
+    "htmlTemplate": "/var/www/euro-office/documentserver/web-apps/apps/api/wopi"
   },
   "services": {
     "CoAuthoring": {
       "server": {
-        "newFileTemplate": "/var/www/onlyoffice/documentserver/document-templates/new",
-        "documentFormatsFile": "/var/www/onlyoffice/documentserver/document-formats/onlyoffice-docs-formats.json",
+        "newFileTemplate": "/var/www/euro-office/documentserver/document-templates/new",
+        "documentFormatsFile": "/var/www/euro-office/documentserver/document-formats/onlyoffice-docs-formats.json",
         "static_content": {
           "/fonts": {
-            "path": "/var/www/onlyoffice/documentserver/fonts",
+            "path": "/var/www/euro-office/documentserver/fonts",
             "options": {"maxAge": "7d"}
           },
           "/sdkjs": {
-            "path": "/var/www/onlyoffice/documentserver/sdkjs",
+            "path": "/var/www/euro-office/documentserver/sdkjs",
             "options": {"maxAge": "7d"}
           },
           "/web-apps": {
-            "path": "/var/www/onlyoffice/documentserver/web-apps",
+            "path": "/var/www/euro-office/documentserver/web-apps",
             "options": {"maxAge": "7d"}
           },
           "/welcome": {
-            "path": "/var/www/onlyoffice/documentserver/server/welcome",
+            "path": "/var/www/euro-office/documentserver/server/welcome",
             "options": {"maxAge": "7d"}
           },
           "/info": {
-            "path": "/var/www/onlyoffice/documentserver/server/info",
+            "path": "/var/www/euro-office/documentserver/server/info",
             "options": {
               "maxAge": 0,
               "cacheControl": "public, no-cache, must-revalidate",
@@ -45,11 +45,11 @@
             }
           },
           "/sdkjs-plugins": {
-            "path": "/var/www/onlyoffice/documentserver/sdkjs-plugins",
+            "path": "/var/www/euro-office/documentserver/sdkjs-plugins",
             "options": {"maxAge": "7d"}
           },
           "/dictionaries": {
-            "path": "/var/www/onlyoffice/documentserver/dictionaries",
+            "path": "/var/www/euro-office/documentserver/dictionaries",
             "options": {"maxAge": "7d"}
           }
         }
@@ -63,22 +63,22 @@
     }
   },
   "license": {
-    "license_file": "/var/www/onlyoffice/documentserver/../Data/license.lic",
+    "license_file": "/var/www/euro-office/documentserver/../Data/license.lic",
     "warning_limit_percents": 70,
     "packageType": 0
   },
   "FileConverter": {
     "converter": {
       "fontDir": "/usr/share/fonts",
-      "presentationThemesDir": "/var/www/onlyoffice/documentserver/sdkjs/slide/themes",
-      "x2tPath": "/var/www/onlyoffice/documentserver/server/FileConverter/bin/x2t",
-      "docbuilderPath": "/var/www/onlyoffice/documentserver/server/FileConverter/bin/docbuilder",
-      "signingKeyStorePath": "/var/www/onlyoffice/documentserver/../Data/signing-keystore.p12"
+      "presentationThemesDir": "/var/www/euro-office/documentserver/sdkjs/slide/themes",
+      "x2tPath": "/var/www/euro-office/documentserver/server/FileConverter/bin/x2t",
+      "docbuilderPath": "/var/www/euro-office/documentserver/server/FileConverter/bin/docbuilder",
+      "signingKeyStorePath": "/var/www/euro-office/documentserver/../Data/signing-keystore.p12"
     }
   },
   "SpellChecker": {
     "server": {
-      "dictDir": "/var/www/onlyoffice/documentserver/dictionaries"
+      "dictDir": "/var/www/euro-office/documentserver/dictionaries"
     }
   }
 }
