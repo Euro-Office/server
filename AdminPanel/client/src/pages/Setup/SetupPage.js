@@ -64,7 +64,7 @@ export default function Setup() {
   return (
     <div className={styles.loginContainer}>
       <div className={styles.loginCard}>
-        <h1 className={styles.title}>ONLYOFFICE Admin Panel</h1>
+        <h1 className={styles.title}>Euro-Office Admin Panel</h1>
         <p className={styles.subtitle}>Initial Setup</p>
         <p className={styles.description}>Enter the bootstrap token from server logs and create your admin password.</p>
 

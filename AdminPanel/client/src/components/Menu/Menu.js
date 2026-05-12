@@ -3,7 +3,7 @@ import {useLocation, useNavigate} from 'react-router-dom';
 import {clearConfig} from '../../store/slices/configSlice';
 import {logout} from '../../api';
 import MenuItem from './MenuItem/MenuItem';
-import AppMenuLogo from '../../assets/AppMenuLogo.svg';
+import AppMenuLogo from '../../assets/dark-logo_s.svg';
 import {menuItems} from '../../config/menuItems';
 import styles from './Menu.module.scss';
 
@@ -40,7 +40,7 @@ function Menu({isOpen, onClose}) {
       <button className={styles['menu__closeButton']} onClick={onClose} aria-label='Close menu' />
       <div className={styles['menu__header']}>
         <div className={styles['menu__logoContainer']}>
-          <img src={AppMenuLogo} alt='ONLYOFFICE' className={styles['menu__logo']} />
+          <img src={AppMenuLogo} alt='Euro-Office' className={styles['menu__logo']} />
         </div>
         <div className={styles['menu__title']}>DocServer Admin Panel</div>
         <div className={styles['menu__separator']}></div>
