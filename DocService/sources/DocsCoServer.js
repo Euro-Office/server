@@ -766,7 +766,8 @@ async function sendServerRequest(ctx, uri, dataObject, opt_checkAndFixAuthorizat
     }
     dataObject.setToken(bodyToken);
   }
-  const headers = {'Content-Type': 'application/json'};
+  // Status callbacks are one-shot POSTs; do not reuse stale keep-alive sockets.
+  const headers = {'Content-Type': 'application/json', Connection: 'close'};
   //isInJwtToken is true because callbackUrl is required field in jwt token
   const postRes = await utils.postRequestPromise(
     ctx,
