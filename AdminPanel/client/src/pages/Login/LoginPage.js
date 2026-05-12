@@ -37,7 +37,7 @@ export default function Login() {
   return (
     <div className={styles.loginContainer}>
       <div className={styles.loginCard}>
-        <h1 className={styles.title}>ONLYOFFICE Admin Panel</h1>
+        <h1 className={styles.title}>Euro-Office Admin Panel</h1>
         <p className={styles.subtitle}>Enter your password to access the admin panel</p>
         <div className={styles.descriptionContainer}>
           <p className={styles.description}>The session is valid for 60 minutes.</p>
