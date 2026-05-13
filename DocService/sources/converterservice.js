@@ -477,7 +477,9 @@ function builderRequest(req, res) {
       let end = false;
       const needCreateId = !docId;
       const isInBody = req.body && Buffer.isBuffer(req.body) && req.body.length > 0;
-      if (error === constants.NO_ERROR && (params.key || params.url || isInBody)) {
+      const multipartFile = req.files?.[0];
+      const isInMultipartBody = !!(multipartFile && multipartFile.buffer);
+      if (error === constants.NO_ERROR && (params.key || params.url || isInBody || isInMultipartBody)) {
         if (needCreateId) {
           const task = yield* taskResult.addRandomKeyTask(ctx, undefined, 'bld_', 8);
           docId = task.key;
@@ -495,6 +497,8 @@ function builderRequest(req, res) {
           cmd.setFormat('docbuilder');
         } else if (isInBody) {
           yield storageBase.putObject(ctx, docId + '/script.docbuilder', req.body, req.body.length);
+        } else if (isInMultipartBody) {
+          yield storageBase.putObject(ctx, docId + '/script.docbuilder', multipartFile.buffer, multipartFile.buffer.length);
         }
         if (needCreateId) {
           const queueData = new commonDefines.TaskQueueData();
