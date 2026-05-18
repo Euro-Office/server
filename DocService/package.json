@@ -30,7 +30,7 @@
     "mssql": "11.0.1",
     "multer": "1.4.4",
     "multi-integer-range": "5.2.0",
-    "multiparty": "4.2.3",
+    "multiparty": "4.3.0",
     "mysql2": "3.13.0",
     "oracledb": "6.9.0",
     "pg": "8.14.0",
