@@ -2742,7 +2742,7 @@
                 "limits_image_types_upload": {
                   "type": "string",
                   "description": "Defines the supported image formats for uploading.",
-                  "default": "jpg;jpeg;jpe;png;gif;bmp;svg;tiff;tif;webp;heic;heif;avif"
+                  "default": "jpg;jpeg;jpe;jfif;jif;png;gif;bmp;svg;tiff;tif;webp;heic;heif;avif"
                 },
                 "utils_common_fontdir": {
                   "type": "string",
