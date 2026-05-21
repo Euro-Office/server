@@ -10,7 +10,6 @@ In the full ONLYOFFICE Docs source tree this repository corresponds to the `serv
 
 - `DocService` — co-authoring server, file API, converter dispatch and admin endpoints.
 - `FileConverter` — wrapper around the document conversion binary.
-- `SpellChecker` — deprecated.
 - `Metrics` — StatsD-based metrics exporter.
 - `Common` — shared sources and configuration files used by every service.
 - `branding/welcome` — example welcome pages shipped with a fresh installation.

@@ -2136,11 +2136,6 @@
                     }
                   }
                 },
-                "spellcheckerUrl": {
-                  "type": "string",
-                  "description": "Defines a path to the spell checker.",
-                  "default": ""
-                },
                 "websocketMaxPayloadSize": {
                   "type": "string",
                   "description": "Defines a maximum payload size of WebSocket.",

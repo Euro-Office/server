@@ -3478,7 +3478,6 @@ exports.install = function (server, app, callbackFunction) {
       indexUser: conn.user.indexUser,
       hasForgotten: opt_hasForgotten,
       jwt: sessionToken,
-      g_cAscSpellCheckUrl: tenEditor['spellcheckerUrl'],
       buildVersion: commonDefines.buildVersion,
       buildNumber: commonDefines.buildNumber,
       licenseType: conn.licenseType,
