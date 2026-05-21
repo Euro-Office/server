@@ -18,7 +18,6 @@ module.exports = [
       '*.min.js',
       'package-lock.json',
       'npm-shrinkwrap.json',
-      'SpellChecker/**',
       'Metrics/**'
     ]
   },
