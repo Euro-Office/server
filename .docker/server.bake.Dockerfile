@@ -20,6 +20,8 @@ ARG PRODUCT_VERSION
 ARG BUILD_ROOT
 ARG TARGETARCH
 
+ARG BRANDING_DIR
+
 ENV PRODUCT_VERSION=${PRODUCT_VERSION}
 
 COPY server/Common/package*.json /server/Common/
@@ -41,6 +43,9 @@ COPY server/AdminPanel/client/package*.json /server/AdminPanel/client/
 RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/client && npm install
 
 COPY server/ /server
+
+### Branding
+COPY ${BRANDING_DIR}/server/ /server
 
 ENV BUILD_ROOT=${BUILD_ROOT}
 
