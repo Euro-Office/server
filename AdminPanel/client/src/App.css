@@ -76,13 +76,13 @@ body::-webkit-scrollbar-thumb {
 }
 
 a {
-  color: #ff6f3d;
+  color: #0082C9;
   text-decoration: underline;
   font-weight: 400;
 }
 
 a:hover {
-  color: #e55a2b;
+  color: #00a5fd;
 }
 
 /* Spinner animation */
