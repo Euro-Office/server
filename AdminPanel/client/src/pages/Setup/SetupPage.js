@@ -17,6 +17,8 @@ export default function Setup() {
   const dispatch = useDispatch();
   const buttonRef = useRef();
 
+  const appName = process.env.APP_NAME;
+
   const {isValid: passwordIsValid, isLoading} = usePasswordValidation(password);
 
   // Check if form can be submitted
@@ -64,7 +66,7 @@ export default function Setup() {
   return (
     <div className={styles.loginContainer}>
       <div className={styles.loginCard}>
-        <h1 className={styles.title}>Euro-Office Admin Panel</h1>
+        <h1 className={styles.title}>{appName} Admin Panel</h1>
         <p className={styles.subtitle}>Initial Setup</p>
         <p className={styles.description}>Enter the bootstrap token from server logs and create your admin password.</p>
 
