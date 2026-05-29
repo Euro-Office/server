@@ -47,7 +47,7 @@ FROM web-base AS server
     COPY server/ /server
 
     ### Branding
-    COPY --from=brand-icons /server[/] /server
+    COPY --from=brand-icons /[s]erver /server/
 
     ENV BUILD_ROOT=${BUILD_ROOT}
 
