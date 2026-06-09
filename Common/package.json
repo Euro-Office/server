@@ -11,6 +11,7 @@
     "amqplib": "0.10.7",
     "axios": "1.8.3",
     "co": "4.6.0",
+    "coauthoring": "file:../DocService",
     "config": "3.3.12",
     "content-disposition": "0.5.4",
     "dnscache": "1.0.2",

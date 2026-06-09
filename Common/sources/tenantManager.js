@@ -28,9 +28,9 @@
 const config = require('config');
 const co = require('co');
 const NodeCache = require('node-cache');
-const constants = require('./../../Common/sources/constants');
-const commonDefines = require('./../../Common/sources/commondefines');
-const utils = require('./../../Common/sources/utils');
+const constants = require('./constants');
+const commonDefines = require('./commondefines');
+const utils = require('./utils');
 const {readFile, readdir, writeFile} = require('fs/promises');
 const path = require('path');
 

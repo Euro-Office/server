@@ -27,7 +27,7 @@
 
 const crypto = require('crypto');
 const util = require('util');
-const runtimeConfigManager = require('../../../Common/sources/runtimeConfigManager');
+const runtimeConfigManager = require('common/sources/runtimeConfigManager');
 
 const pbkdf2 = util.promisify(crypto.pbkdf2);
 const PASSWORD_MIN_LENGTH = 1; // Any non-empty password allowed

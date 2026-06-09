@@ -34,7 +34,7 @@ const sqlDataBaseType = {
 };
 
 const connectorUtilities = require('./connectorUtilities');
-const utils = require('../../../Common/sources/utils');
+const utils = require('common/sources/utils');
 const bottleneck = require('bottleneck');
 const config = require('config');
 

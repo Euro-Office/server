@@ -30,7 +30,7 @@ const config = require('config').get('SpellChecker');
 
 //process.env.NODE_ENV = config.get('server.mode');
 
-const logger = require('./../../Common/sources/logger');
+const logger = require('common/sources/logger');
 
 const c_nCheckHealth = 60000, c_sCheckWord = 'color', c_sCheckLang = 1033;
 let idCheckInterval, canStartCheck = true;

@@ -2,14 +2,14 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
-const operationContext = require('../../../../../Common/sources/operationContext');
+const operationContext = require('common/sources/operationContext');
 const passwordManager = require('../../passwordManager');
 const bootstrap = require('../../bootstrap');
 const adminPanelJwtSecret = require('../../jwtSecret');
-const tenantManager = require('../../../../../Common/sources/tenantManager');
-const commonDefines = require('../../../../../Common/sources/commondefines');
+const tenantManager = require('common/sources/tenantManager');
+const commonDefines = require('common/sources/commondefines');
 const {validateScoped} = require('../config/config.service');
-const supersetSchema = require('../../../../../Common/config/schemas/config.schema.json');
+const supersetSchema = require('common/config/schemas/config.schema.json');
 
 const router = express.Router();
 

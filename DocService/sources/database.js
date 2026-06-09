@@ -29,7 +29,7 @@ const mongoDB = require('mongodb');
 const config = require('./config.json');
 const _errorConnection = true;
 
-const logger = require('./../../Common/sources/logger');
+const logger = require('common/sources/logger');
 
 function CreateDbClient() {
   return new mongoDB.Db(

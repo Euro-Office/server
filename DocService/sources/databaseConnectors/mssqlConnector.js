@@ -28,7 +28,7 @@
 const sql = require('mssql');
 const config = require('config');
 const connectorUtilities = require('./connectorUtilities');
-const utils = require('../../../Common/sources/utils');
+const utils = require('common/sources/utils');
 
 const configSql = config.get('services.CoAuthoring.sql');
 const cfgTableResult = configSql.get('tableResult');

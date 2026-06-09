@@ -28,10 +28,10 @@ const config = require('config');
 const events = require('events');
 const util = require('util');
 const co = require('co');
-const constants = require('./../../Common/sources/constants');
-const commonDefines = require('./../../Common/sources/commondefines');
-const rabbitMQCore = require('./../../Common/sources/rabbitMQCore');
-const activeMQCore = require('./../../Common/sources/activeMQCore');
+const constants = require('common/sources/constants');
+const commonDefines = require('common/sources/commondefines');
+const rabbitMQCore = require('common/sources/rabbitMQCore');
+const activeMQCore = require('common/sources/activeMQCore');
 
 const cfgQueueType = config.get('queue.type');
 const cfgRabbitExchangePubSub = config.util.cloneDeep(config.get('rabbitmq.exchangepubsub'));

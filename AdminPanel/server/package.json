@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "apicache": "^1.6.3",
+    "coauthoring": "file:../DocService",
     "config": "^3.3.11",
+    "common": "file:../Common",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "express": "^4.19.2",

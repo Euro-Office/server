@@ -28,8 +28,8 @@
 const crypto = require('crypto');
 const util = require('util');
 const config = require('config');
-const utils = require('./../../Common/sources/utils');
-const commonDefines = require('./../../Common/sources/commondefines');
+const utils = require('common/sources/utils');
+const commonDefines = require('common/sources/commondefines');
 
 // Configuration constants
 const cfgMaxDownloadBytes = config.get('FileConverter.converter.maxDownloadBytes');

@@ -30,7 +30,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const apicache = require('apicache');
 const config = require('config');
-const operationContext = require('../../../Common/sources/operationContext');
+const operationContext = require('common/sources/operationContext');
 
 const router = express.Router();
 

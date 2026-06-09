@@ -26,9 +26,9 @@
 'use strict';
 const config = require('config');
 const ms = require('ms');
-const utils = require('./../../Common/sources/utils');
-const commonDefines = require('./../../Common/sources/commondefines');
-const tenantManager = require('./../../Common/sources/tenantManager');
+const utils = require('common/sources/utils');
+const commonDefines = require('common/sources/commondefines');
+const tenantManager = require('common/sources/tenantManager');
 
 const cfgExpMonthUniqueUsers = ms(config.get('services.CoAuthoring.expire.monthUniqueUsers'));
 

@@ -27,9 +27,9 @@
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 const addErrors = require('ajv-errors');
-const logger = require('../../../../../Common/sources/logger');
-const tenantManager = require('../../../../../Common/sources/tenantManager');
-const supersetSchema = require('../../../../../Common/config/schemas/config.schema.json');
+const logger = require('common/sources/logger');
+const tenantManager = require('common/sources/tenantManager');
+const supersetSchema = require('common/config/schemas/config.schema.json');
 const {deriveSchemaForScope, X_SCOPE_KEYWORD} = require('./config.schema.utils');
 
 // Constants

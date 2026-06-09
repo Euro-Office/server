@@ -32,9 +32,9 @@ const ms = require('ms');
 const taskResult = require('./taskresult');
 const docsCoServer = require('./DocsCoServer');
 const canvasService = require('./canvasservice');
-const commondefines = require('./../../Common/sources/commondefines');
-const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
-const operationContext = require('./../../Common/sources/operationContext');
+const commondefines = require('common/sources/commondefines');
+const queueService = require('common/sources/taskqueueRabbitMQ');
+const operationContext = require('common/sources/operationContext');
 const pubsubService = require('./pubsubRabbitMQ');
 const sqlBase = require('./databaseConnectors/baseConnector');
 

@@ -5,10 +5,10 @@ const cors = require('cors');
 const ms = require('ms');
 const config = require('config');
 const cron = require('cron');
-const utils = require('../../../Common/sources/utils');
-const commonDefines = require('../../../Common/sources/commondefines');
-const operationContext = require('../../../Common/sources/operationContext');
-const tenantManager = require('../../../Common/sources/tenantManager');
+const utils = require('common/sources/utils');
+const commonDefines = require('common/sources/commondefines');
+const operationContext = require('common/sources/operationContext');
+const tenantManager = require('common/sources/tenantManager');
 const path = require('path');
 const fs = require('fs');
 

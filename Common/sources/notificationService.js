@@ -33,7 +33,7 @@ const cfgEditorDataStorage = config.get('services.CoAuthoring.server.editorDataS
 const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatStorage');
 const cfgSmtpServerConfiguration = config.get('email.smtpServerConfiguration');
 const cfgContactDefaults = config.get('email.contactDefaults');
-const editorStatStorage = require('./../../DocService/sources/' + (cfgEditorStatStorage || cfgEditorDataStorage));
+const editorStatStorage = require('coauthoring/sources/' + (cfgEditorStatStorage || cfgEditorDataStorage));
 
 const editorStat = editorStatStorage.EditorStat ? new editorStatStorage.EditorStat() : new editorStatStorage();
 const notificationTypes = {

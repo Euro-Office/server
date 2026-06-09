@@ -25,18 +25,18 @@
 
 'use strict';
 
-const moduleReloader = require('../../../Common/sources/moduleReloader');
+const moduleReloader = require('common/sources/moduleReloader');
 const config = moduleReloader.requireConfigWithRuntime();
-const operationContext = require('../../../Common/sources/operationContext');
-const tenantManager = require('../../../Common/sources/tenantManager');
-const license = require('../../../Common/sources/license');
-const runtimeConfigManager = require('../../../Common/sources/runtimeConfigManager');
+const operationContext = require('common/sources/operationContext');
+const tenantManager = require('common/sources/tenantManager');
+const license = require('common/sources/license');
+const runtimeConfigManager = require('common/sources/runtimeConfigManager');
 
 const express = require('express');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
-const infoRouter = require('../../../DocService/sources/routes/info');
+const infoRouter = require('coauthoring/sources/routes/info');
 
 const configRouter = require('./routes/config/router');
 const adminpanelRouter = require('./routes/adminpanel/router');

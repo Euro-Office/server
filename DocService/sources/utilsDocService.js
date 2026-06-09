@@ -31,7 +31,7 @@ const config = require('config');
 const locale = require('windows-locale');
 const ms = require('ms');
 const decodeHeic = require('heic-decode');
-const operationContext = require('./../../Common/sources/operationContext');
+const operationContext = require('common/sources/operationContext');
 
 function initializeSharp() {
   let originalValues = {};
@@ -74,7 +74,7 @@ function initializeSharp() {
 let sharp = null;
 initializeSharp();
 
-const {notificationTypes, ...notificationService} = require('../../Common/sources/notificationService');
+const {notificationTypes, ...notificationService} = require('common/sources/notificationService');
 
 const cfgStartNotifyFrom = ms(config.get('license.warning_license_expiration'));
 const cfgNotificationRuleLicenseExpirationWarning = config.get('notification.rules.licenseExpirationWarning.template');
