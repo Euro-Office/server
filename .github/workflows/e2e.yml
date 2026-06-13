@@ -61,14 +61,36 @@ jobs:
         with:
           node-version: 20
 
-      # Mirrors server.bake.Dockerfile: install each package, then pkg the four
-      # services into $BUILD_ROOT.
+      - name: Pull nightly image
+        run: docker pull ${{ env.NIGHTLY_IMAGE }}
+
+      # docservice rejects an editor whose version differs from its own
+      # (services gate on an exact buildVersion match). The bake injects
+      # PRODUCT_VERSION into commondefines.js; replicate that with the version
+      # the nightly image was built with so the fresh docservice matches the
+      # nightly editor. Read it from the image so it tracks version bumps.
+      - name: Read nightly product version
+        id: ver
+        run: |
+          set -euo pipefail
+          VER=$(docker run --rm --entrypoint sh ${{ env.NIGHTLY_IMAGE }} -c \
+            "grep -A2 'DocsAPI.DocEditor.version = function' \
+              \$(find /var/www -maxdepth 6 -path '*api/documents/api.js' | head -n1) \
+              | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1")
+          test -n "$VER"
+          echo "product_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "nightly PRODUCT_VERSION=$VER"
+
+      # Mirrors server.bake.Dockerfile: stamp buildVersion, install each package,
+      # then pkg the services into $BUILD_ROOT.
       - name: Build server binaries
         working-directory: server
         env:
           BUILD_ROOT: ${{ github.workspace }}/server/deploy
+          PRODUCT_VERSION: ${{ steps.ver.outputs.product_version }}
         run: |
           npm install -g @yao-pkg/pkg
+          sed -i "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" Common/sources/commondefines.js
           for d in Common DocService FileConverter Metrics; do
             ( cd "$d" && npm install )
           done
@@ -76,9 +98,6 @@ jobs:
           ( cd DocService    && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/docservice" )
           ( cd FileConverter && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/fileconverter" )
           ( cd Metrics       && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/metrics" )
-
-      - name: Pull nightly image
-        run: docker pull ${{ env.NIGHTLY_IMAGE }}
 
       - name: Build overlay image with fresh server binaries
         run: |
