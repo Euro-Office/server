@@ -75,7 +75,7 @@ jobs:
           set -euo pipefail
           VER=$(docker run --rm --entrypoint sh ${{ env.NIGHTLY_IMAGE }} -c \
             "grep -A2 'DocsAPI.DocEditor.version = function' \
-              \$(find /var/www -maxdepth 6 -path '*api/documents/api.js' | head -n1) \
+              \$(find /var/www -maxdepth 8 -path '*api/documents/api.js' | head -n1) \
               | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1")
           test -n "$VER"
           echo "product_version=$VER" >> "$GITHUB_OUTPUT"
