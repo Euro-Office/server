@@ -33,22 +33,16 @@ const operationContext = require('./../../Common/sources/operationContext');
 const runtimeConfigManager = require('./../../Common/sources/runtimeConfigManager');
 
 if (cluster.isMaster) {
-  const fs = require('fs');
   const os = require('os');
-  const license = require('./../../Common/sources/license');
 
-  const cfgLicenseFile = config.get('license.license_file');
   const cfgMaxProcessCount = config.get('FileConverter.converter.maxprocesscount');
 
   let workersCount = 0;
-  const readLicense = async function () {
+  const updateWorkersCount = function () {
     const numCPUs = os.cpus().length;
     const availableParallelism = os.availableParallelism?.();
     operationContext.global.logger.warn('num of CPUs: %d; availableParallelism: %s', numCPUs, availableParallelism);
     workersCount = Math.ceil((availableParallelism || numCPUs) * cfgMaxProcessCount);
-    const [licenseInfo] = await license.readLicense(cfgLicenseFile);
-    workersCount = Math.min(licenseInfo.count, workersCount);
-    //todo send license to workers for multi-tenancy
   };
   const updateWorkers = () => {
     let i;
@@ -67,25 +61,14 @@ if (cluster.isMaster) {
       }
     }
   };
-  const updateLicense = async () => {
-    try {
-      await readLicense();
-      operationContext.global.logger.warn('update cluster with %s workers', workersCount);
-      updateWorkers();
-    } catch (err) {
-      operationContext.global.logger.error('updateLicense error: %s', err.stack);
-    }
-  };
-
   cluster.on('exit', (worker, code, signal) => {
     operationContext.global.logger.warn('worker %s died (code = %s; signal = %s).', worker.process.pid, code, signal);
     updateWorkers();
   });
 
-  updateLicense();
-
-  fs.watchFile(cfgLicenseFile, updateLicense);
-  setInterval(updateLicense, 86400000);
+  updateWorkersCount();
+  operationContext.global.logger.warn('update cluster with %s workers', workersCount);
+  updateWorkers();
 } else {
   const converter = require('./converter');
   converter.run();
