@@ -39,12 +39,12 @@
   }
 
   &--active {
-    color: #0082C9;
+    color: #0082c9;
 
     &:hover,
     &:focus,
     &:active {
-      color: #0082C9; /* ensure orange while focused/pressed */
+      color: #0082c9; /* ensure orange while focused/pressed */
     }
 
     &::after {
@@ -54,7 +54,7 @@
       left: 0;
       right: 0;
       height: 2px;
-      background: #0082C9;
+      background: #0082c9;
     }
   }
 }
