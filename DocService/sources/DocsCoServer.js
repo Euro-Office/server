@@ -3896,38 +3896,8 @@ exports.install = function (server, app, callbackFunction) {
   }
 
   function* _checkLicenseAuth(ctx, licenseInfo, userId, isLiveViewer) {
-    const tenWarningLimitPercents = ctx.getCfg('license.warning_limit_percents', cfgWarningLimitPercents) / 100;
-    const tenNotificationRuleLicenseLimitEdit = ctx.getCfg(`notification.rules.licenseLimitEdit.template`, cfgNotificationRuleLicenseLimitEdit);
-    const tenNotificationRuleLicenseLimitLiveViewer = ctx.getCfg(
-      `notification.rules.licenseLimitLiveViewer.template`,
-      cfgNotificationRuleLicenseLimitLiveViewer
-    );
-    const c_LR = constants.LICENSE_RESULT;
-    let licenseType = licenseInfo.type;
-    if (c_LR.Success === licenseType || c_LR.SuccessLimit === licenseType) {
-      let notificationLimit, notificationLimitTitle;
-      let notificationTemplate = tenNotificationRuleLicenseLimitEdit;
-      let notificationType = notificationTypes.LICENSE_LIMIT_EDIT;
-      let notificationPercent = 100;
-      if (licenseInfo.usersCount) {
-        const nowUTC = getLicenseNowUtc();
-        notificationLimitTitle = 'user';
-        notificationLimit = 'users';
-        if (isLiveViewer) {
-          notificationTemplate = tenNotificationRuleLicenseLimitLiveViewer;
-          notificationType = notificationTypes.LICENSE_LIMIT_LIVE_VIEWER;
-          const arrUsers = yield editorStat.getPresenceUniqueViewUser(ctx, nowUTC);
-          if (
-            arrUsers.length >= licenseInfo.usersViewCount &&
-            -1 ===
-              arrUsers.findIndex(element => {
-                return element.userid === userId;
-              })
-          ) {
-            licenseType = licenseInfo.hasLicense ? c_LR.UsersViewCount : c_LR.UsersViewCountOS;
-          } else if (licenseInfo.usersViewCount * tenWarningLimitPercents <= arrUsers.length) {
-            notificationPercent = tenWarningLimitPercents * 100;
-          }
+    return constants.LICENSE_RESULT.Success;
+  }
         } else {
           const arrUsers = yield editorStat.getPresenceUniqueUser(ctx, nowUTC);
           if (
