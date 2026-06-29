@@ -49,7 +49,6 @@ const taskResult = require('./taskresult');
 const canvasService = require('./canvasservice');
 const converterService = require('./converterservice');
 const mime = require('mime');
-const license = require('./../../Common/sources/license');
 
 const cfgTokenOutboxAlgorithm = config.get('services.CoAuthoring.token.outbox.algorithm');
 const cfgTokenOutboxExpires = config.get('services.CoAuthoring.token.outbox.expires');
@@ -179,9 +178,7 @@ function discovery(req, res) {
       ];
       const documentTypes = [`word`, `cell`, `slide`, `pdf`];
       //todo check sdkjs-ooxml addon
-      const addVisio =
-        (tenWopiDiagramView.length > 0 || tenWopiDiagramEdit.length > 0) &&
-        (constants.PACKAGE_TYPE_OS !== license.packageType || process.env?.NODE_ENV?.startsWith('development-'));
+      const addVisio = tenWopiDiagramView.length > 0 || tenWopiDiagramEdit.length > 0;
       if (addVisio) {
         names.push('Visio');
         favIconUrls.push(tenWopiFavIconUrlDiagram);
