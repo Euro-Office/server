@@ -16,6 +16,11 @@
   "wopi": {
     "enable": true
   },
+  "adminPanel": {
+    "fonts": {
+      "customFontsDir": "../Data/custom-fonts"
+    }
+  },
   "services": {
     "CoAuthoring": {
       "server": {

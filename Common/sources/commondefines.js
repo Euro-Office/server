@@ -1215,7 +1215,7 @@ const FileStatus = {
   NeedPassword: 9
 };
 
-const buildVersion = '4.1.2';
+const buildVersion = '9.3.1';
 const buildNumber = 37;
 
 exports.TaskQueueData = TaskQueueData;

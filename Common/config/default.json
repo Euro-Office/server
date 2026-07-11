@@ -1,6 +1,12 @@
 {
   "adminPanel": {
-    "port": 9000
+    "port": 9000,
+    "fonts": {
+      "enabled": true,
+      "customFontsDir": "",
+      "maxFontFileSizeBytes": 26214400,
+      "regenerateCommand": "sudo -n /usr/bin/documentserver-generate-allfonts.sh"
+    }
   },
   "statsd": {
     "useMetrics": false,
