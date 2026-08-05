@@ -542,7 +542,7 @@
   },
   "FileConverter": {
     "converter": {
-      "maxDownloadBytes": 104857600,
+      "maxDownloadBytes": 524288000,
       "downloadTimeout": {
         "connectionAndInactivity": "2m",
         "wholeCycle": "2m"
@@ -594,28 +594,28 @@
         {
           "type": "docx;dotx;docm;dotm",
           "zip": {
-            "uncompressed": "50MB",
+            "uncompressed": "500MB",
             "template": "*.xml"
           }
         },
         {
           "type": "xlsx;xltx;xlsm;xltm",
           "zip": {
-            "uncompressed": "300MB",
+            "uncompressed": "500MB",
             "template": "*.xml"
           }
         },
         {
           "type": "pptx;ppsx;potx;pptm;ppsm;potm",
           "zip": {
-            "uncompressed": "50MB",
+            "uncompressed": "500MB",
             "template": "*.xml"
           }
         },
         {
           "type": "vsdx;vstx;vssx;vsdm;vstm;vssm",
           "zip": {
-            "uncompressed": "50MB",
+            "uncompressed": "500MB",
             "template": "*.xml"
           }
         }
