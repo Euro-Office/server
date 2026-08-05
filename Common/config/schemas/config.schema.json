@@ -504,6 +504,25 @@
       "additionalProperties": false,
       "x-scope": ["admin", "tenant"],
       "properties": {
+        "fonts": {
+          "type": "object",
+          "additionalProperties": false,
+          "x-scope": "admin",
+          "description": "Server-managed custom fonts (AdminPanel Fonts feature)",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable the custom fonts management feature",
+              "x-scope": "admin"
+            },
+            "maxFontFileSizeBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum allowed size of a single uploaded font file in bytes",
+              "x-scope": "admin"
+            }
+          }
+        },
         "passwordValidation": {
           "type": "object",
           "x-scope": ["admin", "tenant"],
