@@ -1,0 +1,234 @@
+const {describe, test, expect, beforeAll, afterAll} = require('@jest/globals');
+const path = require('path');
+// Only installed under DocService/node_modules, not at this level - same
+// explicit-path convention tests/integration uses for Common-only packages.
+const {RedisMemoryServer} = require('../../DocService/node_modules/redis-memory-server');
+const Redis = require('../../DocService/node_modules/ioredis');
+
+// Runs against a real Redis via redis-memory-server (in-memory, no manual
+// container) so this is a true unit test, not an integration test needing infra.
+describe('editorDataRedisLocks', () => {
+  let redisServer;
+  let host;
+  let port;
+  let editorDataMemory;
+  let editorDataRedisLocks;
+  const ctx = {tenant: 'default'};
+
+  beforeAll(async () => {
+    redisServer = new RedisMemoryServer();
+    host = await redisServer.getHost();
+    port = await redisServer.getPort();
+
+    // config's env override must be set before the first require of any
+    // module that itself requires('config') - config caches its parsed
+    // result on first load, so this can't move into a test() body.
+    process.env.NODE_CONFIG_DIR = process.env.EO_CONFIG_DIR
+      || path.join(__dirname, '..', '..', 'Common', 'config');
+    process.env.NODE_CONFIG = JSON.stringify({
+      log: {options: {replaceConsole: false}},
+      services: {
+        CoAuthoring: {
+          redis: {host, port, prefix: 'locks-test:'}
+        }
+      }
+    });
+
+    editorDataMemory = require('../../DocService/sources/editorDataMemory');
+    editorDataRedisLocks = require('../../DocService/sources/editorDataRedisLocks');
+  }, 30000);
+
+  afterAll(async () => {
+    await redisServer.stop();
+  });
+
+  // Two independent in-process EditorData instances model "replica A" and
+  // "replica B" directly - no timing race needed to prove the point, since
+  // each backend either does or doesn't share state between instances.
+  describe('cross-replica discrimination (interface-level negative control)', () => {
+    test('two separate memory-backend instances share no state: both independently grant the same lock', async () => {
+      const replicaA = new editorDataMemory.EditorData();
+      const replicaB = new editorDataMemory.EditorData();
+      const docId = 'doc-mem-iface';
+
+      const grantedA = await replicaA.lockSave(ctx, docId, 'uid-1', 60);
+      const grantedB = await replicaB.lockSave(ctx, docId, 'uid-2', 60);
+
+      expect(grantedA).toBe(true);
+      expect(grantedB).toBe(true);
+    });
+
+    test('redis backend correctly serializes the same call pattern across two replica instances pointed at the same Redis', async () => {
+      const replicaA = new editorDataRedisLocks.EditorData();
+      const replicaB = new editorDataRedisLocks.EditorData();
+      await replicaA.connect();
+      await replicaB.connect();
+      const docId = 'doc-redis-iface';
+
+      try {
+        const grantedA = await replicaA.lockSave(ctx, docId, 'uid-1', 60);
+        const grantedB = await replicaB.lockSave(ctx, docId, 'uid-2', 60);
+
+        expect(grantedA).toBe(true);
+        expect(grantedB).toBe(false);
+      } finally {
+        await replicaA.cleanDocumentOnExit(ctx, docId);
+        await replicaA.close();
+        await replicaB.close();
+      }
+    });
+  });
+
+  describe('lock semantics', () => {
+    test('same owner re-asserting before expiry refreshes the TTL (reentrant), a different owner is denied until genuine expiry', async () => {
+      const replicaA = new editorDataRedisLocks.EditorData();
+      const replicaB = new editorDataRedisLocks.EditorData();
+      await replicaA.connect();
+      await replicaB.connect();
+      const docId = 'doc-reentrancy';
+      // Long enough that the reassert-then-expire timing below has a real
+      // margin on a loaded CI runner, short enough to keep the test fast;
+      // correctness doesn't depend on the real 60s value.
+      const ttlSeconds = 2;
+      const raw = new Redis({host, port});
+
+      try {
+        const first = await replicaA.lockSave(ctx, docId, 'uid-1', ttlSeconds);
+        expect(first).toBe(true);
+
+        const key = `locks-test:lockSave:${encodeURIComponent(ctx.tenant)}:${encodeURIComponent(docId)}`;
+        await new Promise((resolve) => setTimeout(resolve, 500)); // let some of the TTL elapse first
+        const ttlBeforeReassert = await raw.pttl(key);
+
+        const reassert = await replicaA.lockSave(ctx, docId, 'uid-1', ttlSeconds);
+        expect(reassert).toBe(true);
+        const ttlAfterReassert = await raw.pttl(key);
+        // Confirms re-asserting actually refreshes the TTL, not just returns
+        // true without re-SETting.
+        expect(ttlAfterReassert).toBeGreaterThan(ttlBeforeReassert);
+
+        const otherDenied = await replicaB.lockSave(ctx, docId, 'uid-2', ttlSeconds);
+        expect(otherDenied).toBe(false);
+
+        await new Promise((resolve) => setTimeout(resolve, ttlSeconds * 1000 + 500));
+
+        const afterExpiry = await replicaB.lockSave(ctx, docId, 'uid-2', ttlSeconds);
+        expect(afterExpiry).toBe(true);
+
+        // Client must abort via !lockRes, not assume it still owns the lock.
+        const originalOwnerNowDenied = await replicaA.lockSave(ctx, docId, 'uid-1', ttlSeconds);
+        expect(originalOwnerNowDenied).toBe(false);
+      } finally {
+        await raw.quit();
+        await replicaA.cleanDocumentOnExit(ctx, docId);
+        await replicaA.close();
+        await replicaB.close();
+      }
+    }, 10000);
+
+    test('key-collision avoidance via encodeURIComponent for (tenant, docId) pairs that collide when naively joined', async () => {
+      const replicaA = new editorDataRedisLocks.EditorData();
+      await replicaA.connect();
+      const raw = new Redis({host, port});
+
+      try {
+        // "a:b" + ":" + "c"  ===  "a" + ":" + "b:c"  ===  "a:b:c" if naively joined.
+        await replicaA.lockSave({tenant: 'a:b'}, 'c', 'owner-A', 5);
+        await replicaA.lockSave({tenant: 'a'}, 'b:c', 'owner-B', 5);
+
+        const keys = await raw.keys('locks-test:lockSave:a*');
+        expect(keys.length).toBe(2);
+
+        const decoded = keys.map((k) => {
+          const rest = k.replace('locks-test:lockSave:', '');
+          const [encTenant, encDocId] = rest.split(':', 2);
+          return {tenant: decodeURIComponent(encTenant), docId: decodeURIComponent(encDocId)};
+        });
+        expect(decoded).toContainEqual({tenant: 'a:b', docId: 'c'});
+        expect(decoded).toContainEqual({tenant: 'a', docId: 'b:c'});
+      } finally {
+        await raw.del('locks-test:lockSave:a%3Ab:c', 'locks-test:lockSave:a:b%3Ac');
+        await raw.quit();
+        await replicaA.close();
+      }
+    });
+
+    test('unlockSave/unlockAuth/lockAuth outcomes', async () => {
+      const replica = new editorDataRedisLocks.EditorData();
+      await replica.connect();
+      const docId = 'doc-unlock-coverage';
+
+      try {
+        const emptyUnlock = await replica.unlockSave(ctx, docId, 'uid-1');
+        expect(emptyUnlock).toBe(2); // EMPTY: never locked
+
+        await replica.lockSave(ctx, docId, 'uid-1', 5);
+        const wrongOwnerUnlock = await replica.unlockSave(ctx, docId, 'uid-2');
+        expect(wrongOwnerUnlock).toBe(0); // LOCKED: not released
+        const stillHeld = await replica.lockSave(ctx, docId, 'uid-2', 5);
+        expect(stillHeld).toBe(false); // confirms the failed unlock didn't release it
+
+        const ownerUnlock = await replica.unlockSave(ctx, docId, 'uid-1');
+        expect(ownerUnlock).toBe(1); // UNLOCKED
+        const reacquired = await replica.lockSave(ctx, docId, 'uid-2', 5);
+        expect(reacquired).toBe(true); // genuinely free after a real unlock
+
+        // lockAuth/unlockAuth use their own keyspace (lockAuth: prefix),
+        // separate from lockSave's.
+        const authGranted = await replica.lockAuth(ctx, docId, 'uid-3', 5);
+        expect(authGranted).toBe(true);
+        const saveStillHeld = await replica.lockSave(ctx, docId, 'uid-2', 5);
+        expect(saveStillHeld).toBe(true); // lockSave/lockAuth don't interfere
+        const authUnlock = await replica.unlockAuth(ctx, docId, 'uid-3');
+        expect(authUnlock).toBe(1);
+      } finally {
+        await replica.cleanDocumentOnExit(ctx, docId);
+        await replica.close();
+      }
+    });
+
+    // Fail-closed on a Redis error, simulated deterministically by making
+    // the underlying script call throw, rather than racing a real broken
+    // connection against ioredis's async retry/timeout machinery.
+    test('lockSave/lockAuth deny (not throw) and unlockSave reports LOCKED on a Redis error', async () => {
+      const replica = new editorDataRedisLocks.EditorData();
+      await replica.connect();
+      const docId = 'doc-fail-closed';
+
+      const originalLockScript = replica._redis.saveLockScript.bind(replica._redis);
+      const originalUnlockScript = replica._redis.saveUnlockScript.bind(replica._redis);
+      replica._redis.saveLockScript = async () => {
+        throw new Error('simulated Redis error');
+      };
+      replica._redis.saveUnlockScript = async () => {
+        throw new Error('simulated Redis error');
+      };
+
+      try {
+        await expect(replica.lockSave(ctx, docId, 'uid-1', 5)).resolves.toBe(false);
+        await expect(replica.lockAuth(ctx, docId, 'uid-1', 5)).resolves.toBe(false);
+        await expect(replica.unlockSave(ctx, docId, 'uid-1')).resolves.toBe(0);
+      } finally {
+        replica._redis.saveLockScript = originalLockScript;
+        replica._redis.saveUnlockScript = originalUnlockScript;
+        await replica.close();
+      }
+    });
+
+    // Fail-closed above simulates a call that throws promptly. That only
+    // matches reality because commandTimeout bounds how long a stalled call
+    // (mid-failover, a network blip) can hang before it does - without it,
+    // a stall blocks save/auth for every user on the document instead of
+    // failing closed quickly. Pin the value directly since nothing else here
+    // would notice it silently regressing to unbounded.
+    test('commandTimeout is set on the Redis connection', async () => {
+      const replica = new editorDataRedisLocks.EditorData();
+      await replica.connect();
+      try {
+        expect(replica._redis.options.commandTimeout).toBe(300);
+      } finally {
+        await replica.close();
+      }
+    });
+  });
+});

@@ -59,5 +59,8 @@
       "node_modules/sharp/build/Release/*",
       "node_modules/sharp/vendor/**/*"
     ]
+  },
+  "devDependencies": {
+    "redis-memory-server": "^0.17.1"
   }
 }
