@@ -167,6 +167,35 @@ describe('editorDataRedisLocks presence', () => {
         await redisClient.quit();
       }
     }, 10000);
+
+    // Regression: updatePresence used to return nothing regardless of
+    // whether there was actually anything to refresh, so a caller had no
+    // way to tell "refreshed" apart from "silently found nothing" - which
+    // matters once WRITE_SCRIPT's native TTL backstop means an entry can
+    // now genuinely disappear between heartbeats, not just via explicit
+    // removal.
+    test('updatePresence reports false when there is nothing to refresh, true when there is', async () => {
+      const redisClient = new Redis({host, port});
+      const store = createPresenceStore(redisClient, 'presence-test-5:', 1, new editorDataMemory.EditorData());
+      const docId = 'doc-update-missing';
+
+      try {
+        const neverAdded = await store.updatePresence(ctx, docId, 'conn-never-added');
+        expect(neverAdded).toBe(false);
+
+        await store.addPresence(ctx, docId, 'conn-expired', JSON.stringify({id: 'uid-1', connectionId: 'conn-expired', view: false}));
+        await new Promise((r) => setTimeout(r, 3500)); // past ttlSeconds=1's native TTL backstop (3x)
+        const afterExpiry = await store.updatePresence(ctx, docId, 'conn-expired');
+        expect(afterExpiry).toBe(false);
+
+        await store.addPresence(ctx, docId, 'conn-live', JSON.stringify({id: 'uid-2', connectionId: 'conn-live', view: false}));
+        const refreshed = await store.updatePresence(ctx, docId, 'conn-live');
+        expect(refreshed).toBe(true);
+      } finally {
+        await store.removePresenceDocument(ctx, docId);
+        await redisClient.quit();
+      }
+    }, 10000);
   });
 
   // Simulated deterministically by making the Redis call itself throw,

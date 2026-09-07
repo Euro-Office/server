@@ -490,7 +490,15 @@ function addPresence(ctx, conn, updateCunters) {
 }
 async function updatePresence(ctx, conn) {
   if (editorData.updatePresence) {
-    return await editorData.updatePresence(ctx, conn.docId, conn.user.id);
+    const refreshed = await editorData.updatePresence(ctx, conn.docId, conn.user.id);
+    // A backend that can't distinguish "refreshed" from "was already gone"
+    // (the memory backend, which is a no-op here) returns undefined, so
+    // this never fires for it - only a backend that explicitly reports
+    // `false` (the Redis backend, when the entry expired or was evicted
+    // between heartbeats) needs this connection re-added from scratch.
+    if (false === refreshed) {
+      await addPresence(ctx, conn, false);
+    }
   } else {
     //todo remove if after 7.6. code for backward compatibility, because redis in separate repo
     return await editorData.addPresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));

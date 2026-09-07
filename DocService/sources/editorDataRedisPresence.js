@@ -124,22 +124,29 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
 
     // Refresh only - re-send the same info blob already on record, since the
     // interface doesn't pass a fresh one here (matches `endAuth`'s existing
-    // conditional dispatch).
+    // conditional dispatch). Returns whether the entry was actually there to
+    // refresh - since this store has no way to reconstruct the connection's
+    // info blob itself, a caller whose heartbeat stalled long enough for the
+    // native TTL backstop to have deleted the entry (see WRITE_SCRIPT) must
+    // see that and re-add it via addPresence, or that connection's presence
+    // never comes back.
     async updatePresence(ctx, docId, userId) {
       return failOpen(async () => {
         const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
         const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
         const expiresAt = Date.now() + ttlSeconds * 1000;
         const refreshed = await redis.presenceRefreshScript(hashKey, expKey, userId, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
-        if (refreshed === 1) {
-          try {
-            await docExpSweep.track(ctx.tenant, docId, expiresAt);
-          } catch (err) {
-            // Same reasoning as writeAndTrack: the refresh itself already
-            // landed in Redis - don't let a sweep-tracking failure alone
-            // fall this call back to the memory backend.
-          }
+        if (refreshed !== 1) {
+          return false;
         }
+        try {
+          await docExpSweep.track(ctx.tenant, docId, expiresAt);
+        } catch (err) {
+          // Same reasoning as writeAndTrack: the refresh itself already
+          // landed in Redis - don't let a sweep-tracking failure alone
+          // fall this call back to the memory backend.
+        }
+        return true;
       }, () => memoryFallback.updatePresence(ctx, docId, userId));
     },
 
