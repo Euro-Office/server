@@ -46,6 +46,20 @@ function EditorData() {
 
 EditorData.prototype.connect = async function () {
   await this._memory.connect();
+  // The shipped default (Common/config/default.json) sets
+  // iooptions.lazyConnect: true, which leaves this client at status
+  // "wait" until something sends it a real command - meaning
+  // isConnected()/healthCheck() below could never turn true on a replica
+  // that hasn't yet handled any real lock/presence traffic, even though
+  // Redis itself is perfectly reachable. Kick the connection explicitly
+  // in that case. Not awaited and errors are swallowed deliberately: a
+  // Redis outage at startup must not block editorStat/callbackFunction
+  // (chained after this method's promise in DocsCoServer.js) from
+  // starting, and ioredis keeps retrying on its own regardless -
+  // isConnected() correctly reads false until it actually succeeds.
+  if (this._redis.status === 'wait') {
+    this._redis.connect().catch(() => {});
+  }
 };
 EditorData.prototype.isConnected = function () {
   return this._redis.status === 'ready' && this._memory.isConnected();

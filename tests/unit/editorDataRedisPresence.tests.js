@@ -290,4 +290,44 @@ describe('editorDataRedisLocks presence', () => {
       await instance.close();
     }
   });
+
+  // Regression: writeAndTrack/updatePresence used to call docExpSweep.track
+  // as a separate round trip from the write itself, with no try/catch of
+  // its own - a failure there fell the whole call back to the memory
+  // backend, wrongly implying the write never reached Redis at all.
+  test('a sweep-tracking failure after a successful write does not fall addPresence back to the memory backend', async () => {
+    const instance = new editorDataRedisLocks.EditorData();
+    await instance.connect();
+    const docId = 'doc-sweep-track-failure';
+    const connId = 'conn-1';
+    const userInfo = JSON.stringify({id: 'uid-1', connectionId: connId, view: false});
+
+    const memoryAdd = jest.spyOn(instance._memory, 'addPresence');
+    // docExpSweep's internal command name for this store - see
+    // editorDataRedisShardedSweep.js's `${commandNamePrefix}Track`, and
+    // createPresenceStore's own 'presenceDocExp' prefix.
+    const originalTrack = instance._redis.presenceDocExpTrack.bind(instance._redis);
+    instance._redis.presenceDocExpTrack = async () => {
+      throw new Error('simulated sweep-tracking error');
+    };
+
+    try {
+      await instance.addPresence(ctx, docId, connId, userInfo);
+      expect(memoryAdd).not.toHaveBeenCalled();
+
+      // Confirm the write genuinely landed in Redis via a raw read, not
+      // getPresence - getPresence would itself fail open if this were
+      // broken in a different way, which would mask the real assertion.
+      const raw = new Redis({host, port});
+      const hashKey = `presence-test:presence:${encodeURIComponent(ctx.tenant)}:${encodeURIComponent(docId)}`;
+      const stored = await raw.hget(hashKey, connId);
+      await raw.quit();
+      expect(stored).toBe(userInfo);
+    } finally {
+      instance._redis.presenceDocExpTrack = originalTrack;
+      memoryAdd.mockRestore();
+      await instance.removePresenceDocument(ctx, docId);
+      await instance.close();
+    }
+  });
 });

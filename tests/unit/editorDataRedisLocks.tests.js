@@ -230,5 +230,69 @@ describe('editorDataRedisLocks', () => {
         await replica.close();
       }
     });
+
+    // buildKey (encodeURIComponent under the hood) throws on a lone UTF-16
+    // surrogate, and a docId/tenant containing one is reachable from a
+    // client message, not just a theoretical input. Regression for
+    // buildKey previously running outside lock()/unlock()'s try block.
+    test('a malformed-unicode docId denies the lock rather than throwing', async () => {
+      const replica = new editorDataRedisLocks.EditorData();
+      await replica.connect();
+      const malformedDocId = '\ud800'; // lone high surrogate, no matching low surrogate
+
+      try {
+        await expect(replica.lockSave(ctx, malformedDocId, 'uid-1', 5)).resolves.toBe(false);
+        await expect(replica.lockAuth(ctx, malformedDocId, 'uid-1', 5)).resolves.toBe(false);
+        await expect(replica.unlockSave(ctx, malformedDocId, 'uid-1')).resolves.toBe(0); // LOCKED, not a throw
+      } finally {
+        await replica.close();
+      }
+    });
+  });
+
+  describe('cleanup and health', () => {
+    // Both keys always carry their own PX expiry from LOCK_SCRIPT, so a
+    // failed DEL just means they self-expire late rather than being
+    // removed early - safe to swallow. Regression for cleanup() previously
+    // having no try/catch at all, unlike lock()/unlock() beside it.
+    test('cleanDocumentOnExit does not throw when the lock-cleanup DEL fails', async () => {
+      const replica = new editorDataRedisLocks.EditorData();
+      await replica.connect();
+      const docId = 'doc-cleanup-fail';
+      const originalDel = replica._redis.del.bind(replica._redis);
+      replica._redis.del = async () => {
+        throw new Error('simulated Redis error');
+      };
+
+      try {
+        await expect(replica.cleanDocumentOnExit(ctx, docId)).resolves.toBeUndefined();
+      } finally {
+        replica._redis.del = originalDel;
+        await replica.close();
+      }
+    });
+
+    // Regression for isConnected()/healthCheck() being unable to ever turn
+    // true on an idle replica under the shipped iooptions.lazyConnect:
+    // true default, since nothing but real lock/presence traffic used to
+    // touch _redis at all.
+    test('isConnected()/healthCheck() become true after connect(), with no lock/presence traffic', async () => {
+      const replica = new editorDataRedisLocks.EditorData();
+      await replica.connect();
+
+      try {
+        await new Promise((resolve, reject) => {
+          if (replica.isConnected()) {
+            resolve();
+            return;
+          }
+          replica._redis.once('ready', resolve);
+          replica._redis.once('error', reject);
+        });
+        await expect(replica.healthCheck()).resolves.toBe(true);
+      } finally {
+        await replica.close();
+      }
+    }, 10000);
   });
 });

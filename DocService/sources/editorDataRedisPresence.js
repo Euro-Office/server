@@ -11,9 +11,20 @@ const { createShardedSweep } = require('./editorDataRedisShardedSweep');
 
 // HSET (per-connection data) + ZADD (per-connection expiry) in one script,
 // so a reader can never observe one structure updated without the other.
+// Also PEXPIREs both keys - docExpSweep.track() (called separately, right
+// after this script, not inside it) is a second round trip that can fail
+// after this one succeeds, and neither key otherwise has any native Redis
+// expiry. Without this, that failure mode leaves a live, cross-replica-
+// visible presence entry with no path to ever being deleted. The native
+// TTL is a backstop against that, independent of the sweep; getPresence's
+// own zrangebyscore filtering (not this TTL) is what makes an entry stop
+// being *seen* as live, well before this backstop would ever fire under
+// normal heartbeat cadence.
 const WRITE_SCRIPT = `
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('ZADD', KEYS[2], ARGV[3], ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[4])
+redis.call('PEXPIRE', KEYS[2], ARGV[4])
 return 1
 `;
 
@@ -28,16 +39,26 @@ return 1
 // whether to write) races: the connection can be removed by another caller
 // between the two, and the refresh silently resurrects it. One script
 // instead: refresh only if the connection is still on record, atomically.
+// Also refreshes both keys' native TTL (see WRITE_SCRIPT) - a
+// continuously-heartbeating connection must keep pushing that backstop
+// out, not just the one set at the original write.
 const REFRESH_SCRIPT = `
 local existing = redis.call('HGET', KEYS[1], ARGV[1])
 if not existing then
   return 0
 end
 redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+redis.call('PEXPIRE', KEYS[2], ARGV[3])
 return 1
 `;
 
 const DOC_EXP_SHARDS = 16; // Matches editorDataRedisShardedSweep.js's other user (the force-save timer).
+
+// The native Redis TTL above is only a backstop for when docExpSweep never
+// gets to a document; a legitimate, continuously-heartbeating entry must
+// never realistically hit it. Generous multiple of ttlSeconds so it doesn't.
+const NATIVE_TTL_MULTIPLIER = 3;
 
 // `redis`: an ioredis client (commands are registered on it directly).
 // `prefix`: the shared `ds:`-style config prefix.
@@ -59,8 +80,19 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     const expiresAt = now + ttlSeconds * 1000;
     const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
     const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
-    await redis.presenceWriteScript(hashKey, expKey, userId, userInfo, expiresAt);
-    await docExpSweep.track(ctx.tenant, docId, expiresAt);
+    await redis.presenceWriteScript(hashKey, expKey, userId, userInfo, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
+    try {
+      await docExpSweep.track(ctx.tenant, docId, expiresAt);
+    } catch (err) {
+      // The write above already landed and is genuinely live and
+      // cross-replica-visible (and self-expires regardless, via the
+      // PEXPIRE inside presenceWriteScript) - a failure here only means
+      // this write isn't yet known to the doc-expiry sweep. Swallow
+      // rather than let it fail the whole call into the memory-backend
+      // fallback, which would wrongly tell the caller nothing reached
+      // Redis. The next successful addPresence/updatePresence heartbeat
+      // for this connection retries this call and self-heals it.
+    }
   }
 
   // Fail open on any Redis error, everywhere in this store - the failure
@@ -98,9 +130,15 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
         const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
         const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
         const expiresAt = Date.now() + ttlSeconds * 1000;
-        const refreshed = await redis.presenceRefreshScript(hashKey, expKey, userId, expiresAt);
+        const refreshed = await redis.presenceRefreshScript(hashKey, expKey, userId, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
         if (refreshed === 1) {
-          await docExpSweep.track(ctx.tenant, docId, expiresAt);
+          try {
+            await docExpSweep.track(ctx.tenant, docId, expiresAt);
+          } catch (err) {
+            // Same reasoning as writeAndTrack: the refresh itself already
+            // landed in Redis - don't let a sweep-tracking failure alone
+            // fall this call back to the memory backend.
+          }
         }
       }, () => memoryFallback.updatePresence(ctx, docId, userId));
     },

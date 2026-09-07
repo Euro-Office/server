@@ -59,8 +59,13 @@ function createSaveLockStore(redis, prefix) {
   // `commandTimeout` to make "Redis is unreachable" fail promptly rather
   // than hang the caller indefinitely.
   async function lock(keyPrefix, ctx, docId, userId, ttl) {
-    const key = buildKey(keyPrefix, ctx.tenant, docId);
+    // buildKey (encodeURIComponent under the hood) must be inside the try:
+    // it can throw on malformed input (e.g. a lone UTF-16 surrogate in
+    // docId/tenant) just as easily as the Redis call can fail, and a
+    // "fail-closed, never throw" store can't have an exception path that
+    // isn't actually caught.
     try {
+      const key = buildKey(keyPrefix, ctx.tenant, docId);
       const res = await redis.saveLockScript(key, userId, ttlToMs(ttl));
       return res === 1;
     } catch (err) {
@@ -73,8 +78,8 @@ function createSaveLockStore(redis, prefix) {
   // whether the unlock happened. LOCKED is the closest honest answer:
   // "not confirmed released."
   async function unlock(keyPrefix, ctx, docId, userId) {
-    const key = buildKey(keyPrefix, ctx.tenant, docId);
     try {
+      const key = buildKey(keyPrefix, ctx.tenant, docId);
       const [code] = await redis.saveUnlockScript(key, userId);
       if (code === 1) return UNLOCK_RES.UNLOCKED;
       if (code === 0) return UNLOCK_RES.LOCKED;
@@ -90,10 +95,21 @@ function createSaveLockStore(redis, prefix) {
     lockAuth: (ctx, docId, userId, ttl) => lock(lockAuthPrefix, ctx, docId, userId, ttl),
     unlockAuth: (ctx, docId, userId) => unlock(lockAuthPrefix, ctx, docId, userId),
     async cleanup(ctx, docId) {
-      await redis.del(
-        buildKey(lockSavePrefix, ctx.tenant, docId),
-        buildKey(lockAuthPrefix, ctx.tenant, docId)
-      );
+      // Unlike lock()/unlock(), a failure here is safe to swallow rather
+      // than report: both keys always carry their own PX expiry from
+      // LOCK_SCRIPT, so a failed DEL just means they self-expire on their
+      // existing TTL instead of being removed early. Left uncaught, this
+      // would instead throw up through cleanDocumentOnExit and abort
+      // whatever the caller runs after it (e.g. unlockWopiDoc) on nothing
+      // worse than a transient Redis blip.
+      try {
+        await redis.del(
+          buildKey(lockSavePrefix, ctx.tenant, docId),
+          buildKey(lockAuthPrefix, ctx.tenant, docId)
+        );
+      } catch (err) {
+        // Intentionally swallowed - see above.
+      }
     },
   };
 }
