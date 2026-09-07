@@ -152,3 +152,15 @@ into a committed, CI-runnable integration test is still open.
   disconnect-cleanup code path had fired within the observation window —
   more likely a limitation of that manual test's timing than a real
   regression, but this was not confirmed in either direction.
+- No path in `editorDataRedisSaveLock.js` or `editorDataRedisPresence.js`
+  ever logs a Redis error before falling closed/open — every catch is
+  silent. Individually deliberate (each swallow is documented at its own
+  site), but the combined effect is that several genuine failure modes
+  degrade with zero operational signal: a persistently-failing
+  `docExpSweep.track()` call leaves a document relying solely on its
+  native TTL backstop forever, invisibly; and a docId/tenant containing a
+  malformed-unicode character makes presence for that document fall back
+  to the memory-only backend permanently (consistent with presence's
+  fail-open contract, but silently so) rather than surfacing anywhere that
+  an operator could notice. Worth a follow-up pass to add logging at these
+  specific points rather than a blanket change.
