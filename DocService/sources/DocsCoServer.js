@@ -486,11 +486,8 @@ function addPresence(ctx, conn, updateCunters) {
 async function updatePresence(ctx, conn) {
   if (editorData.updatePresence) {
     const refreshed = await editorData.updatePresence(ctx, conn.docId, conn.user.id);
-    // A backend that can't distinguish "refreshed" from "was already gone"
-    // (the memory backend, which is a no-op here) returns undefined, so
-    // this never fires for it - only a backend that explicitly reports
-    // `false` (the Redis backend, when the entry expired or was evicted
-    // between heartbeats) needs this connection re-added from scratch.
+    // Only an explicit `false` (entry gone) triggers a re-add; the memory
+    // backend is a no-op here and returns undefined.
     if (false === refreshed) {
       await addPresence(ctx, conn, false);
     }
@@ -658,14 +655,8 @@ function* getEditorsCount(ctx, docId, opt_hvals) {
     hvals = yield editorData.getPresence(ctx, docId, connections);
   }
   if (hvals.presenceUnknown) {
-    // A Redis-backed presence store's fail-open path marks its result this
-    // way: this is a replica-local guess after an error, not a confirmed
-    // reading. Report as if an editor is present rather than a real count -
-    // hasEditors() below must not treat this as "confirmed zero" and
-    // release the WOPI lock / wipe the save-lock keys out from under an
-    // editor who's genuinely still active on a different replica. A
-    // spuriously-idle document just gets its cleanup retried once presence
-    // is trustworthy again.
+    // Presence store couldn't reach Redis, so this is a replica-local guess.
+    // Report editors present rather than let callers release locks on it.
     return 1;
   }
   for (let i = 0; i < hvals.length; ++i) {

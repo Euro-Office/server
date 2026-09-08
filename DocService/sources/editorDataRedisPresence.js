@@ -3,23 +3,13 @@
 const {buildKey} = require('./editorDataRedisKeys');
 const {createShardedSweep} = require('./editorDataRedisShardedSweep');
 
-// A HASH per document for connection-info payloads, a companion SORTED SET
-// for per-connection expiry, and a sharded global sweep (the same pattern
-// editorDataRedisShardedSweep.js also backs the force-save timer with) for
-// "which documents have no live presence left at all" - feeds gc.js's
-// cleanup sweep.
+// A HASH per document for connection info, a companion SORTED SET for
+// per-connection expiry, and a sharded sweep of documents with no live
+// presence left (feeds gc.js). See REDIS_EDITORDATA.md.
 
-// HSET (per-connection data) + ZADD (per-connection expiry) in one script,
-// so a reader can never observe one structure updated without the other.
-// Also PEXPIREs both keys - docExpSweep.track() (called separately, right
-// after this script, not inside it) is a second round trip that can fail
-// after this one succeeds, and neither key otherwise has any native Redis
-// expiry. Without this, that failure mode leaves a live, cross-replica-
-// visible presence entry with no path to ever being deleted. The native
-// TTL is a backstop against that, independent of the sweep; getPresence's
-// own zrangebyscore filtering (not this TTL) is what makes an entry stop
-// being *seen* as live, well before this backstop would ever fire under
-// normal heartbeat cadence.
+// One script so a reader can't see the HASH and ZSET disagree. The PEXPIREs
+// are a backstop: docExpSweep.track() is a separate round trip that can fail
+// after this lands, and nothing else would ever delete these keys.
 const WRITE_SCRIPT = `
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('ZADD', KEYS[2], ARGV[3], ARGV[1])
@@ -28,20 +18,15 @@ redis.call('PEXPIRE', KEYS[2], ARGV[4])
 return 1
 `;
 
-// HDEL + ZREM in one script, same atomicity reasoning as the write side.
 const REMOVE_SCRIPT = `
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
 return 1
 `;
 
-// A GET-then-conditional-SET across two round trips (HGET, then decide
-// whether to write) races: the connection can be removed by another caller
-// between the two, and the refresh silently resurrects it. One script
-// instead: refresh only if the connection is still on record, atomically.
-// Also refreshes both keys' native TTL (see WRITE_SCRIPT) - a
-// continuously-heartbeating connection must keep pushing that backstop
-// out, not just the one set at the original write.
+// One script: as separate HGET-then-ZADD round trips, a concurrent remove
+// landing between them would be silently undone. Re-PEXPIREs so a
+// heartbeating connection keeps pushing the backstop out.
 const REFRESH_SCRIPT = `
 local existing = redis.call('HGET', KEYS[1], ARGV[1])
 if not existing then
@@ -53,19 +38,13 @@ redis.call('PEXPIRE', KEYS[2], ARGV[3])
 return 1
 `;
 
-const DOC_EXP_SHARDS = 16; // Matches editorDataRedisShardedSweep.js's other user (the force-save timer).
+const DOC_EXP_SHARDS = 16;
 
-// The native Redis TTL above is only a backstop for when docExpSweep never
-// gets to a document; a legitimate, continuously-heartbeating entry must
-// never realistically hit it. Generous multiple of ttlSeconds so it doesn't.
+// Backstop only - a heartbeating entry must never reach it.
 const NATIVE_TTL_MULTIPLIER = 3;
 
-// `redis`: an ioredis client (commands are registered on it directly).
-// `prefix`: the shared `ds:`-style config prefix.
-// `ttlSeconds`: services.CoAuthoring.expire.presence.
-// `memoryFallback`: an editorDataMemory.EditorData instance - the fail-open
-// degrade path on a Redis error reuses its local-connections-only behavior
-// rather than reimplementing it.
+// `ttlSeconds`: services.CoAuthoring.expire.presence. `memoryFallback`: an
+// editorDataMemory.EditorData, reused for the fail-open degrade path.
 function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
   redis.defineCommand('presenceWriteScript', {numberOfKeys: 2, lua: WRITE_SCRIPT});
   redis.defineCommand('presenceRemoveScript', {numberOfKeys: 2, lua: REMOVE_SCRIPT});
@@ -84,23 +63,13 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     try {
       await docExpSweep.track(ctx.tenant, docId, expiresAt);
     } catch (_err) {
-      // The write above already landed and is genuinely live and
-      // cross-replica-visible (and self-expires regardless, via the
-      // PEXPIRE inside presenceWriteScript) - a failure here only means
-      // this write isn't yet known to the doc-expiry sweep. Swallow
-      // rather than let it fail the whole call into the memory-backend
-      // fallback, which would wrongly tell the caller nothing reached
-      // Redis. The next successful addPresence/updatePresence heartbeat
-      // for this connection retries this call and self-heals it.
+      // The write landed; only sweep-tracking failed. Don't fall the whole
+      // call back to memory - the next heartbeat retries this.
     }
   }
 
-  // Fail open on any Redis error, everywhere in this store - the failure
-  // mode is presence being wrong (a joiner waits when it shouldn't, or vice
-  // versa), not silent data loss, so falling back to the memory backend's
-  // own no-op/empty behavior is an acceptable degrade. Letting an error
-  // propagate here would instead turn a Redis outage into documents being
-  // unopenable.
+  // Fail open: wrong presence is an acceptable degrade, an unopenable
+  // document is not.
   async function failOpen(fn, fallback) {
     try {
       return await fn();
@@ -110,11 +79,8 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
   }
 
   return {
-    // `userId` here is the value the interface actually passes at every call
-    // site (`conn.user.id`) - already per-connection-unique in this
-    // codebase's convention (a synthesized original-id+index value, not a
-    // raw account id; see `utils.getIndexFromUserId`), so it serves
-    // correctly as the per-connection HASH/ZSET member.
+    // `userId` is `conn.user.id`, already per-connection-unique in this
+    // codebase (see utils.getIndexFromUserId), so it works as the member.
     async addPresence(ctx, docId, userId, userInfo) {
       return failOpen(
         () => writeAndTrack(ctx, docId, userId, userInfo),
@@ -122,14 +88,9 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
       );
     },
 
-    // Refresh only - re-send the same info blob already on record, since the
-    // interface doesn't pass a fresh one here (matches `endAuth`'s existing
-    // conditional dispatch). Returns whether the entry was actually there to
-    // refresh - since this store has no way to reconstruct the connection's
-    // info blob itself, a caller whose heartbeat stalled long enough for the
-    // native TTL backstop to have deleted the entry (see WRITE_SCRIPT) must
-    // see that and re-add it via addPresence, or that connection's presence
-    // never comes back.
+    // Refresh only - the interface passes no fresh info blob here. Returns
+    // whether there was anything to refresh: this store can't rebuild the
+    // blob itself, so a caller whose entry expired has to re-add it.
     async updatePresence(ctx, docId, userId) {
       return failOpen(
         async () => {
@@ -143,9 +104,7 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
           try {
             await docExpSweep.track(ctx.tenant, docId, expiresAt);
           } catch (_err) {
-            // Same reasoning as writeAndTrack: the refresh itself already
-            // landed in Redis - don't let a sweep-tracking failure alone
-            // fall this call back to the memory backend.
+            // As in writeAndTrack.
           }
           return true;
         },
@@ -178,18 +137,9 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
           return values.filter(v => null != v);
         },
         async () => {
-          // This fallback only ever sees THIS replica's own local
-          // connections - it cannot know about an editor genuinely active
-          // on a different replica. That's an acceptable degrade for
-          // display purposes, but DocsCoServer.js's hasEditors() also
-          // feeds this into a decision to release the WOPI lock and wipe
-          // the shared save-lock keys - and a false "zero" there would
-          // reproduce, via a transient Redis error, the exact cross-replica
-          // bug this store exists to fix. Mark the result so that decision
-          // can tell "confirmed empty" apart from "Redis errored, this is
-          // just a local guess" - a plain property on the array, invisible
-          // to every existing caller that just reads .length/JSON.parses
-          // the entries.
+          // This sees only local connections, so a "zero" here is a guess,
+          // not a fact. DocsCoServer.js's hasEditors() reads the marker to
+          // avoid releasing locks on it.
           const hvals = await memoryFallback.getPresence(ctx, docId, connections);
           hvals.presenceUnknown = true;
           return hvals;

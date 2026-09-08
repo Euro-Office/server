@@ -2,19 +2,11 @@
 
 const {encodePair, decodePair, shardIndex} = require('./editorDataRedisKeys');
 
-// A pre-sharded "which (tenant, docId) pairs are due for a global sweep"
-// structure - N sorted sets rather than one, so it stays Redis-Cluster-ready
-// (a single global structure can't be sharded across hash slots) and so a
-// thundering herd of due entries doesn't get claimed and processed in one
-// unbounded Lua call.
-//
-// Built once here so the presence doc-expiry sweep and any future
-// force-save timer built on the same pattern share one implementation
-// instead of two copies of the same Lua script drifting apart.
+// "Which (tenant, docId) pairs are due for a sweep", spread over N sorted
+// sets. See REDIS_EDITORDATA.md for why it's sharded.
 
-// ZRANGEBYSCORE + ZREM in one script so two replicas sweeping at the same
-// moment can never both claim (and double-process) the same due entry.
-// LIMIT bounds one call's cost against a thundering herd of due entries.
+// One script, so two replicas sweeping concurrently can't both claim the
+// same entry. LIMIT bounds a single call against a large backlog.
 const CLAIM_SCRIPT = `
 local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[2])
 if #due > 0 then
@@ -23,10 +15,9 @@ end
 return due
 `;
 
-// GET-then-conditionally-SET as two separate round trips would race: two
-// concurrent trackers could both read the old (lower) score, both decide
-// their own value is the new max, and whichever ZADD lands second would
-// silently undo the first. One script instead.
+// One script: split into ZSCORE-then-ZADD round trips, two concurrent
+// trackers could both read the old score and the later ZADD would undo the
+// earlier one.
 const TRACK_SCRIPT = `
 local existing = redis.call('ZSCORE', KEYS[1], ARGV[2])
 if not existing or tonumber(existing) < tonumber(ARGV[1]) then
@@ -37,12 +28,8 @@ return 1
 
 const CLAIM_BATCH_SIZE = 100;
 
-// `redis`: an ioredis client (commands are registered on it directly - the
-// caller owns the client's lifetime, this just adds commands to it).
-// `keyPrefix`: e.g. 'ds:presenceDocExp:' - shard index is appended by track/untrack.
-// `commandNamePrefix`: must be unique per sweep instance sharing one redis
-// client (ioredis commands are registered by name on the client, not scoped
-// per call) - two command names are derived from it (claim/track).
+// `commandNamePrefix` must be unique per sweep instance sharing one client -
+// ioredis registers defined commands by name on the client itself.
 function createShardedSweep(redis, keyPrefix, numShards, commandNamePrefix) {
   const claimCommand = `${commandNamePrefix}Claim`;
   const trackCommand = `${commandNamePrefix}Track`;
@@ -54,11 +41,8 @@ function createShardedSweep(redis, keyPrefix, numShards, commandNamePrefix) {
   }
 
   return {
-    // Bumps this (tenant, docId) pair's tracked score to `expiresAt`, but
-    // only if that's later than what's already there - the caller may be
-    // one of several independent things (e.g. several connections on one
-    // document) each with their own expiry, and the sweep should only fire
-    // once the LATEST of them has passed.
+    // Several connections on one document each track their own expiry; the
+    // sweep should fire on the latest, hence forwards-only.
     async track(tenant, docId, expiresAt) {
       const key = shardKey(tenant, docId);
       const member = encodePair(tenant, docId);
@@ -69,9 +53,7 @@ function createShardedSweep(redis, keyPrefix, numShards, commandNamePrefix) {
       const member = encodePair(tenant, docId);
       await redis.zrem(key, member);
     },
-    // Returns an array of [tenant, docId] pairs whose tracked score is <= now,
-    // removing them from the structure as they're claimed (so a second call
-    // never re-returns the same entry).
+    // [tenant, docId] pairs due at `now`.
     async claimExpired(now) {
       const results = [];
       for (let shard = 0; shard < numShards; shard++) {

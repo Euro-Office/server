@@ -5,12 +5,10 @@ const editorDataMemory = require('./editorDataMemory');
 const {createSaveLockStore} = require('./editorDataRedisSaveLock');
 const {createPresenceStore} = require('./editorDataRedisPresence');
 
-// Save/auth locks and presence backed by Redis. This module is the
-// composition root: it owns the Redis connection and the memory-backend
-// delegate, and wires each store (editorDataRedisSaveLock.js,
-// editorDataRedisPresence.js) against them. Everything not yet ported
-// (block locks, messages, save-state, force-save, telemetry) still
-// delegates straight to editorDataMemory, unchanged.
+// Composition root for the Redis-backed save/auth locks and presence: owns
+// the connection and the memory-backend delegate, wires the two stores
+// against them. Everything not ported still delegates to editorDataMemory.
+// See REDIS_EDITORDATA.md.
 
 function EditorData() {
   this._memory = new editorDataMemory.EditorData();
@@ -21,17 +19,12 @@ function EditorData() {
   this._redis = new Redis({
     host: redisCfg.host,
     port: redisCfg.port,
-    // Failing closed only works if a Redis call fails *promptly* - a
-    // stalled connection (mid-Sentinel-failover, a network blip) would
-    // otherwise hang a Lua call indefinitely, blocking save/auth for every
-    // user on that document. Explicit default (overridable via
-    // `iooptions.commandTimeout`), not left at the ioredis default of no
-    // timeout at all.
+    // Failing closed needs calls to fail *promptly*; ioredis defaults to no
+    // timeout at all, so a stalled connection would hang save/auth for every
+    // user on the document. Overridable via `iooptions.commandTimeout`.
     commandTimeout: 300,
-    // `options` is the legacy node-redis config block (services.CoAuthoring
-    // still supports both backends); ioredis's own overrides live under
-    // `iooptions` - spreading `options` here does nothing real, currently
-    // harmless only because it's empty.
+    // ioredis overrides live under `iooptions`; the sibling `options` block
+    // is the legacy node-redis one and does nothing here.
     ...(redisCfg.iooptions || {})
   });
 
@@ -41,17 +34,11 @@ function EditorData() {
 
 EditorData.prototype.connect = async function () {
   await this._memory.connect();
-  // The shipped default (Common/config/default.json) sets
-  // iooptions.lazyConnect: true, which leaves this client at status
-  // "wait" until something sends it a real command - meaning
-  // isConnected()/healthCheck() below could never turn true on a replica
-  // that hasn't yet handled any real lock/presence traffic, even though
-  // Redis itself is perfectly reachable. Kick the connection explicitly
-  // in that case. Not awaited and errors are swallowed deliberately: a
-  // Redis outage at startup must not block editorStat/callbackFunction
-  // (chained after this method's promise in DocsCoServer.js) from
-  // starting, and ioredis keeps retrying on its own regardless -
-  // isConnected() correctly reads false until it actually succeeds.
+  // `iooptions.lazyConnect: true` is the shipped default, which parks the
+  // client at status "wait" until some real command arrives - so
+  // isConnected()/healthCheck() would never turn true on an idle replica.
+  // Not awaited, errors ignored: a Redis outage at startup must not block
+  // the rest of the startup chain, and ioredis retries on its own.
   if (this._redis.status === 'wait') {
     this._redis.connect().catch(() => {});
   }
@@ -106,8 +93,6 @@ EditorData.prototype.removePresenceDocument = function (ctx, docId) {
   return this._presence.removePresenceDocument(ctx, docId);
 };
 
-// Everything else (Phase 2/3 - block locks, messages, save-state,
-// force-save, telemetry): delegate to the memory backend, unchanged.
 const DELEGATED_METHODS = [
   'addLocks',
   'addLocksNX',
@@ -133,14 +118,9 @@ for (const method of DELEGATED_METHODS) {
   };
 }
 
-// Presence is deliberately NOT cleaned up here. This fires once
-// `!hasEditors`, which ignores viewers - a viewer can still be legitimately
-// connected when it does, and wiping the presence HASH/ZSET here would
-// delete their entry too. The memory backend never touches presence in its
-// own cleanDocumentOnExit either (presence there isn't a stored structure
-// at all, just derived live from the connections array) - the actual
-// "presence is genuinely empty, safe to delete" trigger is a separate call
-// site, correctly gated on an empty getPresence result.
+// Deliberately does not touch presence: this fires once `!hasEditors`, which
+// ignores viewers, so a viewer may still be connected. The "presence is
+// genuinely empty" cleanup is a separate call site.
 EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId) {
   await this._memory.cleanDocumentOnExit(ctx, docId);
   await this._saveLock.cleanup(ctx, docId);
@@ -148,8 +128,6 @@ EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId) {
 
 module.exports = {
   EditorData,
-  // This module doesn't touch telemetry; if editorStatStorage falls back to
-  // it (config.js's default when unset), reuse the memory backend's
-  // EditorStat unchanged rather than leaving it broken.
+  // Reused unchanged - editorStatStorage falls back to this module when unset.
   EditorStat: editorDataMemory.EditorStat
 };
