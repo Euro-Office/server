@@ -177,7 +177,23 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
           const values = await redis.hmget(hashKey, ...liveIds);
           return values.filter(v => null != v);
         },
-        () => memoryFallback.getPresence(ctx, docId, connections)
+        async () => {
+          // This fallback only ever sees THIS replica's own local
+          // connections - it cannot know about an editor genuinely active
+          // on a different replica. That's an acceptable degrade for
+          // display purposes, but DocsCoServer.js's hasEditors() also
+          // feeds this into a decision to release the WOPI lock and wipe
+          // the shared save-lock keys - and a false "zero" there would
+          // reproduce, via a transient Redis error, the exact cross-replica
+          // bug this store exists to fix. Mark the result so that decision
+          // can tell "confirmed empty" apart from "Redis errored, this is
+          // just a local guess" - a plain property on the array, invisible
+          // to every existing caller that just reads .length/JSON.parses
+          // the entries.
+          const hvals = await memoryFallback.getPresence(ctx, docId, connections);
+          hvals.presenceUnknown = true;
+          return hvals;
+        }
       );
     },
 

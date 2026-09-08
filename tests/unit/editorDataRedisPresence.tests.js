@@ -212,6 +212,12 @@ describe('editorDataRedisLocks presence', () => {
       const hvals = await instance.getPresence(ctx, docId, fakeConnections);
       expect(Array.isArray(hvals)).toBe(true);
       expect(hvals).toHaveLength(1);
+      // The fallback is only this replica's local view, not a confirmed
+      // reading - DocsCoServer.js's hasEditors() relies on this marker to
+      // avoid treating a Redis error as "confirmed zero editors" and
+      // releasing the WOPI lock / wiping the save-lock keys out from under
+      // an editor genuinely active on a different replica.
+      expect(hvals.presenceUnknown).toBe(true);
     } finally {
       instance._redis.zrangebyscore = originalZrangebyscore;
       await instance.close();

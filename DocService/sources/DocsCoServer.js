@@ -657,6 +657,17 @@ function* getEditorsCount(ctx, docId, opt_hvals) {
   } else {
     hvals = yield editorData.getPresence(ctx, docId, connections);
   }
+  if (hvals.presenceUnknown) {
+    // A Redis-backed presence store's fail-open path marks its result this
+    // way: this is a replica-local guess after an error, not a confirmed
+    // reading. Report as if an editor is present rather than a real count -
+    // hasEditors() below must not treat this as "confirmed zero" and
+    // release the WOPI lock / wipe the save-lock keys out from under an
+    // editor who's genuinely still active on a different replica. A
+    // spuriously-idle document just gets its cleanup retried once presence
+    // is trustworthy again.
+    return 1;
+  }
   for (let i = 0; i < hvals.length; ++i) {
     elem = JSON.parse(hvals[i]);
     if (!elem.view && !elem.isCloseCoAuthoring) {
