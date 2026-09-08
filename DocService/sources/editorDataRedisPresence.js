@@ -83,7 +83,7 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     await redis.presenceWriteScript(hashKey, expKey, userId, userInfo, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
     try {
       await docExpSweep.track(ctx.tenant, docId, expiresAt);
-    } catch (err) {
+    } catch (_err) {
       // The write above already landed and is genuinely live and
       // cross-replica-visible (and self-expires regardless, via the
       // PEXPIRE inside presenceWriteScript) - a failure here only means
@@ -104,7 +104,7 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
   async function failOpen(fn, fallback) {
     try {
       return await fn();
-    } catch (err) {
+    } catch (_err) {
       return fallback();
     }
   }
@@ -141,7 +141,7 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
         }
         try {
           await docExpSweep.track(ctx.tenant, docId, expiresAt);
-        } catch (err) {
+        } catch (_err) {
           // Same reasoning as writeAndTrack: the refresh itself already
           // landed in Redis - don't let a sweep-tracking failure alone
           // fall this call back to the memory backend.

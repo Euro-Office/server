@@ -68,7 +68,7 @@ function createSaveLockStore(redis, prefix) {
       const key = buildKey(keyPrefix, ctx.tenant, docId);
       const res = await redis.saveLockScript(key, userId, ttlToMs(ttl));
       return res === 1;
-    } catch (err) {
+    } catch (_err) {
       return false;
     }
   }
@@ -84,7 +84,7 @@ function createSaveLockStore(redis, prefix) {
       if (code === 1) return UNLOCK_RES.UNLOCKED;
       if (code === 0) return UNLOCK_RES.LOCKED;
       return UNLOCK_RES.EMPTY;
-    } catch (err) {
+    } catch (_err) {
       return UNLOCK_RES.LOCKED;
     }
   }
@@ -107,7 +107,7 @@ function createSaveLockStore(redis, prefix) {
           buildKey(lockSavePrefix, ctx.tenant, docId),
           buildKey(lockAuthPrefix, ctx.tenant, docId)
         );
-      } catch (err) {
+      } catch (_err) {
         // Intentionally swallowed - see above.
       }
     },
