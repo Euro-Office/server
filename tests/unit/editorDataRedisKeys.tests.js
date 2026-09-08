@@ -28,17 +28,36 @@ describe('editorDataRedisKeys', () => {
   });
 
   describe('shardIndex', () => {
-    test('is deterministic for the same tenant', () => {
-      expect(shardIndex('localhost', 16)).toBe(shardIndex('localhost', 16));
+    test('is deterministic for the same (tenant, docId) pair - track() and untrack() must always agree on the shard', () => {
+      expect(shardIndex('localhost', 'doc-1', 16)).toBe(shardIndex('localhost', 'doc-1', 16));
     });
 
     test('always falls within [0, numShards)', () => {
-      const tenants = ['a', 'localhost', 'tenant-with-a-long-name', '', 'a:b', 'unicode-üé'];
-      for (const tenant of tenants) {
-        const shard = shardIndex(tenant, 16);
+      const pairs = [
+        ['a', 'x'],
+        ['localhost', 'doc-1'],
+        ['tenant-with-a-long-name', 'doc'],
+        ['', ''],
+        ['a:b', 'c'],
+        ['unicode-üé', 'doc']
+      ];
+      for (const [tenant, docId] of pairs) {
+        const shard = shardIndex(tenant, docId, 16);
         expect(shard).toBeGreaterThanOrEqual(0);
         expect(shard).toBeLessThan(16);
       }
+    });
+
+    // The actual bug this guards: a single-tenant deployment (the common
+    // case) must not hash every document to the same one shard - that
+    // would defeat the entire point of sharding for exactly the
+    // deployment shape it matters most for.
+    test('distributes different docIds under the same tenant across more than one shard', () => {
+      const shards = new Set();
+      for (let i = 0; i < 64; i++) {
+        shards.add(shardIndex('localhost', `doc-${i}`, 16));
+      }
+      expect(shards.size).toBeGreaterThan(1);
     });
   });
 });

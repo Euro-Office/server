@@ -49,8 +49,8 @@ function createShardedSweep(redis, keyPrefix, numShards, commandNamePrefix) {
   redis.defineCommand(claimCommand, {numberOfKeys: 1, lua: CLAIM_SCRIPT});
   redis.defineCommand(trackCommand, {numberOfKeys: 1, lua: TRACK_SCRIPT});
 
-  function shardKey(tenant) {
-    return `${keyPrefix}${shardIndex(tenant, numShards)}`;
+  function shardKey(tenant, docId) {
+    return `${keyPrefix}${shardIndex(tenant, docId, numShards)}`;
   }
 
   return {
@@ -60,12 +60,12 @@ function createShardedSweep(redis, keyPrefix, numShards, commandNamePrefix) {
     // document) each with their own expiry, and the sweep should only fire
     // once the LATEST of them has passed.
     async track(tenant, docId, expiresAt) {
-      const key = shardKey(tenant);
+      const key = shardKey(tenant, docId);
       const member = encodePair(tenant, docId);
       await redis[trackCommand](key, expiresAt, member);
     },
     async untrack(tenant, docId) {
-      const key = shardKey(tenant);
+      const key = shardKey(tenant, docId);
       const member = encodePair(tenant, docId);
       await redis.zrem(key, member);
     },

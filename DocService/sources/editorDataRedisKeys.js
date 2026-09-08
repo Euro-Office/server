@@ -22,11 +22,20 @@ function decodePair(member) {
 }
 
 // Deterministic, dependency-free string hash - only needs to distribute
-// tenants roughly evenly across shards, not to be cryptographically sound.
-function shardIndex(tenant, numShards) {
+// documents roughly evenly across shards, not to be cryptographically sound.
+// Keyed on both tenant and docId, not tenant alone: a single-tenant
+// deployment (the common case) would otherwise hash every document to the
+// exact same one of numShards shards, defeating the whole point of sharding.
+// Must stay deterministic per (tenant, docId) - track() and untrack() for
+// the same document have to agree on the same shard, or untrack() looks in
+// the wrong place and never actually removes the tracked entry.
+function shardIndex(tenant, docId, numShards) {
   let hash = 0;
   for (let i = 0; i < tenant.length; i++) {
     hash = (hash * 31 + tenant.charCodeAt(i)) >>> 0;
+  }
+  for (let i = 0; i < docId.length; i++) {
+    hash = (hash * 31 + docId.charCodeAt(i)) >>> 0;
   }
   return hash % numShards;
 }
