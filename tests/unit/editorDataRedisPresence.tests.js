@@ -24,8 +24,7 @@ describe('editorDataRedisLocks presence', () => {
     host = await redisServer.getHost();
     port = await redisServer.getPort();
 
-    process.env.NODE_CONFIG_DIR = process.env.EO_CONFIG_DIR
-      || path.join(__dirname, '..', '..', 'Common', 'config');
+    process.env.NODE_CONFIG_DIR = process.env.EO_CONFIG_DIR || path.join(__dirname, '..', '..', 'Common', 'config');
     process.env.NODE_CONFIG = JSON.stringify({
       log: {options: {replaceConsole: false}},
       services: {
@@ -56,10 +55,7 @@ describe('editorDataRedisLocks presence', () => {
       // used by the Redis path at all, only by the fail-open fallback) is
       // irrelevant here; what matters is whether replica B's getPresence
       // sees it with zero local connections of its own.
-      await replicaA.addPresence(
-        ctx, docId, 'uid-owner-1',
-        JSON.stringify({id: 'uid-1', connectionId: 'uid-owner-1', view: false})
-      );
+      await replicaA.addPresence(ctx, docId, 'uid-owner-1', JSON.stringify({id: 'uid-1', connectionId: 'uid-owner-1', view: false}));
 
       const seenFromB = await replicaB.getPresence(ctx, docId, []);
       expect(seenFromB).toHaveLength(1);
@@ -91,15 +87,15 @@ describe('editorDataRedisLocks presence', () => {
         const connId = `conn-${i}`;
         await writer.addPresence(ctx, docId, connId, JSON.stringify({id: 'uid-x', connectionId: connId, view: false}));
         const [inHashAfterWrite, inZsetAfterWrite] = await Promise.all([
-          raw.hexists(hashKey, connId).then((v) => v === 1),
-          raw.zscore(expKey, connId).then((v) => v != null)
+          raw.hexists(hashKey, connId).then(v => v === 1),
+          raw.zscore(expKey, connId).then(v => v != null)
         ]);
         expect(inHashAfterWrite).toBe(inZsetAfterWrite);
 
         await writer.removePresence(ctx, docId, connId);
         const [inHashAfterRemove, inZsetAfterRemove] = await Promise.all([
-          raw.hexists(hashKey, connId).then((v) => v === 1),
-          raw.zscore(expKey, connId).then((v) => v != null)
+          raw.hexists(hashKey, connId).then(v => v === 1),
+          raw.zscore(expKey, connId).then(v => v != null)
         ]);
         expect(inHashAfterRemove).toBe(false);
         expect(inZsetAfterRemove).toBe(false);
@@ -129,7 +125,7 @@ describe('editorDataRedisLocks presence', () => {
         let seen = await store.getPresence(ctx, docId, []);
         expect(seen).toHaveLength(1);
 
-        await new Promise((r) => setTimeout(r, 1300));
+        await new Promise(r => setTimeout(r, 1300));
         seen = await store.getPresence(ctx, docId, []);
         expect(seen).toHaveLength(0);
 
@@ -153,10 +149,10 @@ describe('editorDataRedisLocks presence', () => {
           await store.addPresence(ctx, docId, 'conn-1', JSON.stringify({id: 'uid-1', connectionId: 'conn-1', view: false}));
         }
 
-        await new Promise((r) => setTimeout(r, 1300));
+        await new Promise(r => setTimeout(r, 1300));
         const expired = await store.getDocumentPresenceExpired(Date.now());
         const expiredDocIds = expired.filter(([tenant]) => tenant === ctx.tenant).map(([, docId]) => docId);
-        expect(docIds.every((d) => expiredDocIds.includes(d))).toBe(true);
+        expect(docIds.every(d => expiredDocIds.includes(d))).toBe(true);
 
         const expiredAgain = await store.getDocumentPresenceExpired(Date.now());
         expect(expiredAgain).toHaveLength(0);
@@ -184,7 +180,7 @@ describe('editorDataRedisLocks presence', () => {
         expect(neverAdded).toBe(false);
 
         await store.addPresence(ctx, docId, 'conn-expired', JSON.stringify({id: 'uid-1', connectionId: 'conn-expired', view: false}));
-        await new Promise((r) => setTimeout(r, 3500)); // past ttlSeconds=1's native TTL backstop (3x)
+        await new Promise(r => setTimeout(r, 3500)); // past ttlSeconds=1's native TTL backstop (3x)
         const afterExpiry = await store.updatePresence(ctx, docId, 'conn-expired');
         expect(afterExpiry).toBe(false);
 

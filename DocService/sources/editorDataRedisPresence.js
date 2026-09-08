@@ -1,7 +1,7 @@
 'use strict';
 
-const { buildKey } = require('./editorDataRedisKeys');
-const { createShardedSweep } = require('./editorDataRedisShardedSweep');
+const {buildKey} = require('./editorDataRedisKeys');
+const {createShardedSweep} = require('./editorDataRedisShardedSweep');
 
 // A HASH per document for connection-info payloads, a companion SORTED SET
 // for per-connection expiry, and a sharded global sweep (the same pattern
@@ -67,9 +67,9 @@ const NATIVE_TTL_MULTIPLIER = 3;
 // degrade path on a Redis error reuses its local-connections-only behavior
 // rather than reimplementing it.
 function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
-  redis.defineCommand('presenceWriteScript', { numberOfKeys: 2, lua: WRITE_SCRIPT });
-  redis.defineCommand('presenceRemoveScript', { numberOfKeys: 2, lua: REMOVE_SCRIPT });
-  redis.defineCommand('presenceRefreshScript', { numberOfKeys: 2, lua: REFRESH_SCRIPT });
+  redis.defineCommand('presenceWriteScript', {numberOfKeys: 2, lua: WRITE_SCRIPT});
+  redis.defineCommand('presenceRemoveScript', {numberOfKeys: 2, lua: REMOVE_SCRIPT});
+  redis.defineCommand('presenceRefreshScript', {numberOfKeys: 2, lua: REFRESH_SCRIPT});
 
   const presencePrefix = `${prefix}presence:`;
   const presenceExpPrefix = `${prefix}presenceExp:`;
@@ -131,45 +131,54 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     // see that and re-add it via addPresence, or that connection's presence
     // never comes back.
     async updatePresence(ctx, docId, userId) {
-      return failOpen(async () => {
-        const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
-        const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
-        const expiresAt = Date.now() + ttlSeconds * 1000;
-        const refreshed = await redis.presenceRefreshScript(hashKey, expKey, userId, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
-        if (refreshed !== 1) {
-          return false;
-        }
-        try {
-          await docExpSweep.track(ctx.tenant, docId, expiresAt);
-        } catch (_err) {
-          // Same reasoning as writeAndTrack: the refresh itself already
-          // landed in Redis - don't let a sweep-tracking failure alone
-          // fall this call back to the memory backend.
-        }
-        return true;
-      }, () => memoryFallback.updatePresence(ctx, docId, userId));
+      return failOpen(
+        async () => {
+          const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
+          const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
+          const expiresAt = Date.now() + ttlSeconds * 1000;
+          const refreshed = await redis.presenceRefreshScript(hashKey, expKey, userId, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
+          if (refreshed !== 1) {
+            return false;
+          }
+          try {
+            await docExpSweep.track(ctx.tenant, docId, expiresAt);
+          } catch (_err) {
+            // Same reasoning as writeAndTrack: the refresh itself already
+            // landed in Redis - don't let a sweep-tracking failure alone
+            // fall this call back to the memory backend.
+          }
+          return true;
+        },
+        () => memoryFallback.updatePresence(ctx, docId, userId)
+      );
     },
 
     async removePresence(ctx, docId, userId) {
-      return failOpen(async () => {
-        const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
-        const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
-        await redis.presenceRemoveScript(hashKey, expKey, userId);
-      }, () => memoryFallback.removePresence(ctx, docId, userId));
+      return failOpen(
+        async () => {
+          const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
+          const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
+          await redis.presenceRemoveScript(hashKey, expKey, userId);
+        },
+        () => memoryFallback.removePresence(ctx, docId, userId)
+      );
     },
 
     async getPresence(ctx, docId, connections) {
-      return failOpen(async () => {
-        const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
-        const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
-        const now = Date.now();
-        const liveIds = await redis.zrangebyscore(expKey, now, '+inf');
-        if (0 === liveIds.length) {
-          return [];
-        }
-        const values = await redis.hmget(hashKey, ...liveIds);
-        return values.filter((v) => null != v);
-      }, () => memoryFallback.getPresence(ctx, docId, connections));
+      return failOpen(
+        async () => {
+          const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
+          const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
+          const now = Date.now();
+          const liveIds = await redis.zrangebyscore(expKey, now, '+inf');
+          if (0 === liveIds.length) {
+            return [];
+          }
+          const values = await redis.hmget(hashKey, ...liveIds);
+          return values.filter(v => null != v);
+        },
+        () => memoryFallback.getPresence(ctx, docId, connections)
+      );
     },
 
     async getDocumentPresenceExpired(now) {
@@ -180,14 +189,17 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     },
 
     async removePresenceDocument(ctx, docId) {
-      return failOpen(async () => {
-        const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
-        const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
-        await redis.del(hashKey, expKey);
-        await docExpSweep.untrack(ctx.tenant, docId);
-      }, () => memoryFallback.removePresenceDocument(ctx, docId));
-    },
+      return failOpen(
+        async () => {
+          const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
+          const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
+          await redis.del(hashKey, expKey);
+          await docExpSweep.untrack(ctx.tenant, docId);
+        },
+        () => memoryFallback.removePresenceDocument(ctx, docId)
+      );
+    }
   };
 }
 
-module.exports = { createPresenceStore };
+module.exports = {createPresenceStore};

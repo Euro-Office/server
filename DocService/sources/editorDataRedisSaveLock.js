@@ -1,6 +1,6 @@
 'use strict';
 
-const { buildKey } = require('./editorDataRedisKeys');
+const {buildKey} = require('./editorDataRedisKeys');
 
 // lockSave/unlockSave/lockAuth/unlockAuth. Owner-token locks (reentrant
 // acquire-or-refresh by the same owner, stateless release), not true
@@ -32,7 +32,7 @@ return {0, current}
 // Duplicated from commondefines.js's c_oAscUnlockRes rather than requiring
 // that module, to keep this module dependency-free. Must stay numerically
 // identical to it - callers compare against these values directly.
-const UNLOCK_RES = { LOCKED: 0, UNLOCKED: 1, EMPTY: 2 };
+const UNLOCK_RES = {LOCKED: 0, UNLOCKED: 1, EMPTY: 2};
 
 function ttlToMs(ttl) {
   // The interface's `ttl` is in seconds everywhere it's called (matches
@@ -46,8 +46,8 @@ function ttlToMs(ttl) {
 // caller owns the client's lifetime). `prefix`: the shared `ds:`-style
 // config prefix; this module owns the `lockSave:`/`lockAuth:` sub-namespaces.
 function createSaveLockStore(redis, prefix) {
-  redis.defineCommand('saveLockScript', { numberOfKeys: 1, lua: LOCK_SCRIPT });
-  redis.defineCommand('saveUnlockScript', { numberOfKeys: 1, lua: UNLOCK_SCRIPT });
+  redis.defineCommand('saveLockScript', {numberOfKeys: 1, lua: LOCK_SCRIPT});
+  redis.defineCommand('saveUnlockScript', {numberOfKeys: 1, lua: UNLOCK_SCRIPT});
 
   const lockSavePrefix = `${prefix}lockSave:`;
   const lockAuthPrefix = `${prefix}lockAuth:`;
@@ -103,15 +103,12 @@ function createSaveLockStore(redis, prefix) {
       // whatever the caller runs after it (e.g. unlockWopiDoc) on nothing
       // worse than a transient Redis blip.
       try {
-        await redis.del(
-          buildKey(lockSavePrefix, ctx.tenant, docId),
-          buildKey(lockAuthPrefix, ctx.tenant, docId)
-        );
+        await redis.del(buildKey(lockSavePrefix, ctx.tenant, docId), buildKey(lockAuthPrefix, ctx.tenant, docId));
       } catch (_err) {
         // Intentionally swallowed - see above.
       }
-    },
+    }
   };
 }
 
-module.exports = { createSaveLockStore, UNLOCK_RES };
+module.exports = {createSaveLockStore, UNLOCK_RES};

@@ -1,6 +1,6 @@
 'use strict';
 
-const { encodePair, decodePair, shardIndex } = require('./editorDataRedisKeys');
+const {encodePair, decodePair, shardIndex} = require('./editorDataRedisKeys');
 
 // A pre-sharded "which (tenant, docId) pairs are due for a global sweep"
 // structure - N sorted sets rather than one, so it stays Redis-Cluster-ready
@@ -46,8 +46,8 @@ const CLAIM_BATCH_SIZE = 100;
 function createShardedSweep(redis, keyPrefix, numShards, commandNamePrefix) {
   const claimCommand = `${commandNamePrefix}Claim`;
   const trackCommand = `${commandNamePrefix}Track`;
-  redis.defineCommand(claimCommand, { numberOfKeys: 1, lua: CLAIM_SCRIPT });
-  redis.defineCommand(trackCommand, { numberOfKeys: 1, lua: TRACK_SCRIPT });
+  redis.defineCommand(claimCommand, {numberOfKeys: 1, lua: CLAIM_SCRIPT});
+  redis.defineCommand(trackCommand, {numberOfKeys: 1, lua: TRACK_SCRIPT});
 
   function shardKey(tenant) {
     return `${keyPrefix}${shardIndex(tenant, numShards)}`;
@@ -85,8 +85,8 @@ function createShardedSweep(redis, keyPrefix, numShards, commandNamePrefix) {
         } while (due.length === CLAIM_BATCH_SIZE);
       }
       return results;
-    },
+    }
   };
 }
 
-module.exports = { createShardedSweep };
+module.exports = {createShardedSweep};

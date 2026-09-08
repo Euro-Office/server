@@ -31,4 +31,4 @@ function shardIndex(tenant, numShards) {
   return hash % numShards;
 }
 
-module.exports = { buildKey, encodePair, decodePair, shardIndex };
+module.exports = {buildKey, encodePair, decodePair, shardIndex};

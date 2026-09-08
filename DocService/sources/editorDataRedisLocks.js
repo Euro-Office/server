@@ -2,8 +2,8 @@
 const config = require('config');
 const Redis = require('ioredis');
 const editorDataMemory = require('./editorDataMemory');
-const { createSaveLockStore } = require('./editorDataRedisSaveLock');
-const { createPresenceStore } = require('./editorDataRedisPresence');
+const {createSaveLockStore} = require('./editorDataRedisSaveLock');
+const {createPresenceStore} = require('./editorDataRedisPresence');
 
 // Save/auth locks and presence backed by Redis. This module is the
 // composition root: it owns the Redis connection and the memory-backend
@@ -32,16 +32,11 @@ function EditorData() {
     // still supports both backends); ioredis's own overrides live under
     // `iooptions` - spreading `options` here does nothing real, currently
     // harmless only because it's empty.
-    ...(redisCfg.iooptions || {}),
+    ...(redisCfg.iooptions || {})
   });
 
   this._saveLock = createSaveLockStore(this._redis, prefix);
-  this._presence = createPresenceStore(
-    this._redis,
-    prefix,
-    config.get('services.CoAuthoring.expire.presence'),
-    this._memory
-  );
+  this._presence = createPresenceStore(this._redis, prefix, config.get('services.CoAuthoring.expire.presence'), this._memory);
 }
 
 EditorData.prototype.connect = async function () {
@@ -114,11 +109,23 @@ EditorData.prototype.removePresenceDocument = function (ctx, docId) {
 // Everything else (Phase 2/3 - block locks, messages, save-state,
 // force-save, telemetry): delegate to the memory backend, unchanged.
 const DELEGATED_METHODS = [
-  'addLocks', 'addLocksNX', 'removeLocks', 'removeAllLocks', 'getLocks',
-  'addMessage', 'removeMessages', 'getMessages',
-  'setSaved', 'getdelSaved',
-  'setForceSave', 'getForceSave', 'checkAndStartForceSave', 'checkAndSetForceSave', 'removeForceSave',
-  'addForceSaveTimerNX', 'getForceSaveTimer',
+  'addLocks',
+  'addLocksNX',
+  'removeLocks',
+  'removeAllLocks',
+  'getLocks',
+  'addMessage',
+  'removeMessages',
+  'getMessages',
+  'setSaved',
+  'getdelSaved',
+  'setForceSave',
+  'getForceSave',
+  'checkAndStartForceSave',
+  'checkAndSetForceSave',
+  'removeForceSave',
+  'addForceSaveTimerNX',
+  'getForceSaveTimer'
 ];
 for (const method of DELEGATED_METHODS) {
   EditorData.prototype[method] = function (...args) {
@@ -144,5 +151,5 @@ module.exports = {
   // This module doesn't touch telemetry; if editorStatStorage falls back to
   // it (config.js's default when unset), reuse the memory backend's
   // EditorStat unchanged rather than leaving it broken.
-  EditorStat: editorDataMemory.EditorStat,
+  EditorStat: editorDataMemory.EditorStat
 };

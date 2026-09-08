@@ -23,8 +23,7 @@ describe('editorDataRedisLocks', () => {
     // config's env override must be set before the first require of any
     // module that itself requires('config') - config caches its parsed
     // result on first load, so this can't move into a test() body.
-    process.env.NODE_CONFIG_DIR = process.env.EO_CONFIG_DIR
-      || path.join(__dirname, '..', '..', 'Common', 'config');
+    process.env.NODE_CONFIG_DIR = process.env.EO_CONFIG_DIR || path.join(__dirname, '..', '..', 'Common', 'config');
     process.env.NODE_CONFIG = JSON.stringify({
       log: {options: {replaceConsole: false}},
       services: {
@@ -97,7 +96,7 @@ describe('editorDataRedisLocks', () => {
         expect(first).toBe(true);
 
         const key = `locks-test:lockSave:${encodeURIComponent(ctx.tenant)}:${encodeURIComponent(docId)}`;
-        await new Promise((resolve) => setTimeout(resolve, 500)); // let some of the TTL elapse first
+        await new Promise(resolve => setTimeout(resolve, 500)); // let some of the TTL elapse first
         const ttlBeforeReassert = await raw.pttl(key);
 
         const reassert = await replicaA.lockSave(ctx, docId, 'uid-1', ttlSeconds);
@@ -110,7 +109,7 @@ describe('editorDataRedisLocks', () => {
         const otherDenied = await replicaB.lockSave(ctx, docId, 'uid-2', ttlSeconds);
         expect(otherDenied).toBe(false);
 
-        await new Promise((resolve) => setTimeout(resolve, ttlSeconds * 1000 + 500));
+        await new Promise(resolve => setTimeout(resolve, ttlSeconds * 1000 + 500));
 
         const afterExpiry = await replicaB.lockSave(ctx, docId, 'uid-2', ttlSeconds);
         expect(afterExpiry).toBe(true);
@@ -139,7 +138,7 @@ describe('editorDataRedisLocks', () => {
         const keys = await raw.keys('locks-test:lockSave:a*');
         expect(keys.length).toBe(2);
 
-        const decoded = keys.map((k) => {
+        const decoded = keys.map(k => {
           const rest = k.replace('locks-test:lockSave:', '');
           const [encTenant, encDocId] = rest.split(':', 2);
           return {tenant: decodeURIComponent(encTenant), docId: decodeURIComponent(encDocId)};
