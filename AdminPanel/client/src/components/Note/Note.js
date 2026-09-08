@@ -14,11 +14,11 @@ function Note({type = 'note', children}) {
       className: styles.note,
       icon: (
         <svg className={styles.icon} width='24' height='24' viewBox='0 0 24 24' fill='none'>
-          <circle cx='12' cy='12' r='10' stroke='#FF6F3D' strokeWidth='2' />
-          <path d='M12 7C12.5523 7 13 7.44772 13 8C13 8.55228 12.5523 9 12 9C11.4477 9 11 8.55228 11 8C11 7.44772 11.4477 7 12 7Z' fill='#FF6F3D' />
+          <circle cx='12' cy='12' r='10' stroke='#0082C9' strokeWidth='2' />
+          <path d='M12 7C12.5523 7 13 7.44772 13 8C13 8.55228 12.5523 9 12 9C11.4477 9 11 8.55228 11 8C11 7.44772 11.4477 7 12 7Z' fill='#0082C9' />
           <path
             d='M12 10C12.5523 10 13 10.4477 13 11V17C13 17.5523 12.5523 18 12 18C11.4477 18 11 17.5523 11 17V11C11 10.4477 11.4477 10 12 10Z'
-            fill='#FF6F3D'
+            fill='#0082C9'
           />
         </svg>
       )

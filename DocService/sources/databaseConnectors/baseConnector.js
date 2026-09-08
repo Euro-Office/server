@@ -30,7 +30,6 @@ const sqlDataBaseType = {
   mariaDB: 'mariadb',
   msSql: 'mssql',
   postgreSql: 'postgres',
-  dameng: 'dameng',
   oracle: 'oracle'
 };
 
@@ -58,9 +57,6 @@ switch (dbType) {
     break;
   case sqlDataBaseType.msSql:
     dbInstance = require('./mssqlConnector');
-    break;
-  case sqlDataBaseType.dameng:
-    dbInstance = require('./damengConnector');
     break;
   case sqlDataBaseType.oracle:
     dbInstance = require('./oracleConnector');

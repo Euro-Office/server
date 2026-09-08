@@ -4,9 +4,9 @@ const CopyPlugin = require('copy-webpack-plugin');
 const webpack = require('webpack');
 const dotenv = require('dotenv');
 
-const outputDir = process.env.BUILD_ROOT
-                  ? path.resolve(process.env.BUILD_ROOT, 'build')
-                  : path.resolve(__dirname, 'build');
+const outputDir = process.env.BUILD_ROOT ? path.resolve(process.env.BUILD_ROOT, 'build') : path.resolve(__dirname, 'build');
+
+const appName = process.env.APP_NAME || 'Euro-Office';
 
 module.exports = (env, argv) => {
   const mode = argv && argv.mode ? argv.mode : 'development';
@@ -52,7 +52,10 @@ module.exports = (env, argv) => {
 
     plugins: [
       new HtmlWebpackPlugin({
-        template: path.join(__dirname, 'public', 'index.html')
+        template: path.join(__dirname, 'public', 'index.html'),
+        templateParameters: {
+          appName
+        }
       }),
       new CopyPlugin({
         patterns: [
@@ -90,7 +93,8 @@ module.exports = (env, argv) => {
         ]
       }),
       new webpack.DefinePlugin({
-        'process.env.REACT_APP_BACKEND_URL': JSON.stringify(process.env.REACT_APP_BACKEND_URL)
+        'process.env.REACT_APP_BACKEND_URL': JSON.stringify(process.env.REACT_APP_BACKEND_URL),
+        'process.env.APP_NAME': JSON.stringify(appName)
       })
     ],
 

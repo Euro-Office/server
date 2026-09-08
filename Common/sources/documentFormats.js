@@ -41,30 +41,35 @@ const CATEGORIES = [
   'forms'
 ];
 
-let cache = null;
+// Keyed by filePath: documentFormatsFile is per-tenant, so a single global cache
+// would serve one tenant's format list to all tenants.
+const cache = new Map();
 
 /**
  * Load and parse all formats from JSON file (with caching)
  * @param {string} filePath - Full path to onlyoffice-docs-formats.json
+ * @param {Object} ctx - operation context, used to log when the file cannot be read
  * @returns {Promise<Object>} Map of category -> extensions array
  */
-async function getAllFormats(filePath) {
-  if (cache) {
-    return cache;
+async function getAllFormats(filePath, ctx) {
+  if (cache.has(filePath)) {
+    return cache.get(filePath);
   }
 
   // Initialize empty categories
-  cache = Object.fromEntries(CATEGORIES.map(key => [key, []]));
+  const result = Object.fromEntries(CATEGORIES.map(key => [key, []]));
 
   if (!filePath) {
-    return cache;
+    ctx.logger.warn('getAllFormats: documentFormatsFile is not configured; WOPI discovery will list no formats');
+    return result;
   }
 
   try {
     const formats = JSON.parse(await readFile(filePath, 'utf8'));
 
     if (!Array.isArray(formats)) {
-      return cache;
+      ctx.logger.warn('getAllFormats: "%s" is not a JSON array; WOPI discovery will list no formats', filePath);
+      return result;
     }
 
     for (const {name, type, actions} of formats) {
@@ -77,19 +82,23 @@ async function getAllFormats(filePath) {
       const hasView = actions.includes('view');
       const key = type + (hasEdit ? 'Edit' : hasView ? 'View' : '');
 
-      if (cache[key]) {
-        cache[key].push(name);
+      if (result[key]) {
+        result[key].push(name);
       }
 
       if (type === 'pdf' && actions.includes('fill')) {
-        cache.forms.push(name);
+        result.forms.push(name);
       }
     }
-  } catch {
-    // Return empty categories on error
+  } catch (err) {
+    // Do not cache the empty result, so a later request retries once the file is available
+    ctx.logger.warn('getAllFormats: failed to read formats file "%s": %s', filePath, err.stack);
+    return result;
   }
 
-  return cache;
+  // Cache only a successfully parsed result
+  cache.set(filePath, result);
+  return result;
 }
 
 module.exports = {getAllFormats};

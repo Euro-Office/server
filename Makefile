@@ -16,7 +16,7 @@ GRUNT_ENV += PUBLISHER_URL="$(PUBLISHER_URL)"
 
 BRANDING_DIR ?= ./branding
 
-DOCUMENT_ROOT ?= /var/www/onlyoffice/documentserver
+DOCUMENT_ROOT ?= /var/www/euro-office/documentserver
 
 ifeq ($(OS),Windows_NT)
     PLATFORM := win
@@ -46,7 +46,7 @@ endif
 
 TARGET := $(PLATFORM)_$(ARCHITECTURE)
 
-OUTPUT = ../build_tools/out/$(TARGET)/onlyoffice/documentserver/server
+OUTPUT = ../build_tools/out/$(TARGET)/euro-office/documentserver/server
 
 SPELLCHECKER_DICTIONARIES := $(OUTPUT)/../dictionaries
 SPELLCHECKER_DICTIONARY_FILES += ../dictionaries/*_*
@@ -144,12 +144,12 @@ install:
 	if ! id -u onlyoffice > /dev/null 2>&1; then useradd -m -d /var/www/onlyoffice -r -U onlyoffice; fi
 
 	mkdir -p ${DESTDIR}${DOCUMENT_ROOT}/fonts
-	mkdir -p ${DESTDIR}/var/log/onlyoffice/documentserver
-	mkdir -p ${DESTDIR}/var/lib/onlyoffice/documentserver/App_Data
+	mkdir -p ${DESTDIR}/var/log/euro-office/documentserver
+	mkdir -p ${DESTDIR}/var/lib/euro-office/documentserver/App_Data
 
 	cp -fr -t ${DESTDIR}${DOCUMENT_ROOT} build/* ../web-apps/deploy/*
-	mkdir -p ${DESTDIR}/etc/onlyoffice/documentserver
-	mv ${DESTDIR}${DOCUMENT_ROOT}/server/Common/config/* ${DESTDIR}/etc/onlyoffice/documentserver
+	mkdir -p ${DESTDIR}/etc/euro-office/documentserver
+	mv ${DESTDIR}${DOCUMENT_ROOT}/server/Common/config/* ${DESTDIR}/etc/euro-office/documentserver
 
 	chown onlyoffice:onlyoffice -R ${DESTDIR}/var/www/onlyoffice
 	chown onlyoffice:onlyoffice -R ${DESTDIR}/var/log/onlyoffice
@@ -182,7 +182,7 @@ uninstall:
 	# Unlink installed shared libs
 	find /lib -type l | while IFS= read -r lnk; do if (readlink "$$lnk" | grep -q '^${DOCUMENT_ROOT}/server/FileConverter/bin/'); then rm "$$lnk"; fi; done
 
-	rm -rf /var/www/onlyoffice/documentserver
-	rm -rf /var/log/onlyoffice/documentserver
-	rm -rf /var/lib/onlyoffice/documentserver
-	rm -rf /etc/onlyoffice/documentserver
+	rm -rf /var/www/euro-office/documentserver
+	rm -rf /var/log/euro-office/documentserver
+	rm -rf /var/lib/euro-office/documentserver
+	rm -rf /etc/euro-office/documentserver

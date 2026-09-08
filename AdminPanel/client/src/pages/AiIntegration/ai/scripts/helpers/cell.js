@@ -553,7 +553,7 @@ function getCellFunctions() {
             Asc.scope.sortOrder3 = params.sortOrder3;
             Asc.scope.header = params.header || "xlNo";
 
-            // Функция для поиска колонки по имени
+            // Function for finding a column by name
             async function findColumnByName(fieldName) {
                 if (!fieldName) return null;
 

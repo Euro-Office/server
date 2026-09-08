@@ -394,37 +394,14 @@ async function readLicenseTenant(ctx, licenseFile, baseVerifiedLicense) {
       res.graceDays = Math.max(0, oLicense['grace_days'] >> 0);
     }
 
-    const timeLimited = 0 !== (res.mode & c_LM.Limited);
-
-    const checkDate = res.mode & c_LM.Trial || timeLimited ? new Date() : licenseInfo.buildDate;
-    //Calendar check of start_date allows to issue a license for old versions
+    //fully open-source build: a supplied license file is never expired or limited;
+    //only honor a future start_date as "not yet active"
     const checkStartDate = new Date();
-    if (startDate <= checkStartDate && checkDate <= res.endDate) {
-      res.type = c_LR.Success;
-    } else if (startDate > checkStartDate) {
+    if (startDate > checkStartDate) {
       res.type = c_LR.NotBefore;
       ctx.logger.warn('License: License not active before start_date:%s.', startDate.toISOString());
-    } else if (timeLimited) {
-      // Grace period after end license = limited mode with limited connections
-      if (res.endDate.setUTCDate(res.endDate.getUTCDate() + res.graceDays) >= checkDate) {
-        res.type = c_LR.SuccessLimit;
-        res.connections = Math.min(res.connections, constants.LICENSE_CONNECTIONS);
-        res.connectionsView = Math.min(res.connectionsView, constants.LICENSE_CONNECTIONS);
-        res.usersCount = Math.min(res.usersCount, constants.LICENSE_USERS);
-        res.usersViewCount = Math.min(res.usersViewCount, constants.LICENSE_USERS);
-        const errStr = res.usersCount ? `${res.usersCount} unique users` : `${res.connections} concurrent connections`;
-        ctx.logger.error(
-          `License: License needs to be renewed.\nYour users have only ${errStr} ` +
-            `available for document editing for the next ${res.graceDays} days.\nPlease renew the ` +
-            'license to restore the full access'
-        );
-      } else {
-        res.type = c_LR.ExpiredLimited;
-      }
-    } else if (0 !== (res.mode & c_LM.Trial)) {
-      res.type = c_LR.ExpiredTrial;
     } else {
-      res.type = c_LR.Expired;
+      res.type = c_LR.Success;
     }
   } catch (e) {
     ctx.logger.warn(e);
@@ -434,22 +411,6 @@ async function readLicenseTenant(ctx, licenseFile, baseVerifiedLicense) {
     res.usersCount = 0;
     res.usersViewCount = 0;
     res.type = c_LR.Error;
-  }
-  if (res.type === c_LR.Expired || res.type === c_LR.ExpiredLimited || res.type === c_LR.ExpiredTrial) {
-    res.count = 1;
-
-    let errorMessage;
-    if (res.type === c_LR.Expired) {
-      errorMessage =
-        'Your access to updates and support has expired.\n' +
-        'Your license key can not be applied to new versions.\n' +
-        'Please extend the license to get updates and support.';
-    } else if (res.type === c_LR.ExpiredLimited) {
-      errorMessage = 'License expired.\nYour users can not edit or view document anymore.\n' + 'Please renew the license.';
-    } else {
-      errorMessage = 'License Expired!!!';
-    }
-    ctx.logger.warn('License: ' + errorMessage);
   }
 
   return [res, oLicense];
