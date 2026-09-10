@@ -16,24 +16,35 @@ const {createFailureReporter} = require('./editorDataRedisReport');
 // least one heartbeating connection is never swept, and every ungraceful
 // disconnect leaves a member behind for good. userId is per-connection, so
 // a user reconnecting on a flaky link strands a new entry each time.
-// LIMIT bounds the unpack - an unbounded one hits Lua's C-stack ceiling.
+//
+// Bounded: an unbounded unpack hits Lua's C-stack ceiling.
+//
 // Runs last in both scripts, after the caller's own score has been pushed
 // into the future: pruning first could HDEL the caller's field while the
 // ZADD puts its member back, leaving a member with no hash entry behind it.
-const PRUNE_STALE = `
-local stale = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', '(' .. ARGV[5], 'LIMIT', 0, 100)
+//
+// The cutoff is the writing replica's clock. A replica more than
+// expire.presence ahead of its peers therefore prunes their live members;
+// they are re-added on the next heartbeat, and readers already filtered
+// those members out, so the visible window is unchanged.
+const PRUNE_BATCH_SIZE = 100;
+
+function pruneStale(nowArg) {
+  return `
+local stale = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', '(' .. ${nowArg}, 'LIMIT', 0, ${PRUNE_BATCH_SIZE})
 if #stale > 0 then
   redis.call('ZREM', KEYS[2], unpack(stale))
   redis.call('HDEL', KEYS[1], unpack(stale))
 end
 `;
+}
 
 const WRITE_SCRIPT = `
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('ZADD', KEYS[2], ARGV[3], ARGV[1])
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
 redis.call('PEXPIRE', KEYS[2], ARGV[4])
-${PRUNE_STALE}
+${pruneStale('ARGV[5]')}
 return 1
 `;
 
@@ -54,7 +65,7 @@ end
 redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 redis.call('PEXPIRE', KEYS[2], ARGV[3])
-${PRUNE_STALE.replace(/ARGV\[5\]/g, 'ARGV[4]')}
+${pruneStale('ARGV[4]')}
 return 1
 `;
 
