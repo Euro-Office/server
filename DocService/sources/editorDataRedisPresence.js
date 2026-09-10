@@ -11,11 +11,29 @@ const {createFailureReporter} = require('./editorDataRedisReport');
 // One script so a reader can't see the HASH and ZSET disagree. The PEXPIREs
 // are a backstop: docExpSweep.track() is a separate round trip that can fail
 // after this lands, and nothing else would ever delete these keys.
+// Prunes stale members. getPresence filters expired members out of the
+// read, so nothing else ever removes them: a document that always has at
+// least one heartbeating connection is never swept, and every ungraceful
+// disconnect leaves a member behind for good. userId is per-connection, so
+// a user reconnecting on a flaky link strands a new entry each time.
+// LIMIT bounds the unpack - an unbounded one hits Lua's C-stack ceiling.
+// Runs last in both scripts, after the caller's own score has been pushed
+// into the future: pruning first could HDEL the caller's field while the
+// ZADD puts its member back, leaving a member with no hash entry behind it.
+const PRUNE_STALE = `
+local stale = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', '(' .. ARGV[5], 'LIMIT', 0, 100)
+if #stale > 0 then
+  redis.call('ZREM', KEYS[2], unpack(stale))
+  redis.call('HDEL', KEYS[1], unpack(stale))
+end
+`;
+
 const WRITE_SCRIPT = `
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('ZADD', KEYS[2], ARGV[3], ARGV[1])
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
 redis.call('PEXPIRE', KEYS[2], ARGV[4])
+${PRUNE_STALE}
 return 1
 `;
 
@@ -36,6 +54,7 @@ end
 redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 redis.call('PEXPIRE', KEYS[2], ARGV[3])
+${PRUNE_STALE.replace(/ARGV\[5\]/g, 'ARGV[4]')}
 return 1
 `;
 
@@ -67,7 +86,7 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     const expiresAt = now + ttlSeconds * 1000;
     const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
     const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
-    await redis.presenceWriteScript(hashKey, expKey, userId, userInfo, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
+    await redis.presenceWriteScript(hashKey, expKey, userId, userInfo, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000, now);
     try {
       await docExpSweep.track(ctx.tenant, docId, expiresAt);
       sweepReport.success(ctx);
@@ -116,8 +135,9 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
         async () => {
           const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
           const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
-          const expiresAt = Date.now() + ttlSeconds * 1000;
-          const refreshed = await redis.presenceRefreshScript(hashKey, expKey, userId, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
+          const now = Date.now();
+          const expiresAt = now + ttlSeconds * 1000;
+          const refreshed = await redis.presenceRefreshScript(hashKey, expKey, userId, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000, now);
           if (refreshed !== 1) {
             return false;
           }
@@ -164,8 +184,8 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
         },
         async () => {
           // This sees only local connections, so a "zero" here is a guess,
-          // not a fact. DocsCoServer.js's hasEditors() reads the marker to
-          // avoid releasing locks on it.
+          // not a fact. DocsCoServer.js's isPresenceUnreliable() gates every
+          // reader that would act on an absence.
           const hvals = await memoryFallback.getPresence(ctx, docId, connections);
           hvals.presenceUnknown = true;
           return hvals;

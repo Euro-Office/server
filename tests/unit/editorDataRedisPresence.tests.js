@@ -195,6 +195,69 @@ describe('editorDataRedis presence', () => {
     }, 10000);
   });
 
+  // Only removePresence and the document-level sweep ever delete presence
+  // state, so a document that always has at least one heartbeating
+  // connection would otherwise accumulate a member per ungraceful
+  // disconnect, permanently. Drives that: one entry left stale, another
+  // kept alive, and a write on a third.
+  test('a write prunes members whose expiry has passed, and leaves live ones', async () => {
+    const instance = new editorDataRedis.EditorData();
+    await instance.connect();
+    const docId = 'doc-prune';
+    const hashKey = buildKey('presence-test:presence:', ctx.tenant, docId);
+    const expKey = buildKey('presence-test:presenceExp:', ctx.tenant, docId);
+    const raw = new Redis({host, port});
+
+    try {
+      await instance.addPresence(ctx, docId, 'uid-live', JSON.stringify({id: 'uid-live'}));
+      await instance.addPresence(ctx, docId, 'uid-stranded', JSON.stringify({id: 'uid-stranded'}));
+
+      // Strand one entry the way an ungraceful disconnect does: its expiry
+      // passes, but nothing ever calls removePresence for it.
+      await raw.zadd(expKey, Date.now() - 60000, 'uid-stranded');
+      expect(await raw.hlen(hashKey)).toBe(2);
+
+      await instance.addPresence(ctx, docId, 'uid-third', JSON.stringify({id: 'uid-third'}));
+
+      expect(await raw.zscore(expKey, 'uid-stranded')).toBeNull();
+      expect(await raw.hget(hashKey, 'uid-stranded')).toBeNull();
+      // The other two are untouched, and the HASH and ZSET stay in step.
+      expect(await raw.hlen(hashKey)).toBe(2);
+      expect(await raw.zcard(expKey)).toBe(2);
+      expect(await raw.hget(hashKey, 'uid-live')).not.toBeNull();
+    } finally {
+      await raw.del(hashKey, expKey);
+      await raw.quit();
+      await instance.close();
+    }
+  }, 10000);
+
+  // A refresh that pruned before pushing its own score forward would delete
+  // the caller's own hash field and then re-add its sorted-set member,
+  // leaving a member with nothing behind it.
+  test('a refresh of an already-stale entry does not strand its own member', async () => {
+    const instance = new editorDataRedis.EditorData();
+    await instance.connect();
+    const docId = 'doc-prune-self';
+    const hashKey = buildKey('presence-test:presence:', ctx.tenant, docId);
+    const expKey = buildKey('presence-test:presenceExp:', ctx.tenant, docId);
+    const raw = new Redis({host, port});
+
+    try {
+      await instance.addPresence(ctx, docId, 'uid-self', JSON.stringify({id: 'uid-self'}));
+      await raw.zadd(expKey, Date.now() - 60000, 'uid-self');
+
+      expect(await instance.updatePresence(ctx, docId, 'uid-self')).toBe(true);
+      expect(await raw.hget(hashKey, 'uid-self')).not.toBeNull();
+      expect(Number(await raw.zscore(expKey, 'uid-self'))).toBeGreaterThan(Date.now());
+      expect(await instance.getPresence(ctx, docId, [])).toHaveLength(1);
+    } finally {
+      await raw.del(hashKey, expKey);
+      await raw.quit();
+      await instance.close();
+    }
+  }, 10000);
+
   // Simulated deterministically by making the Redis call itself throw,
   // rather than racing a real broken TCP connection against ioredis's async
   // connect/retry machinery (flaky, and not what this test is about - it's
@@ -214,10 +277,11 @@ describe('editorDataRedis presence', () => {
       expect(Array.isArray(hvals)).toBe(true);
       expect(hvals).toHaveLength(1);
       // The fallback is only this replica's local view, not a confirmed
-      // reading - DocsCoServer.js's hasEditors() relies on this marker to
-      // avoid treating a Redis error as "confirmed zero editors" and
-      // releasing the WOPI lock / wiping the save-lock keys out from under
-      // an editor genuinely active on a different replica.
+      // reading - DocsCoServer.js's isPresenceUnreliable() gates every reader
+      // that would act on an absence, so a Redis error is not mistaken for
+      // "confirmed zero editors" and does not release the WOPI lock or wipe
+      // the save-lock keys out from under an editor active on another
+      // replica.
       expect(hvals.presenceUnknown).toBe(true);
     } finally {
       instance._redis.zrangebyscore = originalZrangebyscore;
