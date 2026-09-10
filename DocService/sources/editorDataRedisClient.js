@@ -24,6 +24,22 @@ const SENTINEL_ONLY_OPTIONS = ['sentinels', 'name', 'sentinelPassword', 'role'];
 // auth for every user on the document.
 const DEFAULT_COMMAND_TIMEOUT = 300;
 
+// Every topology disables the offline queue, and commandTimeout is not a
+// substitute for it. The timeout settles the *promise* - Command.setTimeout
+// rejects it - but the command object stays on ioredis's offlineQueue, and
+// the ready handler re-sends every queued entry on reconnect with no check
+// for whether its promise already settled. So a lockSave that timed out and
+// was correctly reported as denied would execute for real seconds later,
+// taking a lock the caller has already given up on and will never release:
+// a save outage outliving the Redis blip by the whole lock TTL, and
+// indistinguishable in the log from a legitimate lock.
+//
+// The cost is that commands issued before the client is ready are rejected
+// rather than held. That is the fail-closed behaviour we want, and
+// EditorData.connect() is called at boot, so steady-state traffic is
+// unaffected.
+const FAIL_CLOSED_CONNECTION = {enableOfflineQueue: false};
+
 function clusterNodes(rootNodes) {
   return rootNodes.map(node => {
     const url = new URL(typeof node === 'string' ? node : node.url);
@@ -91,11 +107,13 @@ function createRedisClient(redisCfg) {
     // forever. Left at the default, an unreachable cluster would hang every
     // save and auth indefinitely instead of denying them - no timeout, no
     // rejection, and so nothing for the failure reporter to report.
-    return new Redis.Cluster(clusterNodes(rootNodes), {
-      redisOptions,
-      lazyConnect: !!options.lazyConnect,
-      enableOfflineQueue: false
-    });
+    return new Redis.Cluster(
+      clusterNodes(rootNodes),
+      Object.assign({}, FAIL_CLOSED_CONNECTION, {
+        redisOptions,
+        lazyConnect: !!options.lazyConnect
+      })
+    );
   }
 
   const sentinels = options.sentinels || [];
@@ -103,14 +121,14 @@ function createRedisClient(redisCfg) {
     if (0 === sentinels.length) {
       throw new Error('editorDataStorage redis mode is "sentinel" but services.CoAuthoring.redis.iooptions.sentinels is empty');
     }
-    return new Redis(options);
+    return new Redis(Object.assign({}, FAIL_CLOSED_CONNECTION, options));
   }
 
   if ('auto' === mode && sentinels.length > 0 && !looksFabricated(redisCfg, sentinels)) {
-    return new Redis(options);
+    return new Redis(Object.assign({}, FAIL_CLOSED_CONNECTION, options));
   }
 
-  return new Redis(Object.assign({host: redisCfg.host, port: redisCfg.port}, withoutSentinelOptions(options)));
+  return new Redis(Object.assign({}, FAIL_CLOSED_CONNECTION, {host: redisCfg.host, port: redisCfg.port}, withoutSentinelOptions(options)));
 }
 
 module.exports = {createRedisClient};

@@ -25,15 +25,31 @@ function EditorData() {
   this._presence = createPresenceStore(this._redis, prefix, config.get('services.CoAuthoring.expire.presence'), this._memory);
 }
 
+// Long enough for a healthy Redis on the same network, short enough that a
+// dead one does not hold up the startup chain behind it.
+const CONNECT_TIMEOUT_MS = 3000;
+
 EditorData.prototype.connect = async function () {
   await this._memory.connect();
   // `iooptions.lazyConnect: true` is the shipped default, which parks the
   // client at status "wait" until some real command arrives - so
   // isConnected()/healthCheck() would never turn true on an idle replica.
-  // Not awaited, errors ignored: a Redis outage at startup must not block
-  // the rest of the startup chain, and ioredis retries on its own.
+  //
+  // Awaited, because the offline queue is disabled: commands issued before
+  // the client is ready are rejected outright rather than held, so handing
+  // control back while still connecting would deny the first locks of a
+  // freshly started replica. Bounded and swallowed, because Redis being
+  // down at startup must not stop the process booting - it must fail
+  // closed, which it does.
   if (this._redis.status === 'wait') {
-    this._redis.connect().catch(() => {});
+    let timer;
+    await Promise.race([
+      this._redis.connect().catch(() => {}),
+      new Promise(resolve => {
+        timer = setTimeout(resolve, CONNECT_TIMEOUT_MS);
+      })
+    ]);
+    clearTimeout(timer);
   }
 };
 EditorData.prototype.isConnected = function () {
@@ -43,7 +59,14 @@ EditorData.prototype.ping = async function () {
   return this._redis.ping();
 };
 EditorData.prototype.close = async function () {
-  await this._redis.quit();
+  // QUIT is itself a command, so with the offline queue disabled it is
+  // rejected on a client that never reached a server. Closing must not
+  // depend on the connection having worked.
+  try {
+    await this._redis.quit();
+  } catch {
+    this._redis.disconnect();
+  }
   await this._memory.close();
 };
 EditorData.prototype.healthCheck = async function () {
