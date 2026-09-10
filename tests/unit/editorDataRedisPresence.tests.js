@@ -9,12 +9,12 @@ const {buildKey} = require('../../DocService/sources/editorDataRedisKeys');
 // A joiner on a DIFFERENT replica correctly seeing an existing editor is the
 // thing editorDataMemory structurally cannot do - each replica's own
 // getPresence only ever sees its own local connections.
-describe('editorDataRedisLocks presence', () => {
+describe('editorDataRedis presence', () => {
   let redisServer;
   let host;
   let port;
   let editorDataMemory;
-  let editorDataRedisLocks;
+  let editorDataRedis;
   let createPresenceStore;
   // Matches tenants.defaultTenant (default.json) - some presence paths key
   // off the configured default tenant, not an arbitrary string.
@@ -36,7 +36,7 @@ describe('editorDataRedisLocks presence', () => {
     });
 
     editorDataMemory = require('../../DocService/sources/editorDataMemory');
-    editorDataRedisLocks = require('../../DocService/sources/editorDataRedisLocks');
+    editorDataRedis = require('../../DocService/sources/editorDataRedis');
     ({createPresenceStore} = require('../../DocService/sources/editorDataRedisPresence'));
   }, 30000);
 
@@ -45,8 +45,8 @@ describe('editorDataRedisLocks presence', () => {
   });
 
   test('a joiner on a different replica sees the existing editor', async () => {
-    const replicaA = new editorDataRedisLocks.EditorData();
-    const replicaB = new editorDataRedisLocks.EditorData();
+    const replicaA = new editorDataRedis.EditorData();
+    const replicaB = new editorDataRedis.EditorData();
     await replicaA.connect();
     await replicaB.connect();
     const docId = 'doc-cross-replica';
@@ -75,7 +75,7 @@ describe('editorDataRedisLocks presence', () => {
   // atomic. Inspect both raw Redis structures directly instead, on a
   // separate connection from the one doing the writes.
   test('write and remove never leave the HASH and ZSET disagreeing, across many rounds', async () => {
-    const writer = new editorDataRedisLocks.EditorData();
+    const writer = new editorDataRedis.EditorData();
     const raw = new Redis({host, port});
     await writer.connect();
     const docId = 'doc-atomicity';
@@ -200,7 +200,7 @@ describe('editorDataRedisLocks presence', () => {
   // connect/retry machinery (flaky, and not what this test is about - it's
   // about the catch branch in getPresence, not connection timing).
   test('getPresence fails open (falls back to the memory backend) when Redis errors', async () => {
-    const instance = new editorDataRedisLocks.EditorData();
+    const instance = new editorDataRedis.EditorData();
     await instance.connect();
     const originalZrangebyscore = instance._redis.zrangebyscore.bind(instance._redis);
     instance._redis.zrangebyscore = async () => {
@@ -230,7 +230,7 @@ describe('editorDataRedisLocks presence', () => {
   // this drives that exact interleaving, not just the non-conflicting case.
   // updatePresence must refresh only if the HASH field still exists.
   test('a concurrent remove is not undone by a late updatePresence', async () => {
-    const instance = new editorDataRedisLocks.EditorData();
+    const instance = new editorDataRedis.EditorData();
     await instance.connect();
     const docId = 'doc-update-race';
     const connId = 'conn-racing';
@@ -254,7 +254,7 @@ describe('editorDataRedisLocks presence', () => {
   // A Redis error here must not throw uncaught - it would otherwise make a
   // Redis outage turn into documents being unopenable, not just un-synced.
   test('addPresence/removePresence/removePresenceDocument fail open on a Redis error', async () => {
-    const instance = new editorDataRedisLocks.EditorData();
+    const instance = new editorDataRedis.EditorData();
     await instance.connect();
     const docId = 'doc-write-failopen';
     const originalWrite = instance._redis.presenceWriteScript.bind(instance._redis);
@@ -306,7 +306,7 @@ describe('editorDataRedisLocks presence', () => {
   // still be legitimately connected. The "presence is genuinely empty"
   // cleanup is a separate call, gated on an empty getPresence result.
   test('cleanDocumentOnExit leaves presence untouched (a still-connected viewer keeps their entry)', async () => {
-    const instance = new editorDataRedisLocks.EditorData();
+    const instance = new editorDataRedis.EditorData();
     await instance.connect();
     const docId = 'doc-clean-exit-presence';
     const viewerConnId = 'conn-viewer';
@@ -328,7 +328,7 @@ describe('editorDataRedisLocks presence', () => {
   // its own - a failure there fell the whole call back to the memory
   // backend, wrongly implying the write never reached Redis at all.
   test('a sweep-tracking failure after a successful write does not fall addPresence back to the memory backend', async () => {
-    const instance = new editorDataRedisLocks.EditorData();
+    const instance = new editorDataRedis.EditorData();
     await instance.connect();
     const docId = 'doc-sweep-track-failure';
     const connId = 'conn-1';

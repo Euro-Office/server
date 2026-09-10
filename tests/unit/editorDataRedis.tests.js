@@ -8,12 +8,12 @@ const {buildKey} = require('../../DocService/sources/editorDataRedisKeys');
 
 // Runs against a real Redis via redis-memory-server (in-memory, no manual
 // container) so this is a true unit test, not an integration test needing infra.
-describe('editorDataRedisLocks', () => {
+describe('editorDataRedis', () => {
   let redisServer;
   let host;
   let port;
   let editorDataMemory;
-  let editorDataRedisLocks;
+  let editorDataRedis;
   const ctx = {tenant: 'default'};
 
   beforeAll(async () => {
@@ -35,7 +35,7 @@ describe('editorDataRedisLocks', () => {
     });
 
     editorDataMemory = require('../../DocService/sources/editorDataMemory');
-    editorDataRedisLocks = require('../../DocService/sources/editorDataRedisLocks');
+    editorDataRedis = require('../../DocService/sources/editorDataRedis');
   }, 30000);
 
   afterAll(async () => {
@@ -59,8 +59,8 @@ describe('editorDataRedisLocks', () => {
     });
 
     test('redis backend correctly serializes the same call pattern across two replica instances pointed at the same Redis', async () => {
-      const replicaA = new editorDataRedisLocks.EditorData();
-      const replicaB = new editorDataRedisLocks.EditorData();
+      const replicaA = new editorDataRedis.EditorData();
+      const replicaB = new editorDataRedis.EditorData();
       await replicaA.connect();
       await replicaB.connect();
       const docId = 'doc-redis-iface';
@@ -81,8 +81,8 @@ describe('editorDataRedisLocks', () => {
 
   describe('lock semantics', () => {
     test('same owner re-asserting before expiry refreshes the TTL (reentrant), a different owner is denied until genuine expiry', async () => {
-      const replicaA = new editorDataRedisLocks.EditorData();
-      const replicaB = new editorDataRedisLocks.EditorData();
+      const replicaA = new editorDataRedis.EditorData();
+      const replicaB = new editorDataRedis.EditorData();
       await replicaA.connect();
       await replicaB.connect();
       const docId = 'doc-reentrancy';
@@ -127,7 +127,7 @@ describe('editorDataRedisLocks', () => {
     }, 10000);
 
     test('key-collision avoidance via encodeURIComponent for (tenant, docId) pairs that collide when naively joined', async () => {
-      const replicaA = new editorDataRedisLocks.EditorData();
+      const replicaA = new editorDataRedis.EditorData();
       await replicaA.connect();
       const raw = new Redis({host, port});
 
@@ -155,7 +155,7 @@ describe('editorDataRedisLocks', () => {
     });
 
     test('unlockSave/unlockAuth/lockAuth outcomes', async () => {
-      const replica = new editorDataRedisLocks.EditorData();
+      const replica = new editorDataRedis.EditorData();
       await replica.connect();
       const docId = 'doc-unlock-coverage';
 
@@ -192,7 +192,7 @@ describe('editorDataRedisLocks', () => {
     // the underlying script call throw, rather than racing a real broken
     // connection against ioredis's async retry/timeout machinery.
     test('lockSave/lockAuth deny (not throw) and unlockSave reports LOCKED on a Redis error', async () => {
-      const replica = new editorDataRedisLocks.EditorData();
+      const replica = new editorDataRedis.EditorData();
       await replica.connect();
       const docId = 'doc-fail-closed';
 
@@ -223,7 +223,7 @@ describe('editorDataRedisLocks', () => {
     // failing closed quickly. Pin the value directly since nothing else here
     // would notice it silently regressing to unbounded.
     test('commandTimeout is set on the Redis connection', async () => {
-      const replica = new editorDataRedisLocks.EditorData();
+      const replica = new editorDataRedis.EditorData();
       await replica.connect();
       try {
         expect(replica._redis.options.commandTimeout).toBe(300);
@@ -237,7 +237,7 @@ describe('editorDataRedisLocks', () => {
     // client message, not just a theoretical input. Regression for
     // buildKey previously running outside lock()/unlock()'s try block.
     test('a malformed-unicode docId denies the lock rather than throwing', async () => {
-      const replica = new editorDataRedisLocks.EditorData();
+      const replica = new editorDataRedis.EditorData();
       await replica.connect();
       const malformedDocId = '\ud800'; // lone high surrogate, no matching low surrogate
 
@@ -257,7 +257,7 @@ describe('editorDataRedisLocks', () => {
     // removed early - safe to swallow. Regression for cleanup() previously
     // having no try/catch at all, unlike lock()/unlock() beside it.
     test('cleanDocumentOnExit does not throw when the lock-cleanup DEL fails', async () => {
-      const replica = new editorDataRedisLocks.EditorData();
+      const replica = new editorDataRedis.EditorData();
       await replica.connect();
       const docId = 'doc-cleanup-fail';
       const originalDel = replica._redis.del.bind(replica._redis);
@@ -278,7 +278,7 @@ describe('editorDataRedisLocks', () => {
     // true default, since nothing but real lock/presence traffic used to
     // touch _redis at all.
     test('isConnected()/healthCheck() become true after connect(), with no lock/presence traffic', async () => {
-      const replica = new editorDataRedisLocks.EditorData();
+      const replica = new editorDataRedis.EditorData();
       await replica.connect();
 
       try {

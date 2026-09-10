@@ -46,7 +46,12 @@
     "scripts": [
       "./sources/editorDataMemory.js",
       "./sources/editorDataRedis.js",
-      "./sources/editorDataRedisLocks.js",
+      "./sources/editorDataRedisClient.js",
+      "./sources/editorDataRedisKeys.js",
+      "./sources/editorDataRedisPresence.js",
+      "./sources/editorDataRedisReport.js",
+      "./sources/editorDataRedisSaveLock.js",
+      "./sources/editorDataRedisShardedSweep.js",
       "./sources/pubsubRabbitMQ.js",
       "../Common/sources/storage/storage-fs.js",
       "../Common/sources/storage/storage-s3.js",
