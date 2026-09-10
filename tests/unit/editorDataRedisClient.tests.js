@@ -4,7 +4,7 @@ const {createRedisClient} = require('../../DocService/sources/editorDataRedisCli
 
 // The image's entrypoint emits iooptions.sentinels unconditionally, listing
 // the plain Redis server as its own sentinel when none is configured. That
-// shape reaching `new Redis()` is what put a reporting deployment into
+// shape reaching `new Redis()` is what put a production deployment into
 // sentinel mode, where it never connected - and since the locks fail closed,
 // every save was refused with nothing in the log. These tests pin the
 // selection, not the connection: lazyConnect keeps every client offline.

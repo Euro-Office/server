@@ -40,10 +40,10 @@ describe('editorDataRedisKeys', () => {
         expect(new Set(perDoc).size).toBeGreaterThan(1);
       });
 
-      // The reporting deployment published the slots its cluster computed
-      // for the patched keys. Pinning one of them keeps our key format
-      // byte-identical to the build their measurements describe.
-      test('matches the key format measured on the reporting deployment (slot 14056)', () => {
+      // A production cluster deployment published the slots it computed for
+      // these keys while measuring this module. Pinning one keeps the key
+      // format byte-identical to the build those measurements describe.
+      test('matches the key format measured on a production cluster (slot 14056)', () => {
         expect(buildKey('ds:presence:', 'localhost', 'doc1')).toBe('ds:presence:{localhost:doc1}');
         expect(calculateSlot('ds:presence:{localhost:doc1}')).toBe(14056);
       });
