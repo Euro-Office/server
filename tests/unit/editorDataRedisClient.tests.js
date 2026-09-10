@@ -112,6 +112,34 @@ describe('editorDataRedisClient', () => {
     });
   });
 
+  describe('mode validation', () => {
+    // The whole module exists to make misconfiguration loud. A selector that
+    // guesses on a typo undoes that: the operator gets "connection refused"
+    // and goes looking at Redis instead of at their own config.
+    test('refuses an unrecognised mode rather than quietly going standalone', () => {
+      for (const mode of ['Sentinel', 'sentinal', 'CLUSTER', ' standalone']) {
+        expect(() => createRedisClient(standaloneCfg({mode}))).toThrow(/expected one of/);
+      }
+    });
+
+    test('accepts every documented mode', () => {
+      const cfgs = {
+        auto: standaloneCfg({mode: 'auto'}),
+        standalone: standaloneCfg({mode: 'standalone'}),
+        sentinel: standaloneCfg({mode: 'sentinel'})
+      };
+      for (const [mode, cfg] of Object.entries(cfgs)) {
+        const client = createRedisClient(cfg);
+        try {
+          expect(client).toBeInstanceOf(Redis);
+        } finally {
+          client.disconnect();
+        }
+        expect(mode).toBeTruthy();
+      }
+    });
+  });
+
   describe('cluster', () => {
     // The entrypoint writes optionsCluster.rootNodes from REDIS_CLUSTER_NODES
     // as {url}, with credentials on optionsCluster.defaults.
@@ -201,8 +229,56 @@ describe('editorDataRedisClient', () => {
       }
     });
 
+    // The config block ships two spellings of the node list. Reading only
+    // one means a deployment configured the other way boots happily and runs
+    // standalone against a single node - the healthy-looking, not-actually-
+    // sharing failure cluster support exists to prevent.
+    test('accepts the ioredis-flavoured iooptionsClusterNodes as well', () => {
+      const cfg = {
+        host: '127.0.0.1',
+        port: 6379,
+        iooptions: {lazyConnect: true},
+        iooptionsClusterNodes: [
+          {host: 'valkey-0', port: 6379},
+          {host: 'valkey-1', port: 6380}
+        ]
+      };
+      const client = createRedisClient(cfg);
+      try {
+        expect(client).toBeInstanceOf(Redis.Cluster);
+        expect(client.startupNodes).toEqual([
+          {host: 'valkey-0', port: 6379},
+          {host: 'valkey-1', port: 6380}
+        ]);
+      } finally {
+        client.disconnect();
+      }
+    });
+
+    test('accepts a host/port pair or a bare host:port string under rootNodes', () => {
+      const cfg = Object.assign({}, clusterCfg, {
+        optionsCluster: {rootNodes: [{host: 'valkey-0', port: 6379}, 'valkey-1:6380']}
+      });
+      const client = createRedisClient(cfg);
+      try {
+        expect(client.startupNodes).toEqual([
+          {host: 'valkey-0', port: 6379},
+          {host: 'valkey-1', port: 6380}
+        ]);
+      } finally {
+        client.disconnect();
+      }
+    });
+
+    test('names the offending entry instead of throwing Invalid URL', () => {
+      const cfg = Object.assign({}, clusterCfg, {optionsCluster: {rootNodes: [{nonsense: true}]}});
+      expect(() => createRedisClient(cfg)).toThrow(/neither a url nor a host\/port pair/);
+    });
+
     test('refuses mode "cluster" with no rootNodes rather than silently going standalone', () => {
-      expect(() => createRedisClient({host: '127.0.0.1', port: 6379, mode: 'cluster', iooptions: {lazyConnect: true}})).toThrow(/rootNodes is empty/);
+      expect(() => createRedisClient({host: '127.0.0.1', port: 6379, mode: 'cluster', iooptions: {lazyConnect: true}})).toThrow(
+        /rootNodes nor iooptionsClusterNodes is populated/
+      );
     });
   });
 });

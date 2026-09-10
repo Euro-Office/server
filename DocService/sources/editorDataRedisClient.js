@@ -40,9 +40,26 @@ const DEFAULT_COMMAND_TIMEOUT = 300;
 // unaffected.
 const FAIL_CLOSED_CONNECTION = {enableOfflineQueue: false};
 
-function clusterNodes(rootNodes) {
-  return rootNodes.map(node => {
-    const url = new URL(typeof node === 'string' ? node : node.url);
+// Cluster nodes arrive in two shapes. The orchestrated entrypoint writes
+// optionsCluster.rootNodes as {url}; the config block's sibling
+// iooptionsClusterNodes is the ioredis-flavoured {host, port}. Accept both,
+// and a bare "host:port" string, rather than throwing an opaque Invalid URL.
+function clusterNodes(nodes) {
+  return nodes.map(node => {
+    if (node && undefined !== node.host) {
+      return {host: node.host, port: Number(node.port) || 6379};
+    }
+    const raw = typeof node === 'string' ? node : node && node.url;
+    if (!raw) {
+      throw new Error(`services.CoAuthoring.redis cluster node is neither a url nor a host/port pair: ${JSON.stringify(node)}`);
+    }
+    const withScheme = raw.includes('://') ? raw : `redis://${raw}`;
+    let url;
+    try {
+      url = new URL(withScheme);
+    } catch {
+      throw new Error(`services.CoAuthoring.redis cluster node is not a usable address: ${raw}`);
+    }
     return {host: url.hostname, port: Number(url.port) || 6379};
   });
 }
@@ -64,18 +81,31 @@ function looksFabricated(redisCfg, sentinels) {
   return 1 === sentinels.length && sentinels[0].host === redisCfg.host && Number(sentinels[0].port) === Number(redisCfg.port);
 }
 
-// `mode`: 'auto' (default) picks cluster when optionsCluster.rootNodes is
-// populated, sentinel when a credible sentinel list is configured, and
-// standalone otherwise; 'standalone', 'sentinel' and 'cluster' force one.
+const MODES = ['auto', 'standalone', 'sentinel', 'cluster'];
+
+// `mode`: 'auto' (default) picks cluster when cluster nodes are configured,
+// sentinel when a credible sentinel list is, and standalone otherwise;
+// 'standalone', 'sentinel' and 'cluster' force one.
 function createRedisClient(redisCfg) {
   const options = Object.assign({commandTimeout: DEFAULT_COMMAND_TIMEOUT}, redisCfg.iooptions || {});
   const cluster = redisCfg.optionsCluster || {};
-  const rootNodes = cluster.rootNodes || [];
+  // Either spelling of the node list; the two are alternatives, not a merge.
+  const rootNodes = cluster.rootNodes && cluster.rootNodes.length ? cluster.rootNodes : redisCfg.iooptionsClusterNodes || [];
   const mode = redisCfg.mode || 'auto';
+
+  // A typo must not quietly become standalone. Everything this module does
+  // to make misconfiguration loud is wasted if the topology selector itself
+  // guesses, and "connection refused" sends an operator after Redis rather
+  // than after their own config.
+  if (!MODES.includes(mode)) {
+    throw new Error(`services.CoAuthoring.redis.mode is "${mode}"; expected one of ${MODES.join(', ')}`);
+  }
 
   if ('cluster' === mode || ('auto' === mode && rootNodes.length > 0)) {
     if (0 === rootNodes.length) {
-      throw new Error('editorDataStorage redis mode is "cluster" but services.CoAuthoring.redis.optionsCluster.rootNodes is empty');
+      throw new Error(
+        'editorDataStorage redis mode is "cluster" but neither services.CoAuthoring.redis.optionsCluster.rootNodes nor iooptionsClusterNodes is populated'
+      );
     }
     const redisOptions = withoutSentinelOptions(options);
     // A cluster has only db 0. SELECT 0 is accepted there, so carrying the
@@ -109,7 +139,7 @@ function createRedisClient(redisCfg) {
     // rejection, and so nothing for the failure reporter to report.
     return new Redis.Cluster(
       clusterNodes(rootNodes),
-      Object.assign({}, FAIL_CLOSED_CONNECTION, {
+      Object.assign({}, redisCfg.iooptionsClusterOptions || {}, FAIL_CLOSED_CONNECTION, {
         redisOptions,
         lazyConnect: !!options.lazyConnect
       })
