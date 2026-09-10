@@ -326,4 +326,66 @@ describe('editorDataRedis', () => {
       }
     }, 10000);
   });
+
+  // ROUTES declares what the hand-written delegates below it do, so these
+  // tests are what stops the two drifting: a method added to the interface
+  // upstream and never exposed here produces no error at all, just a backend
+  // that silently does not implement it.
+  describe('routing table', () => {
+    // Defined by hand because it has real behaviour, not delegation.
+    const EXPLICIT = ['cleanDocumentOnExit'];
+    const declared = () => [...Object.values(editorDataRedis.ROUTES).flat(), ...editorDataRedis.NOT_PORTED, ...EXPLICIT];
+    const interfaceArity = method => editorDataMemory.EditorData.prototype[method].length;
+
+    test('accounts for every method of the interface it replaces', () => {
+      const own = Object.getOwnPropertyNames(editorDataMemory.EditorData.prototype).filter(
+        name => name !== 'constructor' && typeof editorDataMemory.EditorData.prototype[name] === 'function'
+      );
+      expect(declared().sort()).toEqual(own.sort());
+    });
+
+    test('claims no method twice, and none that does not exist', () => {
+      const names = declared();
+      expect(names.length).toBe(new Set(names).size);
+      for (const name of names) {
+        expect(typeof editorDataMemory.EditorData.prototype[name]).toBe('function');
+      }
+    });
+
+    test('gives each implemented method the interface signature, and passes every argument on', async () => {
+      const instance = new editorDataRedis.EditorData();
+      try {
+        for (const [store, methods] of Object.entries(editorDataRedis.ROUTES)) {
+          for (const method of methods) {
+            // Arity, because a hand-written delegate can silently drop a
+            // trailing parameter - the one failure the generated form below
+            // cannot have, and the reason these are worth writing out.
+            expect(editorDataRedis.EditorData.prototype[method]).toHaveLength(interfaceArity(method));
+            const args = Array.from({length: interfaceArity(method)}, (_, i) => `arg${i}`);
+            const target = jest.spyOn(instance[store], method).mockReturnValue('routed');
+            expect(instance[method](...args)).toBe('routed');
+            expect(target).toHaveBeenCalledWith(...args);
+            target.mockRestore();
+          }
+        }
+      } finally {
+        await instance.close();
+      }
+    }, 10000);
+
+    test('passes the unported methods through to the memory backend untouched', async () => {
+      const instance = new editorDataRedis.EditorData();
+      try {
+        for (const method of editorDataRedis.NOT_PORTED) {
+          const args = Array.from({length: interfaceArity(method)}, (_, i) => `arg${i}`);
+          const target = jest.spyOn(instance._memory, method).mockReturnValue('memory');
+          expect(instance[method](...args)).toBe('memory');
+          expect(target).toHaveBeenCalledWith(...args);
+          target.mockRestore();
+        }
+      } finally {
+        await instance.close();
+      }
+    }, 10000);
+  });
 });

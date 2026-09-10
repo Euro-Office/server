@@ -118,6 +118,22 @@ EditorData.prototype.healthCheck = async function () {
   return false;
 };
 
+// Which store backs each implemented method. Declared as well as defined
+// below, because the two answer different questions: the definitions carry
+// the signatures a maintainer navigates to, this carries the shape a reviewer
+// wants at a glance. A test proves they agree.
+const ROUTES = {
+  _saveLock: ['lockSave', 'unlockSave', 'lockAuth', 'unlockAuth'],
+  _presence: [
+    'addPresence',
+    'updatePresence',
+    'removePresence',
+    'getPresence',
+    'getDocumentPresenceExpired',
+    'removePresenceDocument'
+  ]
+};
+
 EditorData.prototype.lockSave = function (ctx, docId, userId, ttl) {
   return this._saveLock.lockSave(ctx, docId, userId, ttl);
 };
@@ -150,7 +166,10 @@ EditorData.prototype.removePresenceDocument = function (ctx, docId) {
   return this._presence.removePresenceDocument(ctx, docId);
 };
 
-const DELEGATED_METHODS = [
+// Not ported: still per-replica, with every consequence that implies. A list
+// rather than seventeen bodies - `...args` cannot drop a parameter, which
+// hand-writing them can, and this shrinks visibly as groups land.
+const NOT_PORTED = [
   'addLocks',
   'addLocksNX',
   'removeLocks',
@@ -169,7 +188,7 @@ const DELEGATED_METHODS = [
   'addForceSaveTimerNX',
   'getForceSaveTimer'
 ];
-for (const method of DELEGATED_METHODS) {
+for (const method of NOT_PORTED) {
   EditorData.prototype[method] = function (...args) {
     return this._memory[method](...args);
   };
@@ -186,5 +205,8 @@ EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId) {
 module.exports = {
   EditorData,
   // Reused unchanged - editorStatStorage falls back to this module when unset.
-  EditorStat: editorDataMemory.EditorStat
+  EditorStat: editorDataMemory.EditorStat,
+  // Exported for the completeness tests, not for callers.
+  ROUTES,
+  NOT_PORTED
 };
