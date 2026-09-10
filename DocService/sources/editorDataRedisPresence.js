@@ -2,6 +2,7 @@
 
 const {buildKey} = require('./editorDataRedisKeys');
 const {createShardedSweep} = require('./editorDataRedisShardedSweep');
+const {createFailureReporter} = require('./editorDataRedisReport');
 
 // A HASH per document for connection info, a companion SORTED SET for
 // per-connection expiry, and a sharded sweep of documents with no live
@@ -50,6 +51,13 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
   redis.defineCommand('presenceRemoveScript', {numberOfKeys: 2, lua: REMOVE_SCRIPT});
   redis.defineCommand('presenceRefreshScript', {numberOfKeys: 2, lua: REFRESH_SCRIPT});
 
+  const report = createFailureReporter('editorDataRedisPresence');
+  // The doc-expiry sweep gets its own reporter. Sharing one made the throttle
+  // flap: a failing docExpSweep.track() inside a *successful* presence write
+  // logged a failure, then failOpen logged "recovered" on the way out, so a
+  // partial outage produced two lines per heartbeat instead of one per minute.
+  const sweepReport = createFailureReporter('editorDataRedisPresence.docExpSweep');
+
   const presencePrefix = `${prefix}presence:`;
   const presenceExpPrefix = `${prefix}presenceExp:`;
   const docExpSweep = createShardedSweep(redis, `${prefix}presenceDocExp:`, DOC_EXP_SHARDS, 'presenceDocExp');
@@ -62,18 +70,26 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     await redis.presenceWriteScript(hashKey, expKey, userId, userInfo, expiresAt, ttlSeconds * NATIVE_TTL_MULTIPLIER * 1000);
     try {
       await docExpSweep.track(ctx.tenant, docId, expiresAt);
-    } catch (_err) {
+      sweepReport.success(ctx);
+    } catch (err) {
       // The write landed; only sweep-tracking failed. Don't fall the whole
-      // call back to memory - the next heartbeat retries this.
+      // call back to memory - the next heartbeat retries this. Still worth
+      // reporting: if it never succeeds the document relies on its native
+      // TTL backstop alone, which nothing else would reveal.
+      sweepReport.failure(ctx, 'track', err);
     }
   }
 
   // Fail open: wrong presence is an acceptable degrade, an unopenable
   // document is not.
-  async function failOpen(fn, fallback) {
+  async function failOpen(ctx, operation, fn, fallback, opt_report) {
+    const reporter = opt_report || report;
     try {
-      return await fn();
-    } catch (_err) {
+      const res = await fn();
+      reporter.success(ctx);
+      return res;
+    } catch (err) {
+      reporter.failure(ctx, operation, err);
       return fallback();
     }
   }
@@ -83,6 +99,8 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     // codebase (see utils.getIndexFromUserId), so it works as the member.
     async addPresence(ctx, docId, userId, userInfo) {
       return failOpen(
+        ctx,
+        'addPresence',
         () => writeAndTrack(ctx, docId, userId, userInfo),
         () => memoryFallback.addPresence(ctx, docId, userId, userInfo)
       );
@@ -93,6 +111,8 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
     // blob itself, so a caller whose entry expired has to re-add it.
     async updatePresence(ctx, docId, userId) {
       return failOpen(
+        ctx,
+        'updatePresence',
         async () => {
           const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
           const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
@@ -103,8 +123,10 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
           }
           try {
             await docExpSweep.track(ctx.tenant, docId, expiresAt);
-          } catch (_err) {
+            sweepReport.success(ctx);
+          } catch (err) {
             // As in writeAndTrack.
+            sweepReport.failure(ctx, 'track', err);
           }
           return true;
         },
@@ -114,6 +136,8 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
 
     async removePresence(ctx, docId, userId) {
       return failOpen(
+        ctx,
+        'removePresence',
         async () => {
           const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
           const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
@@ -125,6 +149,8 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
 
     async getPresence(ctx, docId, connections) {
       return failOpen(
+        ctx,
+        'getPresence',
         async () => {
           const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);
           const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
@@ -149,13 +175,18 @@ function createPresenceStore(redis, prefix, ttlSeconds, memoryFallback) {
 
     async getDocumentPresenceExpired(now) {
       return failOpen(
+        null,
+        'claimExpired',
         () => docExpSweep.claimExpired(now),
-        () => memoryFallback.getDocumentPresenceExpired(now)
+        () => memoryFallback.getDocumentPresenceExpired(now),
+        sweepReport
       );
     },
 
     async removePresenceDocument(ctx, docId) {
       return failOpen(
+        ctx,
+        'removePresenceDocument',
         async () => {
           const hashKey = buildKey(presencePrefix, ctx.tenant, docId);
           const expKey = buildKey(presenceExpPrefix, ctx.tenant, docId);

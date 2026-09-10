@@ -4,6 +4,7 @@ const path = require('path');
 // explicit-path convention tests/integration uses for Common-only packages.
 const {RedisMemoryServer} = require('../../DocService/node_modules/redis-memory-server');
 const Redis = require('../../DocService/node_modules/ioredis');
+const {buildKey} = require('../../DocService/sources/editorDataRedisKeys');
 
 // A joiner on a DIFFERENT replica correctly seeing an existing editor is the
 // thing editorDataMemory structurally cannot do - each replica's own
@@ -78,8 +79,8 @@ describe('editorDataRedisLocks presence', () => {
     const raw = new Redis({host, port});
     await writer.connect();
     const docId = 'doc-atomicity';
-    const hashKey = `presence-test:presence:${encodeURIComponent(ctx.tenant)}:${encodeURIComponent(docId)}`;
-    const expKey = `presence-test:presenceExp:${encodeURIComponent(ctx.tenant)}:${encodeURIComponent(docId)}`;
+    const hashKey = buildKey('presence-test:presence:', ctx.tenant, docId);
+    const expKey = buildKey('presence-test:presenceExp:', ctx.tenant, docId);
     const ROUNDS = 30;
 
     try {
@@ -350,7 +351,7 @@ describe('editorDataRedisLocks presence', () => {
       // getPresence - getPresence would itself fail open if this were
       // broken in a different way, which would mask the real assertion.
       const raw = new Redis({host, port});
-      const hashKey = `presence-test:presence:${encodeURIComponent(ctx.tenant)}:${encodeURIComponent(docId)}`;
+      const hashKey = buildKey('presence-test:presence:', ctx.tenant, docId);
       const stored = await raw.hget(hashKey, connId);
       await raw.quit();
       expect(stored).toBe(userInfo);

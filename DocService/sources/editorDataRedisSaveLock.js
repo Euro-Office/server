@@ -1,6 +1,7 @@
 'use strict';
 
 const {buildKey} = require('./editorDataRedisKeys');
+const {createFailureReporter} = require('./editorDataRedisReport');
 
 // Owner-token locks, not fencing tokens - see REDIS_EDITORDATA.md.
 
@@ -39,6 +40,8 @@ function createSaveLockStore(redis, prefix) {
   redis.defineCommand('saveLockScript', {numberOfKeys: 1, lua: LOCK_SCRIPT});
   redis.defineCommand('saveUnlockScript', {numberOfKeys: 1, lua: UNLOCK_SCRIPT});
 
+  const report = createFailureReporter('editorDataRedisSaveLock');
+
   const lockSavePrefix = `${prefix}lockSave:`;
   const lockAuthPrefix = `${prefix}lockAuth:`;
 
@@ -49,8 +52,10 @@ function createSaveLockStore(redis, prefix) {
     try {
       const key = buildKey(keyPrefix, ctx.tenant, docId);
       const res = await redis.saveLockScript(key, userId, ttlToMs(ttl));
+      report.success(ctx);
       return res === 1;
-    } catch (_err) {
+    } catch (err) {
+      report.failure(ctx, 'lock', err);
       return false;
     }
   }
@@ -60,10 +65,12 @@ function createSaveLockStore(redis, prefix) {
     try {
       const key = buildKey(keyPrefix, ctx.tenant, docId);
       const [code] = await redis.saveUnlockScript(key, userId);
+      report.success(ctx);
       if (code === 1) return UNLOCK_RES.UNLOCKED;
       if (code === 0) return UNLOCK_RES.LOCKED;
       return UNLOCK_RES.EMPTY;
-    } catch (_err) {
+    } catch (err) {
+      report.failure(ctx, 'unlock', err);
       return UNLOCK_RES.LOCKED;
     }
   }
@@ -79,8 +86,9 @@ function createSaveLockStore(redis, prefix) {
       // cleanup (e.g. unlockWopiDoc) on a transient blip.
       try {
         await redis.del(buildKey(lockSavePrefix, ctx.tenant, docId), buildKey(lockAuthPrefix, ctx.tenant, docId));
-      } catch (_err) {
-        /* see above */
+        report.success(ctx);
+      } catch (err) {
+        report.failure(ctx, 'cleanup', err);
       }
     }
   };
