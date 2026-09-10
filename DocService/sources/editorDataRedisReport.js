@@ -2,17 +2,11 @@
 
 const operationContext = require('./../../Common/sources/operationContext');
 
-// Reports Redis failures without drowning the log in them.
-//
-// Both stores swallow their Redis errors by design - locks fail closed,
-// presence fails open - which left a total save outage looking like a
-// healthy deployment with an empty log. But a broken deployment fails on
-// *every* operation, hundreds a minute, so an unconditional error per catch
-// is just a different way of hiding the signal.
-//
-// So: log the transition into failure at error level (that is the line worth
-// alerting on), stay quiet while it persists apart from a periodic
-// reminder carrying the suppressed count, and log the recovery.
+// Reports Redis failures without drowning the log in them. Both stores
+// swallow their errors by design, which left an outage looking healthy; but
+// a broken deployment fails on every operation, so an error per catch hides
+// the signal just as well. Log the transition, then a periodic reminder
+// carrying the suppressed count, then the recovery.
 
 const REPEAT_INTERVAL_MS = 60000;
 

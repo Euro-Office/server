@@ -8,25 +8,11 @@ const {createFailureReporter} = require('./editorDataRedisReport');
 // per-connection expiry, and a sharded sweep of documents with no live
 // presence left (feeds gc.js). See REDIS_EDITORDATA.md.
 
-// One script so a reader can't see the HASH and ZSET disagree. The PEXPIREs
-// are a backstop: docExpSweep.track() is a separate round trip that can fail
-// after this lands, and nothing else would ever delete these keys.
-// Prunes stale members. getPresence filters expired members out of the
-// read, so nothing else ever removes them: a document that always has at
-// least one heartbeating connection is never swept, and every ungraceful
-// disconnect leaves a member behind for good. userId is per-connection, so
-// a user reconnecting on a flaky link strands a new entry each time.
-//
-// Bounded: an unbounded unpack hits Lua's C-stack ceiling.
-//
-// Runs last in both scripts, after the caller's own score has been pushed
-// into the future: pruning first could HDEL the caller's field while the
-// ZADD puts its member back, leaving a member with no hash entry behind it.
-//
-// The cutoff is the writing replica's clock. A replica more than
-// expire.presence ahead of its peers therefore prunes their live members;
-// they are re-added on the next heartbeat, and readers already filtered
-// those members out, so the visible window is unchanged.
+// Nothing else removes an expired member: reads filter them out, and the
+// document sweep never fires while one connection still heartbeats.
+// Batched because an unbounded unpack hits Lua's C-stack ceiling. Must run
+// last in both scripts - pruning before the write lets a refresh HDEL its
+// own field and then ZADD the member back. See REDIS_EDITORDATA.md.
 const PRUNE_BATCH_SIZE = 100;
 
 function pruneStale(nowArg) {
@@ -39,6 +25,9 @@ end
 `;
 }
 
+// One script so a reader can't see the HASH and ZSET disagree. The PEXPIREs
+// are a backstop: docExpSweep.track() is a separate round trip that can fail
+// after this lands, and nothing else would ever delete these keys.
 const WRITE_SCRIPT = `
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('ZADD', KEYS[2], ARGV[3], ARGV[1])
