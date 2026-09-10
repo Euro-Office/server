@@ -1,4 +1,4 @@
-const {describe, test, expect, beforeAll, afterAll} = require('@jest/globals');
+const {describe, test, expect, beforeAll, afterAll, jest} = require('@jest/globals');
 const path = require('path');
 // Only installed under DocService/node_modules, not at this level - same
 // explicit-path convention tests/integration uses for Common-only packages.
@@ -293,6 +293,36 @@ describe('editorDataRedis', () => {
         await expect(replica.healthCheck()).resolves.toBe(true);
       } finally {
         await replica.close();
+      }
+    }, 10000);
+  });
+
+  // ioredis emits connection failures as 'error' events, not as command
+  // rejections, so they never reach the stores' catch blocks. With no
+  // listener it prints "[ioredis] Unhandled error event" and a stack to
+  // stderr once per retry - unthrottled, and outside the logger.
+  describe('connection errors', () => {
+    test('are listened for, so ioredis does not print them itself', async () => {
+      const instance = new editorDataRedis.EditorData();
+      try {
+        expect(instance._redis.listenerCount('error')).toBeGreaterThan(0);
+      } finally {
+        await instance.close();
+      }
+    }, 10000);
+
+    test('are throttled like command failures rather than logged per retry', async () => {
+      const operationContext = require('../../Common/sources/operationContext');
+      const spy = jest.spyOn(operationContext.global.logger, 'error').mockImplementation(() => {});
+      const instance = new editorDataRedis.EditorData();
+      try {
+        for (let i = 0; i < 40; i++) {
+          instance._redis.emit('error', new Error('ECONNREFUSED'));
+        }
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        spy.mockRestore();
+        await instance.close();
       }
     }, 10000);
   });

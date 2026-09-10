@@ -4,6 +4,7 @@ const {createRedisClient} = require('./editorDataRedisClient');
 const editorDataMemory = require('./editorDataMemory');
 const {createSaveLockStore} = require('./editorDataRedisSaveLock');
 const {createPresenceStore} = require('./editorDataRedisPresence');
+const {createFailureReporter} = require('./editorDataRedisReport');
 
 // Composition root for the Redis-backed save/auth locks and presence: owns
 // the connection and the memory-backend delegate, wires the two stores
@@ -20,6 +21,15 @@ function EditorData() {
   // ioredis overrides live under `iooptions`; the sibling `options` block is
   // the legacy node-redis one and does nothing here.
   this._redis = createRedisClient(redisCfg);
+
+  // Connection errors never reach the stores' catch blocks - ioredis emits
+  // them as 'error' events - and with no listener it prints
+  // "[ioredis] Unhandled error event" plus a stack straight to stderr, once
+  // per retry, for the length of an outage. That bypasses both the logger
+  // and the throttle the stores use. Route them through the same reporter.
+  this._connectionReport = createFailureReporter('editorDataRedis.connection');
+  this._redis.on('error', err => this._connectionReport.failure(null, 'connection', err));
+  this._redis.on('ready', () => this._connectionReport.success(null));
 
   this._saveLock = createSaveLockStore(this._redis, prefix);
   this._presence = createPresenceStore(this._redis, prefix, config.get('services.CoAuthoring.expire.presence'), this._memory);
@@ -41,15 +51,43 @@ EditorData.prototype.connect = async function () {
   // freshly started replica. Bounded and swallowed, because Redis being
   // down at startup must not stop the process booting - it must fail
   // closed, which it does.
-  if (this._redis.status === 'wait') {
-    let timer;
-    await Promise.race([
-      this._redis.connect().catch(() => {}),
-      new Promise(resolve => {
-        timer = setTimeout(resolve, CONNECT_TIMEOUT_MS);
-      })
-    ]);
+  if (this._redis.status === 'ready') {
+    return;
+  }
+
+  // "not ready", not "at wait": with lazyConnect off the constructor has
+  // already started connecting, and returning here would hand back a client
+  // whose first commands are still rejected.
+  let timer;
+  let onReady;
+  const ready = new Promise(resolve => {
+    onReady = resolve;
+    this._redis.once('ready', onReady);
+  });
+  try {
+    if (this._redis.status === 'wait') {
+      // connect() rejects unless the client is parked; it also rejects on the
+      // first failed attempt, so a refused connection returns straight away
+      // and the timer only covers a connect that hangs.
+      ready.catch(() => {});
+      await Promise.race([
+        this._redis.connect().catch(() => {}),
+        ready,
+        new Promise(resolve => {
+          timer = setTimeout(resolve, CONNECT_TIMEOUT_MS);
+        })
+      ]);
+    } else {
+      await Promise.race([
+        ready,
+        new Promise(resolve => {
+          timer = setTimeout(resolve, CONNECT_TIMEOUT_MS);
+        })
+      ]);
+    }
+  } finally {
     clearTimeout(timer);
+    this._redis.removeListener('ready', onReady);
   }
 };
 EditorData.prototype.isConnected = function () {
