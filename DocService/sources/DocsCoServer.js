@@ -645,6 +645,21 @@ function* updateEditUsers(ctx, licenseInfo, userId, anonym, isLiveViewer) {
     yield editorStat.addPresenceUniqueUsersOfMonth(ctx, userId, period, {anonym, firstOpenDate: now.toISOString()});
   }
 }
+// The presence store fails open to a replica-local read when Redis is
+// unreachable, so "nobody is here" may only mean "nobody is here on this
+// replica". Every reader that would act on an absence has to check first.
+// Note the marker is a property on the returned array: deriving a new array
+// from it (filter/map/slice/spread) drops the marker silently.
+// opt_level is 'debug' for readers called on every document operation, so a
+// sustained outage doesn't bury the warnings from the sites that actually
+// decide something.
+function isPresenceUnreliable(ctx, hvals, caller, opt_level) {
+  if (!hvals?.presenceUnknown) {
+    return false;
+  }
+  ctx.logger[opt_level || 'warn']('%s: presence read is replica-local, treating the result as incomplete', caller);
+  return true;
+}
 function* getEditorsCount(ctx, docId, opt_hvals) {
   let elem,
     editorsCount = 0;
@@ -654,8 +669,7 @@ function* getEditorsCount(ctx, docId, opt_hvals) {
   } else {
     hvals = yield editorData.getPresence(ctx, docId, connections);
   }
-  if (hvals.presenceUnknown) {
-    // Presence store couldn't reach Redis, so this is a replica-local guess.
+  if (isPresenceUnreliable(ctx, hvals, 'getEditorsCount')) {
     // Report editors present rather than let callers release locks on it.
     return 1;
   }
@@ -675,6 +689,10 @@ function* hasEditors(ctx, docId, opt_hvals) {
 function* isUserReconnect(ctx, docId, userId, connectionId) {
   let elem;
   const hvals = yield editorData.getPresence(ctx, docId, connections);
+  // Deliberately unguarded: claiming a reconnect would strand the departing
+  // user's block locks until TTL and suppress the participants update, while
+  // claiming none is caught downstream by hasEditors().
+  isPresenceUnreliable(ctx, hvals, 'isUserReconnect', 'debug');
   for (let i = 0; i < hvals.length; ++i) {
     elem = JSON.parse(hvals[i]);
     if (userId === elem.id && connectionId !== elem.connectionId) {
@@ -688,14 +706,22 @@ let pubsubOnMessage = null; //todo move function
 async function publish(ctx, data, optDocId, optUserId, opt_pubsub) {
   let needPublish = true;
   let hvals;
+  let presenceUnreliable = false;
   if (optDocId && optUserId) {
     needPublish = false;
     hvals = await editorData.getPresence(ctx, optDocId, connections);
-    for (let i = 0; i < hvals.length; ++i) {
-      const elem = JSON.parse(hvals[i]);
-      if (optUserId != elem.id) {
-        needPublish = true;
-        break;
+    presenceUnreliable = isPresenceUnreliable(ctx, hvals, 'publish', 'debug');
+    if (presenceUnreliable) {
+      // A replica-local read can't see recipients on the other replicas, so
+      // "only the sender is here" is not a conclusion we can draw.
+      needPublish = true;
+    } else {
+      for (let i = 0; i < hvals.length; ++i) {
+        const elem = JSON.parse(hvals[i]);
+        if (optUserId != elem.id) {
+          needPublish = true;
+          break;
+        }
       }
     }
   }
@@ -703,7 +729,9 @@ async function publish(ctx, data, optDocId, optUserId, opt_pubsub) {
     const msg = JSON.stringify(data);
     const realPubsub = opt_pubsub ? opt_pubsub : pubsub;
     //don't use pubsub if all connections are local
-    if (pubsubOnMessage && hvals && hvals.length === getLocalConnectionCount(ctx, optDocId)) {
+    // An unreliable read *is* the local connection set, so the counts match
+    // trivially and the shortcut would strand the message on this replica.
+    if (!presenceUnreliable && pubsubOnMessage && hvals && hvals.length === getLocalConnectionCount(ctx, optDocId)) {
       ctx.logger.debug('pubsub locally');
       //todo send connections from getLocalConnectionCount to pubsubOnMessage
       pubsubOnMessage(msg);
@@ -733,6 +761,9 @@ async function getOriginalParticipantsId(ctx, docId) {
   const result = [],
     tmpObject = {};
   const hvals = await editorData.getPresence(ctx, docId, connections);
+  // Nothing to substitute - participants can't be invented - so the caller
+  // gets a short list and the log says why.
+  isPresenceUnreliable(ctx, hvals, 'getOriginalParticipantsId', 'debug');
   for (let i = 0; i < hvals.length; ++i) {
     const elem = JSON.parse(hvals[i]);
     if (!elem.view && !elem.isCloseCoAuthoring) {
@@ -1049,9 +1080,19 @@ async function startForceSave(
   let hasEncrypted = false;
   if (!shutdownFlag) {
     const hvals = await editorData.getPresence(ctx, docId, connections);
-    hasEncrypted = hvals.some(currentValue => {
-      return !!JSON.parse(currentValue).encrypted;
-    });
+    if (isPresenceUnreliable(ctx, hvals, 'startForceSave')) {
+      // An encrypted editor on another replica is invisible to a replica-local
+      // read, and force-saving a document we can't decrypt writes a corrupt
+      // file. Refuse, and report it: the Button and Form paths return this code
+      // to the client, so the user can save a copy rather than be told a save
+      // happened that didn't.
+      hasEncrypted = true;
+      res.code = commonDefines.c_oAscServerCommandErrors.UnknownError;
+    } else {
+      hasEncrypted = hvals.some(currentValue => {
+        return !!JSON.parse(currentValue).encrypted;
+      });
+    }
     if (!hasEncrypted) {
       let baseUrl = opt_baseUrl || '';
       if (opt_conn) {
@@ -1707,6 +1748,8 @@ const getParticipantMap = co.wrap(function* (ctx, docId, opt_hvals) {
   } else {
     hvals = yield editorData.getPresence(ctx, docId, connections);
   }
+  // As with getOriginalParticipantsId: a short list is the only honest answer.
+  isPresenceUnreliable(ctx, hvals, 'getParticipantMap', 'debug');
   for (let i = 0; i < hvals.length; ++i) {
     const elem = JSON.parse(hvals[i]);
     if (!elem.isCloseCoAuthoring) {
@@ -2093,7 +2136,9 @@ exports.install = function (server, app, callbackFunction) {
         yield removePresence(ctx, conn);
         hvals = yield editorData.getPresence(ctx, docId, connections);
         participantsTimestamp = Date.now();
-        if (hvals.length <= 0) {
+        // A false zero would delete the keys of a document still open on
+        // another replica. Leave them; the native TTL reaps them anyway.
+        if (hvals.length <= 0 && !isPresenceUnreliable(ctx, hvals, 'closeDocument')) {
           yield editorData.removePresenceDocument(ctx, docId);
         }
       }
@@ -2197,7 +2242,8 @@ exports.install = function (server, app, callbackFunction) {
           );
         }
       } else {
-        if (preStopFlag && hvals?.length <= 0 && editorStatProxy?.deleteKey) {
+        // Viewer disconnect: same false-zero risk as the editor path above.
+        if (preStopFlag && hvals?.length <= 0 && !isPresenceUnreliable(ctx, hvals, 'closeDocument preStop') && editorStatProxy?.deleteKey) {
           yield editorStatProxy.deleteKey(docId);
         }
       }
