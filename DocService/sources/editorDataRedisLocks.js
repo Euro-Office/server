@@ -1,6 +1,6 @@
 'use strict';
 const config = require('config');
-const Redis = require('ioredis');
+const {createRedisClient} = require('./editorDataRedisClient');
 const editorDataMemory = require('./editorDataMemory');
 const {createSaveLockStore} = require('./editorDataRedisSaveLock');
 const {createPresenceStore} = require('./editorDataRedisPresence');
@@ -16,17 +16,10 @@ function EditorData() {
   const redisCfg = config.get('services.CoAuthoring.redis');
   const prefix = redisCfg.prefix || 'ds:';
 
-  this._redis = new Redis({
-    host: redisCfg.host,
-    port: redisCfg.port,
-    // Failing closed needs calls to fail *promptly*; ioredis defaults to no
-    // timeout at all, so a stalled connection would hang save/auth for every
-    // user on the document. Overridable via `iooptions.commandTimeout`.
-    commandTimeout: 300,
-    // ioredis overrides live under `iooptions`; the sibling `options` block
-    // is the legacy node-redis one and does nothing here.
-    ...(redisCfg.iooptions || {})
-  });
+  // Standalone, sentinel or cluster, per services.CoAuthoring.redis.mode.
+  // ioredis overrides live under `iooptions`; the sibling `options` block is
+  // the legacy node-redis one and does nothing here.
+  this._redis = createRedisClient(redisCfg);
 
   this._saveLock = createSaveLockStore(this._redis, prefix);
   this._presence = createPresenceStore(this._redis, prefix, config.get('services.CoAuthoring.expire.presence'), this._memory);
