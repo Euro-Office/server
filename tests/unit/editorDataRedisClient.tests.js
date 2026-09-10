@@ -122,20 +122,68 @@ describe('editorDataRedisClient', () => {
       }
     });
 
-    test('accepts every documented mode', () => {
-      const cfgs = {
-        auto: standaloneCfg({mode: 'auto'}),
-        standalone: standaloneCfg({mode: 'standalone'}),
-        sentinel: standaloneCfg({mode: 'sentinel'})
-      };
-      for (const [mode, cfg] of Object.entries(cfgs)) {
-        const client = createRedisClient(cfg);
+    test('accepts every documented mode, and selects what each names', () => {
+      const expected = [
+        ['auto', false],
+        ['standalone', false],
+        ['sentinel', true]
+      ];
+      for (const [mode, wantsSentinel] of expected) {
+        const client = createRedisClient(standaloneCfg({mode}));
         try {
           expect(client).toBeInstanceOf(Redis);
+          expect(client).not.toBeInstanceOf(Redis.Cluster);
+          expect((client.options.sentinels || []).length > 0).toBe(wantsSentinel);
         } finally {
           client.disconnect();
         }
-        expect(mode).toBeTruthy();
+      }
+    });
+  });
+
+  // The fail-closed guarantee has to survive an operator pasting an ioredis
+  // tuning snippet into iooptions. Re-enabling the offline queue reinstates
+  // the timed-out-lock replay silently, so it is applied last everywhere.
+  describe('the offline queue cannot be re-enabled', () => {
+    const withQueue = {lazyConnect: true, enableOfflineQueue: true};
+
+    test('standalone', () => {
+      const client = createRedisClient({host: '127.0.0.1', port: 6379, iooptions: withQueue});
+      try {
+        expect(client.options.enableOfflineQueue).toBe(false);
+      } finally {
+        client.disconnect();
+      }
+    });
+
+    test('sentinel', () => {
+      const cfg = {
+        host: '127.0.0.1',
+        port: 6379,
+        mode: 'sentinel',
+        iooptions: Object.assign({}, withQueue, {sentinels: [{host: 'sentinel-a', port: 26379}], name: 'mymaster'})
+      };
+      const client = createRedisClient(cfg);
+      try {
+        expect(client.options.enableOfflineQueue).toBe(false);
+      } finally {
+        client.disconnect();
+      }
+    });
+
+    test('cluster, including via iooptionsClusterOptions', () => {
+      const cfg = {
+        host: '127.0.0.1',
+        port: 6379,
+        iooptions: withQueue,
+        optionsCluster: {rootNodes: ['valkey-0:6379']},
+        iooptionsClusterOptions: {enableOfflineQueue: true}
+      };
+      const client = createRedisClient(cfg);
+      try {
+        expect(client.options.enableOfflineQueue).toBe(false);
+      } finally {
+        client.disconnect();
       }
     });
   });

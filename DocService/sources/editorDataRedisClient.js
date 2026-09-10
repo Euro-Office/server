@@ -38,6 +38,10 @@ const DEFAULT_COMMAND_TIMEOUT = 300;
 // rather than held. That is the fail-closed behaviour we want, and
 // EditorData.connect() is called at boot, so steady-state traffic is
 // unaffected.
+//
+// Applied *after* the operator's options in every branch, deliberately: an
+// ioredis tuning snippet pasted into `iooptions` with enableOfflineQueue
+// true would otherwise reinstate the replay silently.
 const FAIL_CLOSED_CONNECTION = {enableOfflineQueue: false};
 
 // Cluster nodes arrive in two shapes. The orchestrated entrypoint writes
@@ -151,14 +155,14 @@ function createRedisClient(redisCfg) {
     if (0 === sentinels.length) {
       throw new Error('editorDataStorage redis mode is "sentinel" but services.CoAuthoring.redis.iooptions.sentinels is empty');
     }
-    return new Redis(Object.assign({}, FAIL_CLOSED_CONNECTION, options));
+    return new Redis(Object.assign({}, options, FAIL_CLOSED_CONNECTION));
   }
 
   if ('auto' === mode && sentinels.length > 0 && !looksFabricated(redisCfg, sentinels)) {
-    return new Redis(Object.assign({}, FAIL_CLOSED_CONNECTION, options));
+    return new Redis(Object.assign({}, options, FAIL_CLOSED_CONNECTION));
   }
 
-  return new Redis(Object.assign({}, FAIL_CLOSED_CONNECTION, {host: redisCfg.host, port: redisCfg.port}, withoutSentinelOptions(options)));
+  return new Redis(Object.assign({host: redisCfg.host, port: redisCfg.port}, withoutSentinelOptions(options), FAIL_CLOSED_CONNECTION));
 }
 
 module.exports = {createRedisClient};
