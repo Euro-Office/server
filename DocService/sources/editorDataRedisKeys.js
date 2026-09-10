@@ -2,9 +2,14 @@
 
 // encodeURIComponent so a ':' inside tenant or docId can't be mistaken for
 // the separator.
-
+//
+// The braces are a Redis Cluster hash tag: only what is between them is
+// hashed, so every key of one document - save lock, auth lock, presence
+// hash, presence expiry set - lands on the same slot. Without it the
+// two-key presence scripts and the two-key DELs in cleanup() and
+// removePresenceDocument() are CROSSSLOT and fail on a cluster.
 function buildKey(prefix, tenant, docId) {
-  return `${prefix}${encodeURIComponent(tenant)}:${encodeURIComponent(docId)}`;
+  return `${prefix}{${encodeURIComponent(tenant)}:${encodeURIComponent(docId)}}`;
 }
 
 function encodePair(tenant, docId) {

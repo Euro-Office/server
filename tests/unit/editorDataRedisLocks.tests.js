@@ -4,6 +4,7 @@ const path = require('path');
 // explicit-path convention tests/integration uses for Common-only packages.
 const {RedisMemoryServer} = require('../../DocService/node_modules/redis-memory-server');
 const Redis = require('../../DocService/node_modules/ioredis');
+const {buildKey} = require('../../DocService/sources/editorDataRedisKeys');
 
 // Runs against a real Redis via redis-memory-server (in-memory, no manual
 // container) so this is a true unit test, not an integration test needing infra.
@@ -95,7 +96,7 @@ describe('editorDataRedisLocks', () => {
         const first = await replicaA.lockSave(ctx, docId, 'uid-1', ttlSeconds);
         expect(first).toBe(true);
 
-        const key = `locks-test:lockSave:${encodeURIComponent(ctx.tenant)}:${encodeURIComponent(docId)}`;
+        const key = buildKey('locks-test:lockSave:', ctx.tenant, docId);
         await new Promise(resolve => setTimeout(resolve, 500)); // let some of the TTL elapse first
         const ttlBeforeReassert = await raw.pttl(key);
 
@@ -135,18 +136,19 @@ describe('editorDataRedisLocks', () => {
         await replicaA.lockSave({tenant: 'a:b'}, 'c', 'owner-A', 5);
         await replicaA.lockSave({tenant: 'a'}, 'b:c', 'owner-B', 5);
 
-        const keys = await raw.keys('locks-test:lockSave:a*');
+        const keys = await raw.keys('locks-test:lockSave:{a*');
         expect(keys.length).toBe(2);
 
         const decoded = keys.map(k => {
-          const rest = k.replace('locks-test:lockSave:', '');
+          // Strip the prefix and the cluster hash-tag braces buildKey adds.
+          const rest = k.replace('locks-test:lockSave:{', '').replace(/}$/, '');
           const [encTenant, encDocId] = rest.split(':', 2);
           return {tenant: decodeURIComponent(encTenant), docId: decodeURIComponent(encDocId)};
         });
         expect(decoded).toContainEqual({tenant: 'a:b', docId: 'c'});
         expect(decoded).toContainEqual({tenant: 'a', docId: 'b:c'});
       } finally {
-        await raw.del('locks-test:lockSave:a%3Ab:c', 'locks-test:lockSave:a:b%3Ac');
+        await raw.del(buildKey('locks-test:lockSave:', 'a:b', 'c'), buildKey('locks-test:lockSave:', 'a', 'b:c'));
         await raw.quit();
         await replicaA.close();
       }
