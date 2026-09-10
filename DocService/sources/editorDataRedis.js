@@ -1,5 +1,6 @@
 'use strict';
 const config = require('config');
+const Redis = require('ioredis');
 const {createRedisClient} = require('./editorDataRedisClient');
 const editorDataMemory = require('./editorDataMemory');
 const {createSaveLockStore} = require('./editorDataRedisSaveLock');
@@ -30,6 +31,13 @@ function EditorData() {
   this._connectionReport = createFailureReporter('editorDataRedis.connection');
   this._redis.on('error', err => this._connectionReport.failure(null, 'connection', err));
   this._redis.on('ready', () => this._connectionReport.success(null));
+  // A cluster raises 'error' only when every node has failed; a single
+  // unreachable master arrives as 'node error'. Without this, the topology
+  // where one node is down - fail-closed for every document on its slots -
+  // produces no line naming the cause at all.
+  if (this._redis instanceof Redis.Cluster) {
+    this._redis.on('node error', err => this._connectionReport.failure(null, 'node connection', err));
+  }
 
   this._saveLock = createSaveLockStore(this._redis, prefix);
   this._presence = createPresenceStore(this._redis, prefix, config.get('services.CoAuthoring.expire.presence'), this._memory);
@@ -51,7 +59,9 @@ EditorData.prototype.connect = async function () {
   // freshly started replica. Bounded and swallowed, because Redis being
   // down at startup must not stop the process booting - it must fail
   // closed, which it does.
-  if (this._redis.status === 'ready') {
+  // 'end' is a closed client: no 'ready' is coming, so waiting for one just
+  // burns the timeout.
+  if (this._redis.status === 'ready' || this._redis.status === 'end') {
     return;
   }
 
@@ -65,26 +75,19 @@ EditorData.prototype.connect = async function () {
     this._redis.once('ready', onReady);
   });
   try {
+    // connect() rejects unless the client is parked, and rejects on the
+    // first failed attempt - so a refused connection returns straight away
+    // and the timer only covers a connect that hangs.
+    const racers = [
+      ready,
+      new Promise(resolve => {
+        timer = setTimeout(resolve, CONNECT_TIMEOUT_MS);
+      })
+    ];
     if (this._redis.status === 'wait') {
-      // connect() rejects unless the client is parked; it also rejects on the
-      // first failed attempt, so a refused connection returns straight away
-      // and the timer only covers a connect that hangs.
-      ready.catch(() => {});
-      await Promise.race([
-        this._redis.connect().catch(() => {}),
-        ready,
-        new Promise(resolve => {
-          timer = setTimeout(resolve, CONNECT_TIMEOUT_MS);
-        })
-      ]);
-    } else {
-      await Promise.race([
-        ready,
-        new Promise(resolve => {
-          timer = setTimeout(resolve, CONNECT_TIMEOUT_MS);
-        })
-      ]);
+      racers.push(this._redis.connect().catch(() => {}));
     }
+    await Promise.race(racers);
   } finally {
     clearTimeout(timer);
     this._redis.removeListener('ready', onReady);

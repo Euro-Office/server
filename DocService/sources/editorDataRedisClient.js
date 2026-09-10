@@ -11,11 +11,17 @@ const SENTINEL_ONLY_OPTIONS = ['sentinels', 'name', 'sentinelPassword', 'role'];
 // save and auth rather than denying them.
 const DEFAULT_COMMAND_TIMEOUT = 300;
 
-// commandTimeout settles the promise but leaves the command on ioredis's
-// offline queue, and the ready handler re-sends it on reconnect - so a lock
-// reported as denied would be taken for real later and never released.
-// Applied last in every branch: operator iooptions must not re-enable it.
-const FAIL_CLOSED_CONNECTION = {enableOfflineQueue: false};
+// commandTimeout settles the promise, but ioredis keeps the command object
+// and re-sends it on reconnect with no check that its promise already
+// settled - so a lock reported as denied gets taken for real later, by a
+// caller that has given up and will never release it. Two queues do this:
+// the offline queue (never written) and the unfulfilled queue (written,
+// reply never arrived). Both must be off.
+//
+// Applied last in every branch: operator iooptions must not re-enable them.
+// Note this does not cover a cluster's per-node clients, whose offline queue
+// ioredis hardcodes - see REDIS_EDITORDATA.md.
+const FAIL_CLOSED_CONNECTION = {enableOfflineQueue: false, autoResendUnfulfilledCommands: false};
 
 // The entrypoint writes {url}; the config block's iooptionsClusterNodes is
 // {host, port}. Accept both, and "host:port", with a usable error otherwise.
@@ -80,7 +86,10 @@ function createRedisClient(redisCfg) {
         'editorDataStorage redis mode is "cluster" but neither services.CoAuthoring.redis.optionsCluster.rootNodes nor iooptionsClusterNodes is populated'
       );
     }
-    const redisOptions = withoutSentinelOptions(options);
+    // Also on the per-node options: ConnectionPool hardcodes the node
+    // offline queue on and ignores ours, but it does honour
+    // autoResendUnfulfilledCommands from here.
+    const redisOptions = Object.assign(withoutSentinelOptions(options), FAIL_CLOSED_CONNECTION);
     // A cluster has only db 0. Dropping the default saves a pointless SELECT
     // per node; a non-zero db cannot be honoured at all, so say so here.
     if (undefined !== redisOptions.db) {

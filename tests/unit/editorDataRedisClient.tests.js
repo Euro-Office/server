@@ -144,13 +144,22 @@ describe('editorDataRedisClient', () => {
   // The fail-closed guarantee has to survive an operator pasting an ioredis
   // tuning snippet into iooptions. Re-enabling the offline queue reinstates
   // the timed-out-lock replay silently, so it is applied last everywhere.
-  describe('the offline queue cannot be re-enabled', () => {
-    const withQueue = {lazyConnect: true, enableOfflineQueue: true};
+  // Two ioredis queues re-send a command whose promise already settled: the
+  // offline queue (never written) and the unfulfilled queue (written, reply
+  // never arrived). Either one turns a lock reported as denied into a lock
+  // actually held by a caller that will never release it.
+  describe('neither replay queue can be re-enabled', () => {
+    const withQueue = {lazyConnect: true, enableOfflineQueue: true, autoResendUnfulfilledCommands: true};
+
+    function expectFailClosed(client) {
+      expect(client.options.enableOfflineQueue).toBe(false);
+      expect(client.options.autoResendUnfulfilledCommands).toBe(false);
+    }
 
     test('standalone', () => {
       const client = createRedisClient({host: '127.0.0.1', port: 6379, iooptions: withQueue});
       try {
-        expect(client.options.enableOfflineQueue).toBe(false);
+        expectFailClosed(client);
       } finally {
         client.disconnect();
       }
@@ -165,7 +174,7 @@ describe('editorDataRedisClient', () => {
       };
       const client = createRedisClient(cfg);
       try {
-        expect(client.options.enableOfflineQueue).toBe(false);
+        expectFailClosed(client);
       } finally {
         client.disconnect();
       }
@@ -177,11 +186,12 @@ describe('editorDataRedisClient', () => {
         port: 6379,
         iooptions: withQueue,
         optionsCluster: {rootNodes: ['valkey-0:6379']},
-        iooptionsClusterOptions: {enableOfflineQueue: true}
+        iooptionsClusterOptions: {enableOfflineQueue: true, autoResendUnfulfilledCommands: true}
       };
       const client = createRedisClient(cfg);
       try {
         expect(client.options.enableOfflineQueue).toBe(false);
+        expect(client.options.redisOptions.autoResendUnfulfilledCommands).toBe(false);
       } finally {
         client.disconnect();
       }
