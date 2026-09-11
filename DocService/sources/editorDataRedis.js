@@ -124,14 +124,7 @@ EditorData.prototype.healthCheck = async function () {
 // wants at a glance. A test proves they agree.
 const ROUTES = {
   _saveLock: ['lockSave', 'unlockSave', 'lockAuth', 'unlockAuth'],
-  _presence: [
-    'addPresence',
-    'updatePresence',
-    'removePresence',
-    'getPresence',
-    'getDocumentPresenceExpired',
-    'removePresenceDocument'
-  ]
+  _presence: ['addPresence', 'updatePresence', 'removePresence', 'getPresence', 'getDocumentPresenceExpired', 'removePresenceDocument']
 };
 
 EditorData.prototype.lockSave = function (ctx, docId, userId, ttl) {
