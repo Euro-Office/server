@@ -5,6 +5,7 @@ on:
       - '**'
     paths:
       - '**.js'
+      - '.github/workflows/unitTests.yml'
       - '!tests/integration/**'
       - '!DocService/sources/databaseConnectors/**'
 jobs:
@@ -34,5 +35,11 @@ jobs:
           npm --prefix DocService ci
           npm --prefix FileConverter ci
 
+      # Serially. The suite reaches an external SMTP service, and its 10s
+      # timeout loses races against the parallel workers once there are
+      # enough suites to saturate the runner - an intermittent red that has
+      # nothing to do with the code under test. This also matches how the
+      # suite is run locally, so a local pass means the same thing as a CI
+      # pass.
       - name: Run Jest
-        run: npm run "unit tests"
+        run: npm run "unit tests" -- --runInBand
