@@ -34,7 +34,6 @@
 - cron 1.5.0 ([MIT](https://raw.githubusercontent.com/kelektiv/node-cron/main/LICENSE))
 - ejs 3.1.10 ([Apache-2.0](https://raw.githubusercontent.com/mde/ejs/main/LICENSE))
 - express 4.21.2 ([MIT](https://raw.githubusercontent.com/expressjs/express/master/LICENSE))
-- ioredis 5.6.0 ([MIT](https://raw.githubusercontent.com/redis/ioredis/main/LICENSE))
 - jsonwebtoken 9.0.2 ([MIT](https://raw.githubusercontent.com/auth0/node-jsonwebtoken/master/LICENSE))
 - heic-decode 2.1.0 ([ISC](https://opensource.org/license/isc-license-txt))
 - mime 2.3.1 ([MIT](https://raw.githubusercontent.com/broofa/mime/main/LICENSE))

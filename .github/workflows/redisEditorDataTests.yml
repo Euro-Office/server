@@ -1,0 +1,125 @@
+name: Redis editor data tests
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'DocService/sources/editorDataRedis/**'
+      - 'DocService/package.json'
+      - 'DocService/npm-shrinkwrap.json'
+      - 'Common/**'
+      - 'tests/redis/**'
+      - 'package.json'
+      - 'npm-shrinkwrap.json'
+      - '.github/workflows/redisEditorDataTests.yml'
+  pull_request:
+    paths:
+      - 'DocService/sources/editorDataRedis/**'
+      - 'DocService/package.json'
+      - 'DocService/npm-shrinkwrap.json'
+      - 'Common/**'
+      - 'tests/redis/**'
+      - 'package.json'
+      - 'npm-shrinkwrap.json'
+      - '.github/workflows/redisEditorDataTests.yml'
+
+jobs:
+  redis-editor-data-tests:
+    name: Redis editor data tests
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            ./npm-shrinkwrap.json
+            ./Common/npm-shrinkwrap.json
+            ./DocService/npm-shrinkwrap.json
+
+      - name: Install modules
+        run: |
+          npm ci
+          npm --prefix Common ci
+          npm --prefix DocService ci
+
+      - name: Run Redis editor data tests
+        env:
+          TEST_REDIS_PREFIX: 'ci:editor-data:${{ github.run_id }}:${{ github.run_attempt }}:'
+        run: npm run tests -- --runTestsByPath ../tests/redis/editorDataRedis.tests.js
+
+  redis-editor-data-cluster-tests:
+    name: Redis Cluster editor data tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Start Redis Cluster nodes
+        run: |
+          set -euo pipefail
+          for port in 7000 7001 7002 7003 7004 7005; do
+            docker run --name "redis-$port" --network host -d redis:7-alpine \
+              redis-server --port "$port" --bind 127.0.0.1 --protected-mode no \
+              --cluster-enabled yes --cluster-config-file "nodes-$port.conf" \
+              --cluster-node-timeout 5000 --appendonly no \
+              --cluster-announce-ip 127.0.0.1 \
+              --cluster-announce-port "$port" \
+              --cluster-announce-bus-port "$((port + 10000))"
+          done
+          for port in 7000 7001 7002 7003 7004 7005; do
+            for attempt in $(seq 1 30); do
+              redis-cli -h 127.0.0.1 -p "$port" ping && break
+              test "$attempt" -lt 30 || exit 1
+              sleep 1
+            done
+          done
+          yes yes | redis-cli --cluster create \
+            127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 \
+            127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005 \
+            --cluster-replicas 1
+
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            ./npm-shrinkwrap.json
+            ./Common/npm-shrinkwrap.json
+            ./DocService/npm-shrinkwrap.json
+
+      - name: Install modules
+        run: |
+          npm ci
+          npm --prefix Common ci
+          npm --prefix DocService ci
+
+      - name: Run Redis Cluster editor data tests
+        env:
+          TEST_REDIS_CLUSTER: 'true'
+          TEST_REDIS_CLUSTER_NODES: 'redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002'
+          TEST_REDIS_PREFIX: 'ci:editor-data-cluster:${{ github.run_id }}:${{ github.run_attempt }}:'
+        run: npm run tests -- --runTestsByPath ../tests/redis/editorDataRedis.tests.js
+
+      - name: Clean up Redis Cluster nodes
+        if: always()
+        run: docker rm -f redis-7000 redis-7001 redis-7002 redis-7003 redis-7004 redis-7005
