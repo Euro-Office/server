@@ -94,7 +94,7 @@ EditorData.prototype.removePresence = async function (ctx, docId, userId) {
   await this._eval(REMOVE_PRESENCE_SCRIPT, [keys.presenceSet, keys.presenceHash], [String(userId)]);
 };
 
-EditorData.prototype.getPresence = async function (ctx, docId) {
+EditorData.prototype.getPresence = async function (ctx, docId, _connections) {
   const keys = this._docKeys(ctx, docId);
   const result = await this._eval(GET_PRESENCE_SCRIPT, [keys.presenceSet, keys.presenceHash], [String(Date.now())]);
   return (result || []).map(toRedisString);
