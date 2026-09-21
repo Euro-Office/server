@@ -63,7 +63,7 @@ jobs:
       - name: Run Redis editor data tests
         env:
           TEST_REDIS_PREFIX: 'ci:editor-data:${{ github.run_id }}:${{ github.run_attempt }}:'
-        run: npm run tests -- --runTestsByPath ../tests/redis/editorDataRedis.tests.js
+        run: npm run tests -- --runInBand ../tests/redis
 
   redis-editor-data-cluster-tests:
     name: Redis Cluster editor data tests
@@ -118,7 +118,7 @@ jobs:
           TEST_REDIS_CLUSTER: 'true'
           TEST_REDIS_CLUSTER_NODES: 'redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002'
           TEST_REDIS_PREFIX: 'ci:editor-data-cluster:${{ github.run_id }}:${{ github.run_attempt }}:'
-        run: npm run tests -- --runTestsByPath ../tests/redis/editorDataRedis.tests.js
+        run: npm run tests -- --runInBand ../tests/redis
 
       - name: Clean up Redis Cluster nodes
         if: always()
