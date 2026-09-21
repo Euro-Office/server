@@ -186,7 +186,7 @@ for (const [name, type] of [
   EditorStat.prototype[`incr${name}ConnectionsCountByShard`] = async function (ctx, shardId, count) {
     return this._incrShardCount(ctx, type, shardId, count);
   };
-  EditorStat.prototype[`get${name}ConnectionsCount`] = async function (ctx) {
+  EditorStat.prototype[`get${name}ConnectionsCount`] = async function (ctx, _connections) {
     return this._getShardCount(ctx, type);
   };
 }
