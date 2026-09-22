@@ -219,39 +219,36 @@
       "integrity": "sha512-T8TbSnGsxo6TDBJx/Sgv/BlVJL3tshxZP7Aq5R1mSnM5OcHY2dQaxLMu2+E8u3gN0MLOzdjurqN4ZRVuzQycOQ=="
     },
     "@redis/bloom": {
-      "version": "1.2.0",
-      "resolved": "https://registry.npmjs.org/@redis/bloom/-/bloom-1.2.0.tgz",
-      "integrity": "sha512-HG2DFjYKbpNmVXsa0keLHp/3leGJz1mjh09f2RLGGLQZzSHpkmZWuwJbAvo3QcRY8p80m5+ZdXZdYOSBLlp7Cg=="
+      "version": "6.2.1",
+      "resolved": "https://registry.npmjs.org/@redis/bloom/-/bloom-6.2.1.tgz",
+      "integrity": "sha512-huQgNLaCIZfQ9SeLn4q9124uOUd8HbZDYHwwUzNcRgHqCHiHKl2dDxMqJCeWh8cMqZAoWuHR8XnWbDMIf+o7ag==",
+      "requires": {}
     },
     "@redis/client": {
-      "version": "1.6.0",
-      "resolved": "https://registry.npmjs.org/@redis/client/-/client-1.6.0.tgz",
-      "integrity": "sha512-aR0uffYI700OEEH4gYnitAnv3vzVGXCFvYfdpu/CJKvk4pHfLPEy/JSZyrpQ+15WhXe1yJRXLtfQ84s4mEXnPg==",
+      "version": "6.2.1",
+      "resolved": "https://registry.npmjs.org/@redis/client/-/client-6.2.1.tgz",
+      "integrity": "sha512-LzxBY7SIBvvJiyCgcaJZZakE3fJrZZ++i24+EDW9fKpCl68D35uJcKFpZZwCfOoG9WZTbyZlMzMeM0gtOAMU9Q==",
       "requires": {
-        "cluster-key-slot": "1.1.2",
-        "generic-pool": "3.9.0",
-        "yallist": "4.0.0"
+        "cluster-key-slot": "1.1.2"
       }
     },
-    "@redis/graph": {
-      "version": "1.1.1",
-      "resolved": "https://registry.npmjs.org/@redis/graph/-/graph-1.1.1.tgz",
-      "integrity": "sha512-FEMTcTHZozZciLRl6GiiIB4zGm5z5F3F6a6FZCyrfxdKOhFlGkiAqlexWMBzCi4DcRoyiOsuLfW+cjlGWyExOw=="
-    },
     "@redis/json": {
-      "version": "1.0.7",
-      "resolved": "https://registry.npmjs.org/@redis/json/-/json-1.0.7.tgz",
-      "integrity": "sha512-6UyXfjVaTBTJtKNG4/9Z8PSpKE6XgSyEb8iwaqDcy+uKrd/DGYHTWkUdnQDyzm727V7p21WUMhsqz5oy65kPcQ=="
+      "version": "6.2.1",
+      "resolved": "https://registry.npmjs.org/@redis/json/-/json-6.2.1.tgz",
+      "integrity": "sha512-AFIUJ8Gj0DaaSBHYuSt8+O0oYWM+50OK1c0OmodB7XERIA8+BbyV3O4v76f9iccWasd1/7qjfZTpuzexUaZtrQ==",
+      "requires": {}
     },
     "@redis/search": {
-      "version": "1.2.0",
-      "resolved": "https://registry.npmjs.org/@redis/search/-/search-1.2.0.tgz",
-      "integrity": "sha512-tYoDBbtqOVigEDMAcTGsRlMycIIjwMCgD8eR2t0NANeQmgK/lvxNAvYyb6bZDD4frHRhIHkJu2TBRvB0ERkOmw=="
+      "version": "6.2.1",
+      "resolved": "https://registry.npmjs.org/@redis/search/-/search-6.2.1.tgz",
+      "integrity": "sha512-2vfOAOyYFE7UUw3sBBlkqqruBtOUS4HRY5MtW4hp83llrwvtrTE4r22CEqXddlV+54zkLxBE4nmsIJ/dpezQrQ==",
+      "requires": {}
     },
     "@redis/time-series": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/@redis/time-series/-/time-series-1.1.0.tgz",
-      "integrity": "sha512-c1Q99M5ljsIuc4YdaCwfUEXsofakb9c8+Zse2qxTadu8TalLXuAESzLvFAvNVbkmSlvlzIQOLpBCmWI9wTOt+g=="
+      "version": "6.2.1",
+      "resolved": "https://registry.npmjs.org/@redis/time-series/-/time-series-6.2.1.tgz",
+      "integrity": "sha512-kiYniph04dJOole+L359B6C9E+jYS2uDP7hca6Onj0xF38ZIpyxARO0Iq0W4ZRn1e8Q6vqW00QFZVSMRA/2Ijw==",
+      "requires": {}
     },
     "@socket.io/component-emitter": {
       "version": "3.1.2",
@@ -1107,11 +1104,6 @@
         "is-property": "^1.0.2"
       }
     },
-    "generic-pool": {
-      "version": "3.9.0",
-      "resolved": "https://registry.npmjs.org/generic-pool/-/generic-pool-3.9.0.tgz",
-      "integrity": "sha512-hymDOu5B53XvN4QT9dBmZxPX4CWhBPPLguTZ9MMFeFa/Kg0xWVfylOVNlJji/E7yTZWFd/q9GO5TxDLq156D7g=="
-    },
     "get-intrinsic": {
       "version": "1.3.0",
       "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
@@ -1943,16 +1935,15 @@
       }
     },
     "redis": {
-      "version": "4.7.0",
-      "resolved": "https://registry.npmjs.org/redis/-/redis-4.7.0.tgz",
-      "integrity": "sha512-zvmkHEAdGMn+hMRXuMBtu4Vo5P6rHQjLoHftu+lBqq8ZTA3RCVC/WzD790bkKKiNFp7d5/9PcSD19fJyyRvOdQ==",
+      "version": "6.2.1",
+      "resolved": "https://registry.npmjs.org/redis/-/redis-6.2.1.tgz",
+      "integrity": "sha512-Z9VHtgYs48PiQC77X9O2Er8Hj4T+5BtFjT91/vi5Is1D04N72cA946ZslM1ImJw8ZctFBZWAVjM7S5wJNeHMpg==",
       "requires": {
-        "@redis/bloom": "1.2.0",
-        "@redis/client": "1.6.0",
-        "@redis/graph": "1.1.1",
-        "@redis/json": "1.0.7",
-        "@redis/search": "1.2.0",
-        "@redis/time-series": "1.1.0"
+        "@redis/bloom": "6.2.1",
+        "@redis/client": "6.2.1",
+        "@redis/json": "6.2.1",
+        "@redis/search": "6.2.1",
+        "@redis/time-series": "6.2.1"
       }
     },
     "require-from-string": {
