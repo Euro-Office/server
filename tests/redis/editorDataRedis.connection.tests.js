@@ -6,7 +6,12 @@ const assert = require('node:assert/strict');
 const {EventEmitter} = require('node:events');
 const {describe, test} = require('@jest/globals');
 
-const {RedisConnection} = require('../../DocService/sources/editorDataRedis/base');
+const {
+  RedisConnection,
+  normalizeNodeOptions,
+  normalizeClusterOptions,
+  normalizeSentinelOptions
+} = require('../../DocService/sources/editorDataRedis/base');
 
 function fakeClient(properties = {}) {
   const client = new EventEmitter();
@@ -15,6 +20,42 @@ function fakeClient(properties = {}) {
 }
 
 describe('editorDataRedis connection contract', () => {
+  test('applies the adapter timeout to node-redis command options', () => {
+    assert.equal(normalizeNodeOptions({}, 0).commandOptions.timeout, 30000);
+    assert.equal(normalizeNodeOptions({commandOptions: {timeout: 0}}, 0).commandOptions.timeout, 0);
+  });
+
+  test('normalizes Cluster defaults without routing them to a standalone endpoint', () => {
+    const options = normalizeClusterOptions({
+      rootNodes: [{url: 'redis://cluster-node:7000'}],
+      defaults: {password: 'secret'}
+    });
+
+    assert.deepEqual(options.rootNodes, [{url: 'redis://cluster-node:7000'}]);
+    assert.deepEqual(options.defaults, {password: 'secret', socket: {connectTimeout: 15000}});
+    assert.equal(options.commandOptions.timeout, 30000);
+  });
+
+  test('normalizes native Sentinel options and applies the selected database to node clients', () => {
+    const options = normalizeSentinelOptions({
+      name: 'mymaster',
+      sentinelRootNodes: [{host: 'sentinel-a', port: '26379'}],
+      nodeClientOptions: {user: 'redis-user', socket: {tls: true}},
+      sentinelClientOptions: {password: 'sentinel-password'}
+    }, 2);
+
+    assert.deepEqual(options.sentinelRootNodes, [{host: 'sentinel-a', port: 26379}]);
+    assert.equal(options.nodeClientOptions.username, 'redis-user');
+    assert.equal(options.nodeClientOptions.database, 2);
+    assert.equal(options.nodeClientOptions.socket.tls, true);
+    assert.equal(options.sentinelClientOptions.password, 'sentinel-password');
+    assert.equal(options.commandOptions.timeout, 30000);
+  });
+
+  test('rejects incomplete native Sentinel options', () => {
+    assert.throws(() => normalizeSentinelOptions({name: 'mymaster'}), /sentinelRootNodes/);
+  });
+
   test('normalizes standalone command arguments before sending them', async () => {
     const calls = [];
     const connection = new RedisConnection();
@@ -54,6 +95,22 @@ describe('editorDataRedis connection contract', () => {
     ]);
   });
 
+  test('uses the native Sentinel raw-command signature', async () => {
+    const calls = [];
+    const connection = new RedisConnection();
+    connection.client = fakeClient({
+      sendCommand(...args) {
+        calls.push(args);
+        return Promise.resolve('PONG');
+      }
+    });
+    connection.connector = 'redis';
+    connection.sentinel = true;
+
+    assert.equal(await connection.command(['PING']), 'PONG');
+    assert.deepEqual(calls, [[false, ['PING']]]);
+  });
+
   test('executes standalone command batches transactionally', async () => {
     const added = [];
     const connection = new RedisConnection();
@@ -72,6 +129,29 @@ describe('editorDataRedis connection contract', () => {
 
     assert.deepEqual(await connection.commands([[Buffer.from('SET'), 'key', 'value'], ['GET', 'key']]), ['OK', 1]);
     assert.deepEqual(added, [['SET', 'key', 'value'], ['GET', 'key']]);
+  });
+
+  test('uses the native Sentinel batch-command signature', async () => {
+    const added = [];
+    const connection = new RedisConnection();
+    connection.client = fakeClient({
+      multi() {
+        return {
+          addCommand(...args) {
+            added.push(args);
+          },
+          exec: async () => ['OK', 1]
+        };
+      }
+    });
+    connection.connector = 'redis';
+    connection.sentinel = true;
+
+    assert.deepEqual(await connection.commands([[Buffer.from('SET'), 'key', 'value'], ['GET', 'key']]), ['OK', 1]);
+    assert.deepEqual(added, [
+      [false, ['SET', 'key', 'value']],
+      [false, ['GET', 'key']]
+    ]);
   });
 
   test('executes each command independently for Cluster batches', async () => {
@@ -106,6 +186,22 @@ describe('editorDataRedis connection contract', () => {
     connection.client = client;
     connection.connector = 'redis';
     connection.cluster = false;
+
+    await connection.connect();
+    assert.equal(connection.isConnected(), true);
+  });
+
+  test('waits for Cluster readiness instead of treating an open client as ready', async () => {
+    const client = fakeClient({isOpen: true, isReady: false});
+    client.connect = async () => {};
+    setTimeout(() => {
+      client.isReady = true;
+      client.emit('ready');
+    }, 1);
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.connector = 'redis';
+    connection.cluster = true;
 
     await connection.connect();
     assert.equal(connection.isConnected(), true);
@@ -174,8 +270,8 @@ describe('editorDataRedis connection contract', () => {
   test('falls back to destroying a client when graceful close fails', async () => {
     let destroyed = false;
     const client = fakeClient({
-      quit: async () => {
-        throw new Error('quit failed');
+      close: async () => {
+        throw new Error('close failed');
       },
       destroy: () => {
         destroyed = true;
@@ -187,5 +283,24 @@ describe('editorDataRedis connection contract', () => {
     await connection.close();
     assert.equal(destroyed, true);
     assert.equal(connection.client, null);
+  });
+
+  test('uses close instead of the deprecated quit command', async () => {
+    let closed = false;
+    let quitCalled = false;
+    const client = fakeClient({
+      close: async () => {
+        closed = true;
+      },
+      quit: async () => {
+        quitCalled = true;
+      }
+    });
+    const connection = new RedisConnection();
+    connection.client = client;
+
+    await connection.close();
+    assert.equal(closed, true);
+    assert.equal(quitCalled, false);
   });
 });

@@ -68,6 +68,7 @@ const cfgRedisHost = cfgRedis.get('host');
 const cfgRedisPort = cfgRedis.get('port');
 const cfgRedisOptions = cfgRedis.get('options');
 const cfgRedisOptionsCluster = cfgRedis.get('optionsCluster');
+const cfgRedisOptionsSentinel = cfgRedis.get('optionsSentinel');
 
 const cfgExpPresence = config.get('services.CoAuthoring.expire.presence');
 const cfgExpLocks = config.get('services.CoAuthoring.expire.locks');
@@ -83,7 +84,15 @@ function cloneConfig(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function normalizeNodeOptions(source, database) {
+function normalizeCommandOptions(source) {
+  const options = cloneConfig(source) || {};
+  if (options.timeout === undefined) {
+    options.timeout = REDIS_COMMAND_TIMEOUT_MS;
+  }
+  return options;
+}
+
+function normalizeNodeOptions(source, database, includeEndpoint = true, includeCommandOptions = true) {
   const options = cloneConfig(source) || {};
   if (options.user !== undefined && options.username === undefined) {
     options.username = options.user;
@@ -99,13 +108,23 @@ function normalizeNodeOptions(source, database) {
   if (database !== undefined && database !== null && database !== '') {
     options.database = Number(database);
   }
+  if (includeCommandOptions) {
+    options.commandOptions = normalizeCommandOptions(options.commandOptions);
+  }
   if (!options.url) {
     options.socket = options.socket || {};
-    if (options.socket.host === undefined) {
+    if (includeEndpoint && options.socket.host === undefined) {
       options.socket.host = cfgRedisHost;
     }
-    if (options.socket.port === undefined) {
+    if (includeEndpoint && options.socket.port === undefined) {
       options.socket.port = Number(cfgRedisPort);
+    }
+    if (!includeEndpoint) {
+      delete options.socket.host;
+      delete options.socket.port;
+    }
+    if (options.socket.connectTimeout === undefined) {
+      options.socket.connectTimeout = REDIS_CONNECT_TIMEOUT_MS;
     }
   }
   return options;
@@ -113,15 +132,50 @@ function normalizeNodeOptions(source, database) {
 
 function normalizeClusterOptions(source) {
   const options = cloneConfig(source) || {};
-  options.defaults = normalizeNodeOptions(options.defaults || {});
-  delete options.defaults.socket;
+  options.defaults = normalizeNodeOptions(options.defaults || {}, undefined, false, false);
   delete options.defaults.database;
+  delete options.defaults.commandOptions;
+  options.commandOptions = normalizeCommandOptions(options.commandOptions);
+  return options;
+}
+
+function normalizeSentinelOptions(source, database) {
+  const options = cloneConfig(source) || {};
+  if (!options.name) {
+    throw new Error('Redis Sentinel requires optionsSentinel.name');
+  }
+  if (!Array.isArray(options.sentinelRootNodes) || options.sentinelRootNodes.length === 0) {
+    throw new Error('Redis Sentinel requires optionsSentinel.sentinelRootNodes');
+  }
+  options.sentinelRootNodes = options.sentinelRootNodes.map(node => ({
+    ...node,
+    port: Number(node.port)
+  }));
+  const nodeDatabase = database ?? options.database;
+  delete options.database;
+  options.nodeClientOptions = normalizeNodeOptions(
+    {...cloneConfig(cfgRedisOptions), ...(options.nodeClientOptions || {})},
+    nodeDatabase,
+    false,
+    false
+  );
+  delete options.nodeClientOptions.url;
+  delete options.nodeClientOptions.commandOptions;
+  options.sentinelClientOptions = normalizeNodeOptions(options.sentinelClientOptions || {}, undefined, false, false);
+  delete options.sentinelClientOptions.url;
+  delete options.sentinelClientOptions.commandOptions;
+  options.commandOptions = normalizeCommandOptions(options.commandOptions);
   return options;
 }
 
 function hasNodeCluster() {
   const options = cloneConfig(cfgRedisOptionsCluster) || {};
   return Array.isArray(options.rootNodes) && options.rootNodes.length > 0;
+}
+
+function hasNodeSentinel() {
+  const options = cloneConfig(cfgRedisOptionsSentinel) || {};
+  return Object.keys(options).length > 0;
 }
 
 function toRedisString(value) {
@@ -301,6 +355,7 @@ class RedisConnection {
     this.connectPromise = null;
     this.connector = null;
     this.cluster = false;
+    this.sentinel = false;
     this.commandTimeoutMs = REDIS_COMMAND_TIMEOUT_MS;
   }
 
@@ -311,7 +366,13 @@ class RedisConnection {
     }
     this.connector = 'redis';
     this.cluster = hasNodeCluster();
-    if (this.cluster) {
+    this.sentinel = hasNodeSentinel();
+    if (this.cluster && this.sentinel) {
+      throw new Error('Redis Cluster and Redis Sentinel options cannot be enabled together');
+    }
+    if (this.sentinel) {
+      this.client = redis.createSentinel(normalizeSentinelOptions(cfgRedisOptionsSentinel, this.database));
+    } else if (this.cluster) {
       if (this.database !== undefined && this.database !== null && Number(this.database) !== 0) {
         log('error', 'Redis Cluster cannot use logical database %s; configure database 0', this.database);
         throw new Error('Redis Cluster does not support a non-zero logical database');
@@ -361,7 +422,7 @@ class RedisConnection {
       if (!currentClient.isOpen) {
         await withTimeout(currentClient.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis connect');
       }
-      if (!this.cluster && !currentClient.isReady) {
+      if (!currentClient.isReady) {
         await waitForReady(currentClient, this.connector, REDIS_CONNECT_TIMEOUT_MS);
       }
     })();
@@ -390,7 +451,7 @@ class RedisConnection {
     if (!this.client) {
       return false;
     }
-    return this.cluster ? Boolean(this.client.isOpen) : Boolean(this.client.isReady);
+    return Boolean(this.client.isReady ?? this.client.isOpen);
   }
 
   async command(args) {
@@ -405,6 +466,8 @@ class RedisConnection {
         const command = normalized[0].toUpperCase();
         const firstKey = command === 'EVAL' ? normalized[3] : command === 'PING' ? undefined : normalized[1];
         result = this.client.sendCommand(firstKey, false, normalized);
+      } else if (this.sentinel) {
+        result = this.client.sendCommand(false, normalized);
       } else {
         result = this.client.sendCommand(normalized);
       }
@@ -424,7 +487,12 @@ class RedisConnection {
     await this.connect();
     const multi = this.client.multi();
     for (const args of commands) {
-      multi.addCommand(args.map(toRedisString));
+      const normalized = args.map(toRedisString);
+      if (this.sentinel) {
+        multi.addCommand(false, normalized);
+      } else {
+        multi.addCommand(normalized);
+      }
     }
     return this._withCommandTimeout(multi.exec(), `Redis transaction with ${commands.length} commands`);
   }
@@ -443,7 +511,8 @@ class RedisConnection {
     if (client.isOpen) {
       try {
         log('debug', 'closing redis client');
-        await withTimeout(client.quit(), 5000, 'Redis quit');
+        const close = typeof client.close === 'function' ? client.close.bind(client) : client.quit.bind(client);
+        await withTimeout(Promise.resolve().then(close), 5000, 'Redis close');
       } catch (error) {
         log('warn', 'graceful Redis close failed; forcing disconnect: %s', errorDetails(error));
         if (typeof client.destroy === 'function') {
@@ -549,6 +618,9 @@ EditorCommon.prototype._checkAndUnlock = async function (ctx, name, docId, fenci
 module.exports = {
   RedisConnection,
   EditorCommon,
+  normalizeNodeOptions,
+  normalizeClusterOptions,
+  normalizeSentinelOptions,
   cfgRedisPrefix,
   cfgExpPresence,
   cfgExpLocks,
