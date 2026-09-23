@@ -128,9 +128,7 @@ return {conflict, redis.call('HGETALL', KEYS[1])}
 
 const REMOVE_LOCKS_SCRIPT = `
 for i = 1, #ARGV, 2 do
-  if redis.call('HGET', KEYS[1], ARGV[i]) == ARGV[i + 1] then
-    redis.call('HDEL', KEYS[1], ARGV[i])
-  end
+  redis.call('HDEL', KEYS[1], ARGV[i])
 end
 return redis.call('HLEN', KEYS[1])
 `;
