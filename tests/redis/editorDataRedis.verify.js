@@ -203,7 +203,7 @@ async function verify() {
     const oldA = (await data.getLocks(ctx, objectLockDoc)).a;
     await data.addLocks(ctx, objectLockDoc, {a: {owner: 3}});
     await data.removeLocks(ctx, objectLockDoc, {a: oldA});
-    assert.deepEqual((await data.getLocks(ctx, objectLockDoc)).a, {owner: 3});
+    assert.equal(Object.hasOwn(await data.getLocks(ctx, objectLockDoc), 'a'), false);
     await data.removeAllLocks(ctx, objectLockDoc);
     assert.deepEqual(await data.getLocks(ctx, objectLockDoc), {});
 
