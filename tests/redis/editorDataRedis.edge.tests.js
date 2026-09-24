@@ -130,9 +130,7 @@ describe('editorDataRedis edge cases', () => {
     await stat.addPresenceUniqueUser(ctx, 'user', 200000, {version: 1});
     await stat.addPresenceUniqueUser(ctx, 'user', 300000, {version: 2});
 
-    assert.deepEqual(await stat.getPresenceUniqueUser(ctx, 100000), [
-      {userid: 'user', expire: new Date(300000000), version: 2}
-    ]);
+    assert.deepEqual(await stat.getPresenceUniqueUser(ctx, 100000), [{userid: 'user', expire: new Date(300000000), version: 2}]);
   });
 
   test('updating a monthly unique user keeps one entry for the period', async () => {
@@ -148,11 +146,7 @@ describe('editorDataRedis edge cases', () => {
   });
 
   test('editor connection statistics ignore malformed samples and retain valid data', async () => {
-    stat._command = async () => [
-      'not-json',
-      JSON.stringify({notData: true}),
-      JSON.stringify({data: {time: 100, edit: 1, liveview: 2, view: 3}})
-    ];
+    stat._command = async () => ['not-json', JSON.stringify({notData: true}), JSON.stringify({data: {time: 100, edit: 1, liveview: 2, view: 3}})];
 
     assert.deepEqual(await stat.getEditorConnections(context('malformed-samples')), [{time: 100, edit: 1, liveview: 2, view: 3}]);
   });
