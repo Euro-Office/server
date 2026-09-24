@@ -84,12 +84,12 @@ jobs:
           done
           for port in 7000 7001 7002 7003 7004 7005; do
             for attempt in $(seq 1 30); do
-              redis-cli -h 127.0.0.1 -p "$port" ping && break
+              docker exec redis-7000 redis-cli -h 127.0.0.1 -p "$port" ping && break
               test "$attempt" -lt 30 || exit 1
               sleep 1
             done
           done
-          yes yes | redis-cli --cluster create \
+          yes yes | docker exec -i redis-7000 redis-cli --cluster create \
             127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 \
             127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005 \
             --cluster-replicas 1
