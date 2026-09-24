@@ -64,6 +64,12 @@ const REDIS_CONNECT_TIMEOUT_MS = 15000;
 const REDIS_COMMAND_TIMEOUT_MS = 30000;
 // editorDataRedis consumes RESP2 array replies; node-redis 6 defaults to RESP3.
 const REDIS_RESP_VERSION = 2;
+const REDIS_SENTINEL_RECONNECT_MAX_RETRIES = 5;
+const REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS = 250;
+const REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS = 2000;
+const REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH = 256;
+const REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS = 0;
+const REDIS_UNAVAILABLE_CODE = 'REDIS_UNAVAILABLE';
 const POP_EXPIRED_BATCH_SIZE = 100;
 const POP_EXPIRED_LEASE_MS = 5 * 60 * 1000;
 
@@ -97,6 +103,13 @@ function normalizeCommandOptions(source) {
     options.timeout = REDIS_COMMAND_TIMEOUT_MS;
   }
   return options;
+}
+
+function sentinelReconnectStrategy(retries) {
+  if (retries >= REDIS_SENTINEL_RECONNECT_MAX_RETRIES) {
+    return false;
+  }
+  return Math.min(REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS * 2 ** retries, REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS);
 }
 
 function normalizeNodeOptions(source, database, includeEndpoint = true, includeCommandOptions = true) {
@@ -172,10 +185,26 @@ function normalizeSentinelOptions(source, database) {
   );
   delete options.nodeClientOptions.url;
   delete options.nodeClientOptions.commandOptions;
+  options.nodeClientOptions.socket = options.nodeClientOptions.socket || {};
+  options.nodeClientOptions.socket.connectTimeout ??= REDIS_CONNECT_TIMEOUT_MS;
+  options.nodeClientOptions.disableOfflineQueue = true;
+  options.nodeClientOptions.commandsQueueMaxLength = REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH;
+  options.nodeClientOptions.socket.reconnectStrategy = sentinelReconnectStrategy;
   options.sentinelClientOptions = normalizeNodeOptions(options.sentinelClientOptions || {}, undefined, false, false);
   delete options.sentinelClientOptions.url;
   delete options.sentinelClientOptions.commandOptions;
+  options.sentinelClientOptions.socket = options.sentinelClientOptions.socket || {};
+  options.sentinelClientOptions.socket.connectTimeout ??= REDIS_CONNECT_TIMEOUT_MS;
+  options.sentinelClientOptions.disableOfflineQueue = true;
+  options.sentinelClientOptions.commandsQueueMaxLength = REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH;
+  // Native Sentinel intentionally uses one-shot clients for Sentinel discovery;
+  // its topology loop reconnects through the configured root-node list instead.
+  options.sentinelClientOptions.socket.reconnectStrategy = false;
   options.commandOptions = normalizeCommandOptions(options.commandOptions);
+  // A command that lost its reply may already have committed. Do not let the
+  // native Sentinel client replay it while rediscovering the master.
+  options.maxCommandRediscovers = REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS;
+  options.passthroughClientErrorEvents = true;
   return options;
 }
 
@@ -314,6 +343,14 @@ function errorDetails(error) {
   return error.stack || `${error.name || 'Error'}: ${error.message || String(error)}`;
 }
 
+class RedisUnavailableError extends Error {
+  constructor(cause) {
+    super('Redis is unavailable', cause === undefined ? undefined : {cause});
+    this.name = 'RedisUnavailableError';
+    this.code = REDIS_UNAVAILABLE_CODE;
+  }
+}
+
 function withTimeout(promise, timeoutMs, description) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -367,6 +404,8 @@ class RedisConnection {
     this.connector = null;
     this.cluster = false;
     this.sentinel = false;
+    this.connectionAttempted = false;
+    this.lastError = null;
     this.commandTimeoutMs = REDIS_COMMAND_TIMEOUT_MS;
   }
 
@@ -402,10 +441,18 @@ class RedisConnection {
       this.database ?? 0
     );
     this.client.on('error', error => {
+      this.lastError = error instanceof Error ? error : new Error(String(error));
       log('error', 'client error (connector=%s, cluster=%s): %s', this.connector, this.cluster, errorDetails(error));
     });
     this.client.on('reconnecting', details => {
       log('warn', 'client reconnecting (connector=%s): %j', this.connector, details || {});
+    });
+    this.client.on('ready', () => {
+      this.lastError = null;
+      log('debug', 'client ready (connector=%s, cluster=%s, sentinel=%s)', this.connector, this.cluster, this.sentinel);
+    });
+    this.client.on('end', () => {
+      log('warn', 'client connection ended (connector=%s, cluster=%s, sentinel=%s)', this.connector, this.cluster, this.sentinel);
     });
   }
 
@@ -416,10 +463,16 @@ class RedisConnection {
     if (this.isConnected()) {
       return;
     }
+    if (this.sentinel && this.client && this.connectionAttempted && !this.client.isOpen) {
+      this._abortClient();
+    }
     if (!this.client) {
       this._createClient();
     }
     const currentClient = this.client;
+    if (this.sentinel && this.connectionAttempted && currentClient.isOpen && !currentClient.isReady) {
+      throw new RedisUnavailableError(this.lastError);
+    }
     const startedAt = Date.now();
     log(
       'debug',
@@ -429,6 +482,7 @@ class RedisConnection {
       currentClient.isOpen ?? 'n/a',
       currentClient.isReady ?? 'n/a'
     );
+    this.connectionAttempted = true;
     this.connectPromise = (async () => {
       if (!currentClient.isOpen) {
         await withTimeout(currentClient.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis connect');
@@ -516,14 +570,21 @@ class RedisConnection {
     const client = this.client;
     this.client = null;
     this.connectPromise = null;
+    this.connectionAttempted = false;
+    this.lastError = null;
     if (!client) {
       return;
     }
     if (client.isOpen) {
       try {
         log('debug', 'closing redis client');
-        const close = typeof client.close === 'function' ? client.close.bind(client) : client.quit.bind(client);
-        await withTimeout(Promise.resolve().then(close), 5000, 'Redis close');
+        const close =
+          typeof client.close === 'function' ? client.close.bind(client) : typeof client.quit === 'function' ? client.quit.bind(client) : null;
+        if (close) {
+          await withTimeout(Promise.resolve().then(close), 5000, 'Redis close');
+        } else {
+          throw new Error('Redis client has no close method');
+        }
       } catch (error) {
         log('warn', 'graceful Redis close failed; forcing disconnect: %s', errorDetails(error));
         if (typeof client.destroy === 'function') {
@@ -539,7 +600,12 @@ class RedisConnection {
     const client = this.client;
     this.client = null;
     this.connectPromise = null;
+    this.connectionAttempted = false;
+    this.lastError = null;
     if (!client) {
+      return;
+    }
+    if (!client.isOpen) {
       return;
     }
     if (typeof client.destroy === 'function') {
@@ -645,6 +711,14 @@ module.exports = {
   normalizeNodeOptions,
   normalizeClusterOptions,
   normalizeSentinelOptions,
+  sentinelReconnectStrategy,
+  RedisUnavailableError,
+  REDIS_SENTINEL_RECONNECT_MAX_RETRIES,
+  REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS,
+  REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS,
+  REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
+  REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS,
+  REDIS_UNAVAILABLE_CODE,
   cfgRedisPrefix,
   cfgExpPresence,
   cfgExpShard,

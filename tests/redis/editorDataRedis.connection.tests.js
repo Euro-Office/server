@@ -10,7 +10,11 @@ const {
   RedisConnection,
   normalizeNodeOptions,
   normalizeClusterOptions,
-  normalizeSentinelOptions
+  normalizeSentinelOptions,
+  sentinelReconnectStrategy,
+  RedisUnavailableError,
+  REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
+  REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS
 } = require('../../DocService/sources/editorDataRedis/base');
 
 function fakeClient(properties = {}) {
@@ -61,6 +65,22 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(options.sentinelClientOptions.password, 'sentinel-password');
     assert.equal(options.sentinelClientOptions.RESP, 2);
     assert.equal(options.commandOptions.timeout, 30000);
+    assert.equal(options.nodeClientOptions.disableOfflineQueue, true);
+    assert.equal(options.nodeClientOptions.commandsQueueMaxLength, REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH);
+    assert.equal(options.nodeClientOptions.socket.reconnectStrategy, sentinelReconnectStrategy);
+    assert.equal(options.sentinelClientOptions.disableOfflineQueue, true);
+    assert.equal(options.sentinelClientOptions.commandsQueueMaxLength, REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH);
+    assert.equal(options.sentinelClientOptions.socket.reconnectStrategy, false);
+    assert.equal(options.maxCommandRediscovers, REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS);
+    assert.equal(options.passthroughClientErrorEvents, true);
+  });
+
+  test('uses bounded deterministic backoff for Sentinel node reconnects', () => {
+    const cause = new Error('master unavailable');
+    assert.deepEqual(
+      [0, 1, 2, 3, 4, 5].map(retries => sentinelReconnectStrategy(retries, cause)),
+      [250, 500, 1000, 2000, 2000, false]
+    );
   });
 
   test('rejects incomplete native Sentinel options', () => {
@@ -269,6 +289,70 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(connection.client, null);
   });
 
+  test('rejects an initial Sentinel connection failure and clears the failed client', async () => {
+    const client = fakeClient({
+      isOpen: false,
+      isReady: false,
+      connect: async () => {
+        throw new Error('Sentinel unavailable');
+      }
+    });
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.connector = 'redis';
+    connection.sentinel = true;
+
+    await assert.rejects(connection.connect(), /Sentinel unavailable/);
+    assert.equal(connection.client, null);
+    assert.equal(connection.isConnected(), false);
+  });
+
+  test('fails fast while a disconnected client is reconnecting, then uses it after ready', async () => {
+    let commandCalls = 0;
+    const client = fakeClient({
+      sendCommand: async () => {
+        commandCalls++;
+        return 'PONG';
+      }
+    });
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.connector = 'redis';
+    connection.sentinel = true;
+    connection.connectionAttempted = true;
+
+    client.isReady = false;
+    await assert.rejects(connection.command(['PING']), error => {
+      assert.ok(error instanceof RedisUnavailableError);
+      assert.equal(error.code, 'REDIS_UNAVAILABLE');
+      return true;
+    });
+    assert.equal(commandCalls, 0);
+
+    client.isReady = true;
+    assert.equal(await connection.command(['PING']), 'PONG');
+    assert.equal(commandCalls, 1);
+  });
+
+  test('does not queue commands while a Sentinel client is disconnected', async () => {
+    let commandCalls = 0;
+    const client = fakeClient({
+      sendCommand: async () => {
+        commandCalls++;
+        return 'unexpected';
+      }
+    });
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.connector = 'redis';
+    connection.sentinel = true;
+    connection.connectionAttempted = true;
+    client.isReady = false;
+
+    await assert.rejects(connection.command(['SET', 'key', 'value']), error => error.code === 'REDIS_UNAVAILABLE');
+    assert.equal(commandCalls, 0);
+  });
+
   test('keeps a connected client after a non-timeout command failure', async () => {
     const client = fakeClient({
       sendCommand: async () => {
@@ -297,6 +381,24 @@ describe('editorDataRedis connection contract', () => {
     await assert.rejects(connection.connect(), /connection refused/);
     assert.equal(connection.client, null);
     assert.equal(connection.isConnected(), false);
+  });
+
+  test('propagates the final connection error after bounded reconnect exhaustion', async () => {
+    const finalError = new Error('Sentinel retry limit reached');
+    const client = fakeClient({
+      isOpen: false,
+      isReady: false,
+      connect: async () => {
+        throw finalError;
+      }
+    });
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.connector = 'redis';
+    connection.sentinel = true;
+
+    await assert.rejects(connection.connect(), error => error === finalError);
+    assert.equal(connection.client, null);
   });
 
   test('falls back to destroying a client when graceful close fails', async () => {
@@ -334,5 +436,23 @@ describe('editorDataRedis connection contract', () => {
     await connection.close();
     assert.equal(closed, true);
     assert.equal(quitCalled, false);
+  });
+
+  test('stops a reconnecting client during shutdown', async () => {
+    let closed = false;
+    const client = fakeClient({
+      close: async () => {
+        closed = true;
+        client.isOpen = false;
+      }
+    });
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.connectionAttempted = true;
+
+    await connection.close();
+    assert.equal(closed, true);
+    assert.equal(client.isOpen, false);
+    assert.equal(connection.client, null);
   });
 });
