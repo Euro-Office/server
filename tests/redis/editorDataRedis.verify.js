@@ -225,7 +225,7 @@ async function verify() {
     await data.setForceSave(ctx, forceDoc, 100, 5, 'https://example.test', {user: 'one'}, {stale: true});
     const started = await race(100, index => dataStores[index % dataStores.length].checkAndStartForceSave(ctx, forceDoc));
     assert.equal(started.filter(Boolean).length, 1);
-    assert.equal(started.find(Boolean).convertInfo, undefined);
+    assert.deepEqual(started.find(Boolean).convertInfo, {stale: true});
     await data.setForceSave(ctx, forceDoc, 101, 6, 'https://example.test/new', {user: 'two'}, null);
     assert.equal(await data.checkAndSetForceSave(ctx, forceDoc, 100, 5, true, true, {stale: true}), undefined);
     const updatedForceSave = await data.checkAndSetForceSave(ctx, forceDoc, 101, 6, false, true, {url: 'result'});
