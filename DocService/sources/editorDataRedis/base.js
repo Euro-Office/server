@@ -604,19 +604,32 @@ EditorCommon.prototype._statBase = function (ctx) {
 
 EditorCommon.prototype._checkAndLock = async function (ctx, name, docId, fencingToken, ttl) {
   const key = `${this._docBase(ctx, docId)}${name}`;
-  const result = await this._eval(LOCK_SCRIPT, [key], [jsonEncode(fencingToken), String(ttlMilliseconds(ttl))]);
-  return Number(result) === 1;
+  try {
+    const result = await this._eval(LOCK_SCRIPT, [key], [jsonEncode(fencingToken), String(ttlMilliseconds(ttl))]);
+    return Number(result) === 1;
+  } catch (_error) {
+    // Redis availability must never make a caller believe that it acquired a
+    // lock. Denying the lock is safe; treating the failure as an acquisition
+    // could allow concurrent writers to proceed.
+    return false;
+  }
 };
 
 EditorCommon.prototype._checkAndUnlock = async function (ctx, name, docId, fencingToken) {
   const key = `${this._docBase(ctx, docId)}${name}`;
   const unlock = commonDefines.c_oAscUnlockRes;
-  const result = await this._eval(
-    UNLOCK_SCRIPT,
-    [key],
-    [jsonEncode(fencingToken), String(unlock.Unlocked), String(unlock.Empty), String(unlock.Locked)]
-  );
-  return Number(result);
+  try {
+    const result = await this._eval(
+      UNLOCK_SCRIPT,
+      [key],
+      [jsonEncode(fencingToken), String(unlock.Unlocked), String(unlock.Empty), String(unlock.Locked)]
+    );
+    return Number(result);
+  } catch (_error) {
+    // The caller must not continue down the "unlocked" branch when the result
+    // is unknown. Locked is the fail-closed enum value used by callers.
+    return unlock.Locked;
+  }
 };
 
 module.exports = {
