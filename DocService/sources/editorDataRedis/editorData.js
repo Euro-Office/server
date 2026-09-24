@@ -1,5 +1,7 @@
 'use strict';
 
+const {randomUUID} = require('crypto');
+
 const {
   EditorCommon,
   cfgRedisPrefix,
@@ -24,6 +26,9 @@ const {
   PREPARE_PRESENCE_REMOVAL_SCRIPT,
   REMOVE_DOCUMENT_INDEX_SCRIPT,
   POP_EXPIRED_SCRIPT,
+  ACK_EXPIRED_SCRIPT,
+  POP_EXPIRED_BATCH_SIZE,
+  POP_EXPIRED_LEASE_MS,
   ADD_LOCKS_SCRIPT,
   ADD_LOCKS_NX_SCRIPT,
   REMOVE_LOCKS_SCRIPT,
@@ -35,10 +40,21 @@ const {
   CLEAN_DOCUMENT_SCRIPT
 } = require('./base');
 
+const expiredClaimIds = new WeakMap();
+
 function EditorData() {
   EditorCommon.call(this);
   this.documentsKey = `${cfgRedisPrefix}{editor:index}:documents`;
   this.forceSaveTimerKey = `${cfgRedisPrefix}{editor:index}:forcesavetimer`;
+  this.documentsExpiredLeaseKey = `${cfgRedisPrefix}{editor:index}:documents:expired:lease`;
+  this.documentsExpiredClaimsKey = `${cfgRedisPrefix}{editor:index}:documents:expired:claims`;
+  this.forceSaveExpiredLeaseKey = `${cfgRedisPrefix}{editor:index}:forcesavetimer:expired:lease`;
+  this.forceSaveExpiredClaimsKey = `${cfgRedisPrefix}{editor:index}:forcesavetimer:expired:claims`;
+  this.expiredClaimOwner = randomUUID();
+  this.expiredClaimSequence = 0;
+  // Tests can shorten this internal lease; production keeps enough time for a
+  // normal GC pass while still recovering a lost response on a later pass.
+  this.expiredClaimLeaseMs = POP_EXPIRED_LEASE_MS;
 }
 
 EditorData.prototype = Object.create(EditorCommon.prototype);
@@ -116,16 +132,45 @@ EditorData.prototype.unlockAuth = async function (ctx, docId, userId) {
   return this._checkAndUnlock(ctx, 'lockdocument', docId, userId);
 };
 
-EditorData.prototype.getDocumentPresenceExpired = async function (now) {
-  const values = await this._eval(POP_EXPIRED_SCRIPT, [this.documentsKey], [strictMax(now)]);
+EditorData.prototype._nextExpiredClaim = function () {
+  this.expiredClaimSequence += 1;
+  return `${this.expiredClaimOwner}:${this.expiredClaimSequence}`;
+};
+
+EditorData.prototype._popExpired = async function (indexKey, leaseKey, claimsKey, now) {
+  const claimId = this._nextExpiredClaim();
+  const values = await this._eval(
+    POP_EXPIRED_SCRIPT,
+    [indexKey, leaseKey, claimsKey],
+    [strictMax(now), String(Date.now() + this.expiredClaimLeaseMs), String(POP_EXPIRED_BATCH_SIZE), claimId]
+  );
   const result = [];
   for (const value of values || []) {
     const item = decodeDocumentMember(value);
     if (item) {
+      expiredClaimIds.set(item, claimId);
       result.push(item);
     }
   }
   return result;
+};
+
+EditorData.prototype._ackExpired = async function (leaseKey, claimsKey, item) {
+  const claimId = item && expiredClaimIds.get(item);
+  if (!claimId) {
+    return false;
+  }
+  const member = documentMember({tenant: item[0]}, item[1]);
+  const result = await this._eval(ACK_EXPIRED_SCRIPT, [leaseKey, claimsKey], [claimId, member]);
+  return Number(result) === 1;
+};
+
+EditorData.prototype._ackDocumentPresenceExpired = function (item) {
+  return this._ackExpired(this.documentsExpiredLeaseKey, this.documentsExpiredClaimsKey, item);
+};
+
+EditorData.prototype.getDocumentPresenceExpired = function (now) {
+  return this._popExpired(this.documentsKey, this.documentsExpiredLeaseKey, this.documentsExpiredClaimsKey, now);
 };
 
 EditorData.prototype.removePresenceDocument = async function (ctx, docId) {
@@ -256,16 +301,12 @@ EditorData.prototype.addForceSaveTimerNX = async function (ctx, docId, expireAt)
   await this._command(['ZADD', this.forceSaveTimerKey, 'NX', String(expireAt), documentMember(ctx, docId)]);
 };
 
-EditorData.prototype.getForceSaveTimer = async function (now) {
-  const values = await this._eval(POP_EXPIRED_SCRIPT, [this.forceSaveTimerKey], [strictMax(now)]);
-  const result = [];
-  for (const value of values || []) {
-    const item = decodeDocumentMember(value);
-    if (item) {
-      result.push(item);
-    }
-  }
-  return result;
+EditorData.prototype._ackForceSaveTimer = function (item) {
+  return this._ackExpired(this.forceSaveExpiredLeaseKey, this.forceSaveExpiredClaimsKey, item);
+};
+
+EditorData.prototype.getForceSaveTimer = function (now) {
+  return this._popExpired(this.forceSaveTimerKey, this.forceSaveExpiredLeaseKey, this.forceSaveExpiredClaimsKey, now);
 };
 
 module.exports = EditorData;
