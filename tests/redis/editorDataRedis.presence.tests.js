@@ -47,10 +47,7 @@ describe('editorDataRedis presence invariants', () => {
 
     for (let round = 0; round < 25; round++) {
       await stores[0].addPresence(ctx, docId, 'user-1', info);
-      await Promise.all([
-        stores[0].updatePresence(ctx, docId, 'user-1'),
-        stores[1].removePresence(ctx, docId, 'user-1')
-      ]);
+      await Promise.all([stores[0].updatePresence(ctx, docId, 'user-1'), stores[1].removePresence(ctx, docId, 'user-1')]);
 
       const members = await stores[0]._command(['ZRANGE', keys.presenceSet, '0', '-1']);
       const fields = await stores[0]._command(['HKEYS', keys.presenceHash]);
