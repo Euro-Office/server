@@ -62,4 +62,16 @@ describe('editorDataRedis failure policy', () => {
     await assert.rejects(data.getDocumentPresenceExpired(Date.now()), /Redis unavailable/);
     await assert.rejects(data.getForceSaveTimer(Date.now()), /Redis unavailable/);
   });
+
+  test('does not continue destructive document cleanup after a Redis failure', async () => {
+    let evalCalls = 0;
+    data._eval = async () => {
+      evalCalls++;
+      throw new Error('Redis unavailable');
+    };
+    const ctx = context('cleanup-failure');
+
+    await assert.rejects(data.cleanDocumentOnExit(ctx, 'document'), /Redis unavailable/);
+    assert.equal(evalCalls, 1);
+  });
 });
