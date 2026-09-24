@@ -7,19 +7,7 @@ const {afterEach, describe, test} = require('@jest/globals');
 
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
 const {POP_EXPIRED_BATCH_SIZE, POP_EXPIRED_SCRIPT, strictMax, documentMember} = require('../../DocService/sources/editorDataRedis/base');
-
-function context(tenant) {
-  return {
-    tenant,
-    getCfg(_path, fallback) {
-      return fallback;
-    }
-  };
-}
-
-function wait(milliseconds) {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
+const {context, wait} = require('./testHelpers');
 
 const queues = {
   presence: {

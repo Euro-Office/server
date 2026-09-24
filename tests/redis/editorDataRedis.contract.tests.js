@@ -8,20 +8,7 @@ const {describe, test} = require('@jest/globals');
 const memoryStorage = require('../../DocService/sources/editorDataMemory');
 const redisStorage = require('../../DocService/sources/editorDataRedis');
 const redisBase = require('../../DocService/sources/editorDataRedis/base');
-
-function publicMethods(instance) {
-  const result = new Set();
-  let prototype = Object.getPrototypeOf(instance);
-  while (prototype && prototype !== Object.prototype) {
-    for (const name of Object.getOwnPropertyNames(prototype)) {
-      if (name !== 'constructor' && !name.startsWith('_') && typeof prototype[name] === 'function') {
-        result.add(name);
-      }
-    }
-    prototype = Object.getPrototypeOf(prototype);
-  }
-  return [...result].sort();
-}
+const {publicMethods} = require('./testHelpers');
 
 const ctx = {tenant: 'tenant:世界'};
 

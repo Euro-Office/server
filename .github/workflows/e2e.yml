@@ -122,6 +122,39 @@ jobs:
             -f overlay.Dockerfile \
             server/deploy
 
+      - name: Run packaged Redis editor data smoke test
+        working-directory: server
+        run: |
+          set -euo pipefail
+          CONTAINER=redis-editor-data-pkg-smoke
+          cleanup() {
+            docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --name "$CONTAINER" "$OVERLAY_IMAGE" >/dev/null
+
+          ready=false
+          for attempt in $(seq 1 120); do
+            if docker exec "$CONTAINER" curl -fsS http://127.0.0.1/healthcheck | grep -qx true; then
+              ready=true
+              break
+            fi
+            if [ "$attempt" -eq 120 ]; then
+              docker logs "$CONTAINER"
+            else
+              sleep 2
+            fi
+          done
+          test "$ready" = true
+
+          docker exec -i "$CONTAINER" sh -s < tests/redis/editorDataRedis.pkg-e2e.sh
+
+      - name: Clean up packaged Redis editor data smoke test
+        if: always()
+        run: docker rm -f redis-editor-data-pkg-smoke >/dev/null 2>&1 || true
+
       - name: Install e2e dependencies
         working-directory: documentserver/e2e
         run: npm ci
