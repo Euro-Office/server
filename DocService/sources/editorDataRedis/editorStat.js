@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const {
   EditorCommon,
-  cfgExpPresence,
+  cfgExpShard,
   cfgExpMonthUniqueUsers,
   ttlSeconds,
   ttlMilliseconds,
@@ -157,19 +157,19 @@ EditorStat.prototype._shardKeys = function (ctx, type) {
 };
 
 EditorStat.prototype._setShardCount = async function (ctx, type, shardId, count) {
-  const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.presence', cfgExpPresence);
+  const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
   const keys = this._shardKeys(ctx, type);
   return this._eval(SET_SHARD_COUNT_SCRIPT, [keys.count, keys.updated], [String(shardId), String(count), String(Date.now()), String(ttl)]);
 };
 
 EditorStat.prototype._incrShardCount = async function (ctx, type, shardId, count) {
-  const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.presence', cfgExpPresence);
+  const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
   const keys = this._shardKeys(ctx, type);
   return this._eval(INCR_SHARD_COUNT_SCRIPT, [keys.count, keys.updated], [String(shardId), String(count), String(Date.now()), String(ttl)]);
 };
 
 EditorStat.prototype._getShardCount = async function (ctx, type) {
-  const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.presence', cfgExpPresence);
+  const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
   const keys = this._shardKeys(ctx, type);
   const result = await this._eval(GET_SHARD_COUNT_SCRIPT, [keys.count, keys.updated], [String(Date.now() - ttl * 1000)]);
   return Number(result) || 0;

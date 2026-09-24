@@ -418,6 +418,7 @@
       "expire": {
         "saveLock": 60,
         "presence": 300,
+        "shard": 300,
         "locks": 604800,
         "changeindex": 86400,
         "lockDoc": 30,
