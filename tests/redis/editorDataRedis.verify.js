@@ -6,19 +6,7 @@ const assert = require('node:assert/strict');
 
 const commonDefines = require('../../Common/sources/commondefines');
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
-
-function context(tenant, overrides = {}) {
-  return {
-    tenant,
-    getCfg(path, fallback) {
-      return Object.hasOwn(overrides, path) ? overrides[path] : fallback;
-    }
-  };
-}
-
-function wait(milliseconds) {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
+const {context, publicMethods, wait} = require('./testHelpers');
 
 async function race(count, action) {
   let release;
@@ -28,20 +16,6 @@ async function race(count, action) {
   const tasks = Array.from({length: count}, (_, index) => gate.then(() => action(index)));
   release();
   return Promise.all(tasks);
-}
-
-function collectMethods(instance) {
-  const result = new Set();
-  let prototype = Object.getPrototypeOf(instance);
-  while (prototype && prototype !== Object.prototype) {
-    for (const name of Object.getOwnPropertyNames(prototype)) {
-      if (name !== 'constructor' && typeof prototype[name] === 'function' && !name.startsWith('_')) {
-        result.add(name);
-      }
-    }
-    prototype = Object.getPrototypeOf(prototype);
-  }
-  return [...result].sort();
 }
 
 async function verify() {
@@ -124,8 +98,8 @@ async function verify() {
       'setLiveViewerConnectionsCountByShard',
       'setViewerConnectionsCountByShard'
     ].sort();
-    assert.deepEqual(collectMethods(data), expectedDataMethods);
-    assert.deepEqual(collectMethods(stat), expectedStatMethods);
+    assert.deepEqual(publicMethods(data), expectedDataMethods);
+    assert.deepEqual(publicMethods(stat), expectedStatMethods);
 
     await Promise.all(Array.from({length: 20}, () => data.connect()));
     assert.equal(data.isConnected(), true);

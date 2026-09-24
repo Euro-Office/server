@@ -1,7 +1,5 @@
 'use strict';
 
-require('./testSetup');
-
 const config = require('./testSetup');
 
 const storageName = config.get('services.CoAuthoring.server.editorDataStorage');

@@ -6,15 +6,7 @@ const assert = require('node:assert/strict');
 const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
-
-function context(tenant, overrides = {}) {
-  return {
-    tenant,
-    getCfg(path, fallback) {
-      return Object.hasOwn(overrides, path) ? overrides[path] : fallback;
-    }
-  };
-}
+const {context} = require('./testHelpers');
 
 describe('editorDataRedis presence invariants', () => {
   let stores;
