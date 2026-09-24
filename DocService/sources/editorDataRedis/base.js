@@ -62,6 +62,8 @@ const {
 const REDIS_LOG_PREFIX = '[editorDataRedis]';
 const REDIS_CONNECT_TIMEOUT_MS = 15000;
 const REDIS_COMMAND_TIMEOUT_MS = 30000;
+// editorDataRedis consumes RESP2 array replies; node-redis 6 defaults to RESP3.
+const REDIS_RESP_VERSION = 2;
 const POP_EXPIRED_BATCH_SIZE = 100;
 const POP_EXPIRED_LEASE_MS = 5 * 60 * 1000;
 
@@ -98,6 +100,7 @@ function normalizeCommandOptions(source) {
 
 function normalizeNodeOptions(source, database, includeEndpoint = true, includeCommandOptions = true) {
   const options = cloneConfig(source) || {};
+  options.RESP = REDIS_RESP_VERSION;
   if (options.user !== undefined && options.username === undefined) {
     options.username = options.user;
   }
@@ -137,14 +140,17 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
 function normalizeClusterOptions(source) {
   const options = cloneConfig(source) || {};
   options.defaults = normalizeNodeOptions(options.defaults || {}, undefined, false, false);
+  delete options.defaults.RESP;
   delete options.defaults.database;
   delete options.defaults.commandOptions;
   options.commandOptions = normalizeCommandOptions(options.commandOptions);
+  options.RESP = REDIS_RESP_VERSION;
   return options;
 }
 
 function normalizeSentinelOptions(source, database) {
   const options = cloneConfig(source) || {};
+  options.RESP = REDIS_RESP_VERSION;
   if (!options.name) {
     throw new Error('Redis Sentinel requires optionsSentinel.name');
   }
