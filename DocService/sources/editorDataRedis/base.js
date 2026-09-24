@@ -77,6 +77,7 @@ const cfgRedisOptionsCluster = cfgRedis.get('optionsCluster');
 const cfgRedisOptionsSentinel = cfgRedis.get('optionsSentinel');
 
 const cfgExpPresence = config.get('services.CoAuthoring.expire.presence');
+const cfgExpShard = config.get('services.CoAuthoring.expire.shard');
 const cfgExpLocks = config.get('services.CoAuthoring.expire.locks');
 const cfgExpMessage = config.get('services.CoAuthoring.expire.message');
 const cfgExpForceSave = config.get('services.CoAuthoring.expire.forcesave');
@@ -646,6 +647,7 @@ module.exports = {
   normalizeSentinelOptions,
   cfgRedisPrefix,
   cfgExpPresence,
+  cfgExpShard,
   cfgExpLocks,
   cfgExpMessage,
   cfgExpForceSave,

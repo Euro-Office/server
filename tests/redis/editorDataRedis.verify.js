@@ -266,7 +266,7 @@ async function verify() {
     assert.equal(await stat.getViewerConnectionsCount(ctx), 7);
     assert.equal(await stat.getLiveViewerConnectionsCount(ctx), 11);
     assert.equal(await stat.getEditorConnectionsCount(otherCtx), 0);
-    const shortShardCtx = context('short-shard', {'services.CoAuthoring.expire.presence': 1});
+    const shortShardCtx = context('short-shard', {'services.CoAuthoring.expire.shard': 1});
     await stat.setEditorConnectionsCountByShard(shortShardCtx, 'stale', 10);
     await stat.setEditorConnectionsCountByShard(shortShardCtx, 'fresh', 20);
     await wait(650);
