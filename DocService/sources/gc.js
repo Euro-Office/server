@@ -52,6 +52,11 @@ function getCronStep(cronTime) {
 const expFilesStep = getCronStep(cfgExpFilesCron);
 const expDocumentsStep = getCronStep(cfgExpDocumentsCron);
 
+function acknowledgeExpired(editorData, method, item) {
+  const acknowledge = editorData[method];
+  return typeof acknowledge === 'function' ? acknowledge.call(editorData, item) : undefined;
+}
+
 const checkFileExpire = function (expireSeconds) {
   return co(function* () {
     const ctx = new operationContext.Context();
@@ -160,6 +165,7 @@ const checkDocumentExpire = function () {
               removedCount++;
             }
           }
+          yield acknowledgeExpired(docsCoServer.editorData, '_ackDocumentPresenceExpired', expiredKeys[i]);
         }
       }
       ctx.initDefault();
@@ -204,8 +210,9 @@ const forceSaveTimeout = function () {
         let currentTenant = null;
 
         for (let i = 0; i < expiredKeys.length; ++i) {
-          const tenant = expiredKeys[i][0];
-          const docId = expiredKeys[i][1];
+          const expiredKey = expiredKeys[i];
+          const tenant = expiredKey[0];
+          const docId = expiredKey[1];
           if (docId) {
             if (currentTenant !== tenant) {
               ctx.init(tenant, docId, ctx.userId);
@@ -217,24 +224,28 @@ const forceSaveTimeout = function () {
             }
 
             actions.push(
-              docsCoServer.startForceSave(
-                ctx,
-                docId,
-                commondefines.c_oAscForceSaveTypes.Timeout,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                queue,
-                pubsub,
-                undefined,
-                true
-              )
+              docsCoServer
+                .startForceSave(
+                  ctx,
+                  docId,
+                  commondefines.c_oAscForceSaveTypes.Timeout,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  queue,
+                  pubsub,
+                  undefined,
+                  true
+                )
+                .then(() => acknowledgeExpired(docsCoServer.editorData, '_ackForceSaveTimer', expiredKey))
             );
+          } else {
+            actions.push(Promise.resolve(acknowledgeExpired(docsCoServer.editorData, '_ackForceSaveTimer', expiredKey)));
           }
         }
         yield Promise.all(actions);
