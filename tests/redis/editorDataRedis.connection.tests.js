@@ -20,6 +20,10 @@ function fakeClient(properties = {}) {
 }
 
 describe('editorDataRedis connection contract', () => {
+  test('uses RESP2 for standalone node-redis clients', () => {
+    assert.equal(normalizeNodeOptions({}, 0).RESP, 2);
+  });
+
   test('applies the adapter timeout to node-redis command options', () => {
     assert.equal(normalizeNodeOptions({}, 0).commandOptions.timeout, 30000);
     assert.equal(normalizeNodeOptions({commandOptions: {timeout: 0}}, 0).commandOptions.timeout, 0);
@@ -34,6 +38,7 @@ describe('editorDataRedis connection contract', () => {
     assert.deepEqual(options.rootNodes, [{url: 'redis://cluster-node:7000'}]);
     assert.deepEqual(options.defaults, {password: 'secret', socket: {connectTimeout: 15000}});
     assert.equal(options.commandOptions.timeout, 30000);
+    assert.equal(options.RESP, 2);
   });
 
   test('normalizes native Sentinel options and applies the selected database to node clients', () => {
@@ -48,10 +53,13 @@ describe('editorDataRedis connection contract', () => {
     );
 
     assert.deepEqual(options.sentinelRootNodes, [{host: 'sentinel-a', port: 26379}]);
+    assert.equal(options.RESP, 2);
     assert.equal(options.nodeClientOptions.username, 'redis-user');
     assert.equal(options.nodeClientOptions.database, 2);
+    assert.equal(options.nodeClientOptions.RESP, 2);
     assert.equal(options.nodeClientOptions.socket.tls, true);
     assert.equal(options.sentinelClientOptions.password, 'sentinel-password');
+    assert.equal(options.sentinelClientOptions.RESP, 2);
     assert.equal(options.commandOptions.timeout, 30000);
   });
 
