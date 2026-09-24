@@ -7,11 +7,11 @@ const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
 
-function context(tenant) {
+function context(tenant, overrides = {}) {
   return {
     tenant,
-    getCfg(_path, fallback) {
-      return fallback;
+    getCfg(path, fallback) {
+      return Object.hasOwn(overrides, path) ? overrides[path] : fallback;
     }
   };
 }
@@ -62,6 +62,74 @@ describe('editorDataRedis edge cases', () => {
 
     assert.deepEqual(await data.getMessages(ctx, docId), []);
     assert.deepEqual(await data.getForceSaveTimer(Date.now() + 120000), []);
+  });
+
+  test('force-save transitions preserve opaque payloads and compare-and-set state', async () => {
+    const ctx = context('force-save-payloads', {'services.CoAuthoring.expire.forcesave': 10});
+    const docId = 'document';
+    const changeInfo = {
+      empty: [],
+      nested: {empty: []},
+      largeNumber: 123456789012345
+    };
+    const initialConvertInfo = {
+      empty: [],
+      nested: {empty: []},
+      largeNumber: 123456789012345
+    };
+
+    await data.setForceSave(ctx, docId, 100, 5, 'https://example.test', changeInfo, initialConvertInfo);
+    const key = data._docKeys(ctx, docId).forceSave;
+    assert.ok((await data._command(['TTL', key])) > 0);
+
+    const beforeStart = await data.getForceSave(ctx, docId);
+    assert.deepEqual(beforeStart.changeInfo, changeInfo);
+    assert.deepEqual(beforeStart.convertInfo, initialConvertInfo);
+    assert.equal(beforeStart.started, false);
+    assert.equal(beforeStart.ended, false);
+
+    const started = await data.checkAndStartForceSave(ctx, docId);
+    assert.deepEqual(started.changeInfo, changeInfo);
+    assert.deepEqual(started.convertInfo, initialConvertInfo);
+    assert.equal(started.started, true);
+    assert.equal(started.ended, false);
+    assert.ok((await data._command(['TTL', key])) > 0);
+    assert.equal(await data.checkAndStartForceSave(ctx, docId), undefined);
+
+    const stale = await data.checkAndSetForceSave(ctx, docId, 99, 5, false, true, {stale: true});
+    assert.equal(stale, undefined);
+    const afterStale = await data.getForceSave(ctx, docId);
+    assert.deepEqual(afterStale.changeInfo, changeInfo);
+    assert.deepEqual(afterStale.convertInfo, initialConvertInfo);
+    assert.equal(afterStale.started, true);
+    assert.equal(afterStale.ended, false);
+
+    const endedConvertInfo = {empty: [], nested: {empty: []}, largeNumber: 123456789012345};
+    const ended = await data.checkAndSetForceSave(ctx, docId, 100, 5, false, true, endedConvertInfo);
+    assert.deepEqual(ended.changeInfo, changeInfo);
+    assert.deepEqual(ended.convertInfo, endedConvertInfo);
+    assert.equal(ended.started, false);
+    assert.equal(ended.ended, true);
+    assert.ok((await data._command(['TTL', key])) > 0);
+
+    await data.checkAndSetForceSave(ctx, docId, 100, 5, false, false, null);
+    const nullConvertInfo = await data.getForceSave(ctx, docId);
+    assert.deepEqual(nullConvertInfo.changeInfo, changeInfo);
+    assert.equal(nullConvertInfo.convertInfo, null);
+
+    await data.checkAndSetForceSave(ctx, docId, 100, 5, false, false, undefined);
+    const undefinedConvertInfo = await data.getForceSave(ctx, docId);
+    assert.deepEqual(undefinedConvertInfo.changeInfo, changeInfo);
+    assert.equal(undefinedConvertInfo.convertInfo, undefined);
+    assert.equal(Object.hasOwn(undefinedConvertInfo, 'convertInfo'), true);
+
+    const nullAndMissingDocId = 'null-and-missing';
+    await data.setForceSave(ctx, nullAndMissingDocId, 101, 6, 'https://example.test', null, undefined);
+    const nullAndMissing = await data.checkAndStartForceSave(ctx, nullAndMissingDocId);
+    assert.equal(nullAndMissing.changeInfo, null);
+    assert.equal(nullAndMissing.convertInfo, undefined);
+    assert.equal(Object.hasOwn(nullAndMissing, 'changeInfo'), true);
+    assert.equal(Object.hasOwn(nullAndMissing, 'convertInfo'), true);
   });
 
   test('updating a unique user replaces its information without duplicating the user', async () => {
