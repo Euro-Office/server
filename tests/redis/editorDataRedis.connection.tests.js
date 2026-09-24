@@ -37,12 +37,15 @@ describe('editorDataRedis connection contract', () => {
   });
 
   test('normalizes native Sentinel options and applies the selected database to node clients', () => {
-    const options = normalizeSentinelOptions({
-      name: 'mymaster',
-      sentinelRootNodes: [{host: 'sentinel-a', port: '26379'}],
-      nodeClientOptions: {user: 'redis-user', socket: {tls: true}},
-      sentinelClientOptions: {password: 'sentinel-password'}
-    }, 2);
+    const options = normalizeSentinelOptions(
+      {
+        name: 'mymaster',
+        sentinelRootNodes: [{host: 'sentinel-a', port: '26379'}],
+        nodeClientOptions: {user: 'redis-user', socket: {tls: true}},
+        sentinelClientOptions: {password: 'sentinel-password'}
+      },
+      2
+    );
 
     assert.deepEqual(options.sentinelRootNodes, [{host: 'sentinel-a', port: 26379}]);
     assert.equal(options.nodeClientOptions.username, 'redis-user');
@@ -127,8 +130,17 @@ describe('editorDataRedis connection contract', () => {
     connection.connector = 'redis';
     connection.cluster = false;
 
-    assert.deepEqual(await connection.commands([[Buffer.from('SET'), 'key', 'value'], ['GET', 'key']]), ['OK', 1]);
-    assert.deepEqual(added, [['SET', 'key', 'value'], ['GET', 'key']]);
+    assert.deepEqual(
+      await connection.commands([
+        [Buffer.from('SET'), 'key', 'value'],
+        ['GET', 'key']
+      ]),
+      ['OK', 1]
+    );
+    assert.deepEqual(added, [
+      ['SET', 'key', 'value'],
+      ['GET', 'key']
+    ]);
   });
 
   test('uses the native Sentinel batch-command signature', async () => {
@@ -147,7 +159,13 @@ describe('editorDataRedis connection contract', () => {
     connection.connector = 'redis';
     connection.sentinel = true;
 
-    assert.deepEqual(await connection.commands([[Buffer.from('SET'), 'key', 'value'], ['GET', 'key']]), ['OK', 1]);
+    assert.deepEqual(
+      await connection.commands([
+        [Buffer.from('SET'), 'key', 'value'],
+        ['GET', 'key']
+      ]),
+      ['OK', 1]
+    );
     assert.deepEqual(added, [
       [false, ['SET', 'key', 'value']],
       [false, ['GET', 'key']]
@@ -166,7 +184,13 @@ describe('editorDataRedis connection contract', () => {
     connection.connector = 'redis';
     connection.cluster = true;
 
-    assert.deepEqual(await connection.commands([['SET', 'key-a', 'a'], ['SET', 'key-b', 'b']]), ['OK', 'OK']);
+    assert.deepEqual(
+      await connection.commands([
+        ['SET', 'key-a', 'a'],
+        ['SET', 'key-b', 'b']
+      ]),
+      ['OK', 'OK']
+    );
     assert.deepEqual(calls, [
       ['key-a', false, ['SET', 'key-a', 'a']],
       ['key-b', false, ['SET', 'key-b', 'b']]
