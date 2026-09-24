@@ -221,8 +221,12 @@ EditorStat.prototype.removeLicense = async function (key) {
 
 EditorStat.prototype.lockNotification = async function (ctx, notificationType, ttl) {
   const key = `${this._statBase(ctx)}notification:${encodePart(notificationType)}`;
-  const result = await this._command(['SET', key, '1', 'NX', 'PX', String(ttlMilliseconds(ttl))]);
-  return result === 'OK';
+  try {
+    const result = await this._command(['SET', key, '1', 'NX', 'PX', String(ttlMilliseconds(ttl))]);
+    return result === 'OK';
+  } catch (_error) {
+    return false;
+  }
 };
 
 EditorStat.prototype.deleteKey = async function (key) {
