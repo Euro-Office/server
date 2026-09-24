@@ -192,54 +192,69 @@ end
 return value
 `;
 
+// Force-save records use one hash field per scalar and payload.  Payload
+// fields contain JSON encoded by Node.js and are never decoded by Redis Lua.
+// The *Defined fields distinguish null from an omitted/undefined argument.
+const FORCE_SAVE_FIELDS = [
+  'time',
+  'index',
+  'baseUrl',
+  'baseUrlDefined',
+  'changeInfo',
+  'changeInfoDefined',
+  'convertInfo',
+  'convertInfoDefined',
+  'started',
+  'ended'
+];
+
 const START_FORCE_SAVE_SCRIPT = `
-local raw = redis.call('HGET', KEYS[1], 'state')
-if not raw then
+local time = redis.call('HGET', KEYS[1], 'time')
+if not time then
   return nil
 end
-local ok, value = pcall(cjson.decode, raw)
-if not ok or value.started then
+if redis.call('HGET', KEYS[1], 'started') == '1' then
   return nil
 end
-value.started = true
-value.ended = false
-value.convertInfo = nil
-local updated = cjson.encode(value)
-redis.call('HSET', KEYS[1], 'state', updated)
+redis.call('HSET', KEYS[1], 'started', '1', 'ended', '0')
 redis.call('EXPIRE', KEYS[1], ARGV[1])
-return updated
+return redis.call('HMGET', KEYS[1], 'time', 'index', 'baseUrl', 'baseUrlDefined', 'changeInfo', 'changeInfoDefined', 'convertInfo', 'convertInfoDefined', 'started', 'ended')
 `;
 
 const SET_FORCE_SAVE_SCRIPT = `
-local raw = redis.call('HGET', KEYS[1], 'state')
-if not raw then
+local time = redis.call('HGET', KEYS[1], 'time')
+if not time then
   return nil
 end
-local ok, value = pcall(cjson.decode, raw)
-if not ok then
+local index = redis.call('HGET', KEYS[1], 'index')
+if time ~= ARGV[1] or index ~= ARGV[2] then
   return nil
 end
-local expectedTime = cjson.decode(ARGV[1])
-local expectedIndex = cjson.decode(ARGV[2])
-if value.time ~= expectedTime or value.index ~= expectedIndex then
-  return nil
-end
-value.started = ARGV[3] == '1'
-value.ended = ARGV[4] == '1'
+redis.call('HSET', KEYS[1], 'started', ARGV[3], 'ended', ARGV[4])
 if ARGV[5] == '1' then
-  value.convertInfo = cjson.decode(ARGV[6])
+  redis.call('HSET', KEYS[1], 'convertInfo', ARGV[6], 'convertInfoDefined', '1')
 else
-  value.convertInfo = nil
+  redis.call('HSET', KEYS[1], 'convertInfo', '', 'convertInfoDefined', '0')
 end
-local updated = cjson.encode(value)
-redis.call('HSET', KEYS[1], 'state', updated)
 redis.call('EXPIRE', KEYS[1], ARGV[7])
-return updated
+return redis.call('HMGET', KEYS[1], 'time', 'index', 'baseUrl', 'baseUrlDefined', 'changeInfo', 'changeInfoDefined', 'convertInfo', 'convertInfoDefined', 'started', 'ended')
 `;
 
 const STORE_FORCE_SAVE_SCRIPT = `
-redis.call('HSET', KEYS[1], 'state', ARGV[1])
-redis.call('EXPIRE', KEYS[1], ARGV[2])
+-- This schema is intentionally new and has no compatibility path for the
+-- pre-release single-field state representation.
+redis.call('HSET', KEYS[1],
+  'time', ARGV[1],
+  'index', ARGV[2],
+  'baseUrl', ARGV[3],
+  'baseUrlDefined', ARGV[4],
+  'changeInfo', ARGV[5],
+  'changeInfoDefined', ARGV[6],
+  'convertInfo', ARGV[7],
+  'convertInfoDefined', ARGV[8],
+  'started', '0',
+  'ended', '0')
+redis.call('EXPIRE', KEYS[1], ARGV[9])
 return 1
 `;
 
@@ -354,6 +369,7 @@ module.exports = {
   REMOVE_LOCKS_SCRIPT,
   ADD_MESSAGE_SCRIPT,
   GETDEL_SCRIPT,
+  FORCE_SAVE_FIELDS,
   START_FORCE_SAVE_SCRIPT,
   SET_FORCE_SAVE_SCRIPT,
   STORE_FORCE_SAVE_SCRIPT,
