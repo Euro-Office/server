@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const {afterEach, describe, test} = require('@jest/globals');
 
 const {EditorStat} = require('../../DocService/sources/editorDataRedis');
-const {cfgExpShard} = require('../../DocService/sources/editorDataRedis/base');
+const {cfgExpShard} = require('../../DocService/sources/editorDataRedis/editorStatSettings');
 const {context} = require('./testHelpers');
 
 const stores = new Set();

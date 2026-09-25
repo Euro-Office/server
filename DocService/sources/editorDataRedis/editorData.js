@@ -1,24 +1,25 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Euro-Office contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 'use strict';
 
 const {randomUUID} = require('crypto');
 
+const {EditorCommon} = require('./editorCommon');
+const {cfgRedisPrefix, documentMember, decodeDocumentMember} = require('./redisKeys');
+const {ttlSeconds, jsonEncode, jsonDecode, decodeHash, argsFromObject, strictMax, toRedisString} = require('./redisValueCodec');
 const {
-  EditorCommon,
-  cfgRedisPrefix,
   cfgExpPresence,
   cfgExpLocks,
   cfgExpMessage,
   cfgExpForceSave,
   cfgExpSaved,
-  ttlSeconds,
-  jsonEncode,
-  jsonDecode,
-  decodeHash,
-  argsFromObject,
-  strictMax,
-  toRedisString,
-  documentMember,
-  decodeDocumentMember,
+  POP_EXPIRED_BATCH_SIZE,
+  POP_EXPIRED_LEASE_MS
+} = require('./editorDataSettings');
+const {
   ADD_PRESENCE_SCRIPT,
   UPDATE_PRESENCE_SCRIPT,
   GET_PRESENCE_SCRIPT,
@@ -27,8 +28,6 @@ const {
   REMOVE_DOCUMENT_INDEX_SCRIPT,
   POP_EXPIRED_SCRIPT,
   ACK_EXPIRED_SCRIPT,
-  POP_EXPIRED_BATCH_SIZE,
-  POP_EXPIRED_LEASE_MS,
   ADD_LOCKS_SCRIPT,
   ADD_LOCKS_NX_SCRIPT,
   REMOVE_LOCKS_SCRIPT,
@@ -39,7 +38,7 @@ const {
   SET_FORCE_SAVE_SCRIPT,
   STORE_FORCE_SAVE_SCRIPT,
   CLEAN_DOCUMENT_SCRIPT
-} = require('./base');
+} = require('./scripts');
 
 const expiredClaimIds = new WeakMap();
 

@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
-const {documentMember} = require('../../DocService/sources/editorDataRedis/base');
+const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context} = require('./testHelpers');
 
 async function seedDocumentState(data, ctx, docId) {

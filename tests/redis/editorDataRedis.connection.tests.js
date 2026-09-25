@@ -8,14 +8,18 @@ const {describe, test} = require('@jest/globals');
 
 const {
   RedisConnection,
-  normalizeNodeOptions,
-  normalizeClusterOptions,
-  normalizeSentinelOptions,
-  sentinelReconnectStrategy,
   RedisUnavailableError,
   REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
   REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS
-} = require('../../DocService/sources/editorDataRedis/base');
+} = require('../../DocService/sources/editorDataRedis/redisConnection');
+const {RedisConnectionManager, redisConnectionManager, connectionScope} = require('../../DocService/sources/editorDataRedis/redisConnectionManager');
+const {EditorCommon} = require('../../DocService/sources/editorDataRedis/editorCommon');
+const {
+  normalizeNodeOptions,
+  normalizeClusterOptions,
+  normalizeSentinelOptions,
+  sentinelReconnectStrategy
+} = require('../../DocService/sources/editorDataRedis/redisConfig');
 
 function fakeClient(properties = {}) {
   const client = new EventEmitter();
@@ -24,6 +28,117 @@ function fakeClient(properties = {}) {
 }
 
 describe('editorDataRedis connection contract', () => {
+  test('closes each managed client once and rejects new leases after terminal shutdown', async () => {
+    const clients = [];
+    const manager = new RedisConnectionManager(() => {
+      const client = {
+        closeCalls: 0,
+        async close() {
+          this.closeCalls++;
+        }
+      };
+      clients.push(client);
+      return client;
+    });
+    const shared = manager.acquire(undefined, 'shared');
+    const sharedAgain = manager.acquire(undefined, 'shared');
+    const isolated = manager.acquire(undefined, 'isolated');
+
+    assert.equal(shared, sharedAgain);
+    assert.notEqual(shared, isolated);
+    await manager.closeAll({terminal: true});
+    assert.deepEqual(
+      clients.map(client => client.closeCalls),
+      [1, 1]
+    );
+    assert.equal(manager.owns(shared), false);
+    assert.throws(
+      () => manager.acquire(undefined, 'new'),
+      error => error instanceof RedisUnavailableError
+    );
+  });
+
+  test('waits for an in-flight command before closing the physical client', async () => {
+    let resolveCommand;
+    let commandStarted = false;
+    let closeCalled = false;
+    const connection = new RedisConnection();
+    connection.client = fakeClient({
+      sendCommand() {
+        commandStarted = true;
+        return new Promise(resolve => {
+          resolveCommand = resolve;
+        });
+      },
+      async close() {
+        closeCalled = true;
+        this.isOpen = false;
+      }
+    });
+    connection.connector = 'redis';
+
+    const command = connection.command(['PING']);
+    while (!commandStarted) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    const close = connection.close();
+    await Promise.resolve();
+    assert.equal(closeCalled, false);
+    resolveCommand('PONG');
+    assert.equal(await command, 'PONG');
+    await close;
+    assert.equal(closeCalled, true);
+  });
+
+  test('shares default connections and isolates logical databases', async () => {
+    const first = new EditorCommon();
+    const second = new EditorCommon();
+    const proxy = new EditorCommon(7);
+
+    try {
+      assert.equal(first.redis, second.redis);
+      assert.notEqual(first.redis, proxy.redis);
+      assert.equal(redisConnectionManager.size(), 2);
+
+      await first.close();
+      assert.equal(redisConnectionManager.size(), 2);
+      await assert.rejects(first.ping(), error => error instanceof RedisUnavailableError);
+      await second.close();
+      assert.equal(redisConnectionManager.size(), 1);
+      await second.close();
+    } finally {
+      await proxy.close();
+      await first.close();
+      await second.close();
+    }
+    assert.equal(redisConnectionManager.size(), 0);
+  });
+
+  test('closed EditorCommon instances cannot reacquire a lease', async () => {
+    const store = new EditorCommon();
+    const connection = store.redis;
+
+    await store.close();
+
+    assert.equal(store.isConnected(), false);
+    await assert.rejects(store.ping(), error => error instanceof RedisUnavailableError);
+    assert.equal(redisConnectionManager.owns(connection), false);
+  });
+
+  test('shares the default client across info and notification stores', async () => {
+    const infoRouter = require('../../DocService/sources/routes/info');
+    const notificationService = require('../../Common/sources/notificationService');
+    const owner = new EditorCommon();
+
+    try {
+      assert.equal(connectionScope(), connectionScope(0));
+      assert.equal(redisConnectionManager.size(), 1);
+    } finally {
+      await Promise.all([infoRouter.close(), notificationService.close(), owner.close()]);
+    }
+    assert.equal(redisConnectionManager.size(), 0);
+  });
+
   test('uses RESP2 for standalone node-redis clients', () => {
     assert.equal(normalizeNodeOptions({}, 0).RESP, 2);
   });
