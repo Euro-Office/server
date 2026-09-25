@@ -1,38 +1,51 @@
 # Independent-process `editorDataRedis` tests
 
-`editorDataRedis.process.tests.js` forks two Node.js workers, `replica-a` and
-`replica-b`, and waits for both workers to connect before running any scenario.
-Each worker has its own `EditorData`/`EditorStat` instances, event loop, timers,
-Redis connection, PID, and replica identity. The parent communicates with the
-workers using structured Node.js IPC messages containing request IDs. Every
-operation has a deadline and includes the scenario and replica in protocol
-errors.
+`editorDataRedis.process.tests.js` verifies behavior that requires two
+independent Node.js processes sharing the same Redis backend or topology. It
+is separate from the regular Redis tests because those tests create multiple
+storage instances in one process.
 
-The successful-operation trace is run once against one in-memory store and
-once against the two Redis workers. The comparison is limited to observable
-return values and state for methods where `editorDataMemory` is a meaningful
-oracle: locks and unlock enums, object-lock conflict/removal behavior,
-messages, saved get-and-delete, force-save CAS transitions, first-write-wins
-force-save timers, unique-user statistics, and notification mutexes. Redis
-presence, expiry indexes, and expiration claims are tested directly because
-the memory implementation intentionally does not store presence.
+## What the suite does
 
-Redis-only scenarios use ordered operations or two-worker barriers for
-presence visibility/removal/expiry, lock ownership and TTL expiry, message
-races, atomic saved reads, force-save start races, timer claims, and mutex
-races. The crash scenario wraps the first presence EVAL in `replica-a`, waits
-until Redis has acknowledged that command, then holds the worker before the
-public method can complete. The parent sends `SIGKILL`; `replica-b` must still
-see the committed presence, answer a ping, acquire/release a lock, and clean up
-the remaining presence.
+The suite forks two workers, `replica-a` and `replica-b`. Each worker has its
+own `EditorData` and `EditorStat` instances, event loop, timers, Redis
+connection, process ID, and replica identity. The parent communicates with the
+workers through structured Node.js IPC messages containing request IDs.
+Every operation has a deadline, and protocol errors include the scenario and
+replica that produced them.
 
-Every test uses a random prefix derived from `TEST_REDIS_PREFIX`. Workers are
-shut down explicitly, surviving children are terminated in the cleanup path,
-and the parent scans/deletes only that unique prefix. The suite is currently
-standalone-only. The existing standalone CI job discovers it through
-`tests/redis`; the cluster job skips it so a future cluster harness can reuse
-the worker protocol without changing Sentinel configuration.
+One test compares a successful-operation trace between the in-memory backend
+and the two Redis workers. The comparison covers observable results for locks,
+unlock enums, object-lock conflicts and removal, messages, saved-value
+read/delete operations, force-save transitions, first-write-wins force-save
+timers, unique-user statistics, and notification mutexes.
 
-Not covered here: Sentinel topology/failover, Redis connection-failure return
-policy, crash recovery of a lost expiration claim (the production lease is
-five minutes), and packaging or force-save serialization concerns.
+Redis-only scenarios cover cross-process visibility and races for presence,
+presence expiry, locks, messages, saved values, force-save operations, timers,
+and notification mutexes. The crash scenario kills `replica-a` after Redis
+has acknowledged a presence write but before the public method completes.
+`replica-b` must still observe the committed presence, answer a ping, acquire
+and release a lock, and remove the remaining presence.
+
+## Cleanup and topology coverage
+
+Each test uses a unique prefix derived from `TEST_REDIS_PREFIX`. Workers are
+shut down explicitly, surviving children are terminated during cleanup, and
+the parent scans and deletes keys belonging to that prefix.
+
+The process suite runs in the standalone, Cluster, and Sentinel Redis jobs.
+The workers use the same topology configuration as the parent test process.
+Cleanup uses a direct client for standalone Redis, scans every Cluster master,
+and scans the Sentinel-discovered master.
+
+The test topology is selected through the `TEST_REDIS_*` environment variables.
+Those values are parsed and validated by `testConfig.js`, including the
+standalone host and port, Cluster root nodes, Sentinel root nodes and master
+name, key prefix, database number, and mutually exclusive topology flags.
+
+## Not covered by this suite
+
+This file does not test Sentinel master failover, Redis connection-failure
+policy, recovery of a lost expiration claim, packaged-binary loading, or
+force-save payload serialization. Those concerns belong to separate topology,
+failure-policy, packaging, and regular behavior tests respectively.
