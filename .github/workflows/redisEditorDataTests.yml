@@ -6,6 +6,8 @@ on:
       - '**'
     paths:
       - 'DocService/sources/editorDataRedis/**'
+      - 'DocService/sources/editorDataRedis.js'
+      - 'DocService/sources/gc.js'
       - 'DocService/package.json'
       - 'DocService/npm-shrinkwrap.json'
       - 'Common/**'
@@ -16,6 +18,8 @@ on:
   pull_request:
     paths:
       - 'DocService/sources/editorDataRedis/**'
+      - 'DocService/sources/editorDataRedis.js'
+      - 'DocService/sources/gc.js'
       - 'DocService/package.json'
       - 'DocService/npm-shrinkwrap.json'
       - 'Common/**'
