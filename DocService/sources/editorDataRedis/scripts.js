@@ -348,6 +348,9 @@ return result
 `;
 
 const CLEAN_DOCUMENT_SCRIPT = `
+-- Presence is shared by all replicas.  Expire stale entries first, then only
+-- remove document state when no live replica remains; otherwise an exiting
+-- replica could delete another replica's locks or in-flight state.
 local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
 if #expired > 0 then
   redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
