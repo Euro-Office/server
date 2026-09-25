@@ -111,6 +111,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: prepare_editor_data_matrix
 
+    env:
+      TEST_REDIS_CLUSTER: 'true'
+      TEST_REDIS_CLUSTER_NODES: 'redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002'
+      TEST_REDIS_PREFIX: 'ci:editor-data-cluster:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
+
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare_editor_data_matrix.outputs.matrix) }}
@@ -163,13 +168,14 @@ jobs:
           npm --prefix DocService ci
 
       - name: Run ${{ matrix.name }} Cluster editor data tests
-        env:
-          TEST_REDIS_CLUSTER: 'true'
-          TEST_REDIS_CLUSTER_NODES: 'redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002'
-          TEST_REDIS_PREFIX: 'ci:editor-data-cluster:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
         run: |
           echo "Running ${{ matrix.name }} Cluster editor-data tests"
-          npm run tests -- --runInBand ../tests/redis
+          npm run tests -- --runInBand --testPathPattern=redis --testPathIgnorePatterns=editorDataRedis.process.tests.js
+
+      - name: Run ${{ matrix.name }} Cluster independent-process editor data tests
+        run: |
+          echo "Running ${{ matrix.name }} Cluster independent-process editor-data tests"
+          npm run tests -- --runInBand --testPathPattern=redis/editorDataRedis.process.tests.js
 
       - name: Clean up ${{ matrix.name }} Cluster nodes
         if: always()
