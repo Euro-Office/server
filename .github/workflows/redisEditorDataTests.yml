@@ -124,3 +124,106 @@ jobs:
       - name: Clean up Redis Cluster nodes
         if: always()
         run: docker rm -f redis-7000 redis-7001 redis-7002 redis-7003 redis-7004 redis-7005
+
+  redis-editor-data-sentinel-tests:
+    name: Redis Sentinel editor data tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Start Redis Sentinel topology
+        run: |
+          set -euo pipefail
+          docker run --name redis-sentinel-primary --network host -d redis:7-alpine \
+            redis-server --port 6380 --bind 127.0.0.1 --protected-mode no \
+            --appendonly no
+          docker run --name redis-sentinel-replica --network host -d redis:7-alpine \
+            redis-server --port 6381 --bind 127.0.0.1 --protected-mode no \
+            --appendonly no --replicaof 127.0.0.1 6380
+          for sentinel_port in 26379 26380 26381; do
+            docker run --name "redis-sentinel-${sentinel_port}" --network host -d redis:7-alpine \
+              sh -c "printf '%s\\n' \
+                'port ${sentinel_port}' \
+                'bind 127.0.0.1' \
+                'protected-mode no' \
+                'sentinel monitor mymaster 127.0.0.1 6380 2' \
+                'sentinel down-after-milliseconds mymaster 1000' \
+                'sentinel failover-timeout mymaster 5000' \
+                'sentinel parallel-syncs mymaster 1' \
+                > /tmp/sentinel.conf && \
+                exec redis-server /tmp/sentinel.conf --sentinel"
+          done
+
+          for attempt in $(seq 1 30); do
+            if docker exec redis-sentinel-primary redis-cli -p 6380 ping | grep -qx PONG \
+              && docker exec redis-sentinel-replica redis-cli -p 6381 ping | grep -qx PONG; then
+              break
+            fi
+            test "$attempt" -lt 30 || exit 1
+            sleep 1
+          done
+
+          for sentinel_port in 26379 26380 26381; do
+            for attempt in $(seq 1 30); do
+              if docker exec "redis-sentinel-${sentinel_port}" redis-cli -p "$sentinel_port" ping | grep -qx PONG; then
+                break
+              fi
+              test "$attempt" -lt 30 || exit 1
+              sleep 1
+            done
+          done
+
+          for attempt in $(seq 1 30); do
+            master_host=$(docker exec redis-sentinel-26379 redis-cli -p 26379 \
+              sentinel get-master-addr-by-name mymaster | sed -n '1p' || true)
+            master_port=$(docker exec redis-sentinel-26379 redis-cli -p 26379 \
+              sentinel get-master-addr-by-name mymaster | sed -n '2p' || true)
+            replica_role=$(docker exec redis-sentinel-replica redis-cli -p 6381 \
+              info replication | sed -n 's/^role://p' | tr -d '\r' || true)
+            if [ "$master_host" = '127.0.0.1' ] \
+              && [ "$master_port" = '6380' ] \
+              && [ "$replica_role" = 'slave' ]; then
+              break
+            fi
+            test "$attempt" -lt 30 || {
+              echo 'Redis Sentinel topology did not become ready' >&2
+              exit 1
+            }
+            sleep 1
+          done
+
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            ./npm-shrinkwrap.json
+            ./Common/npm-shrinkwrap.json
+            ./DocService/npm-shrinkwrap.json
+
+      - name: Install modules
+        run: |
+          npm ci
+          npm --prefix Common ci
+          npm --prefix DocService ci
+
+      - name: Run Redis Sentinel editor data tests
+        env:
+          TEST_REDIS_SENTINEL: 'true'
+          TEST_REDIS_SENTINEL_NAME: 'mymaster'
+          TEST_REDIS_SENTINEL_NODES: '127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381'
+          TEST_REDIS_PREFIX: 'ci:editor-data-sentinel:${{ github.run_id }}:${{ github.run_attempt }}:'
+        run: npm run tests -- --runInBand ../tests/redis
+
+      - name: Clean up Redis Sentinel topology
+        if: always()
+        run: |
+          docker rm -f \
+            redis-sentinel-primary \
+            redis-sentinel-replica \
+            redis-sentinel-26379 \
+            redis-sentinel-26380 \
+            redis-sentinel-26381 || true
