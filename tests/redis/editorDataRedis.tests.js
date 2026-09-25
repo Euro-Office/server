@@ -52,6 +52,8 @@ test('editorDataRedis healthCheck reports command failures', async () => {
 
 test('editorDataRedis resets the client after a transaction timeout', async () => {
   if (process.env.TEST_REDIS_CLUSTER === 'true') {
+    // Cluster commands are routed individually instead of through MULTI, so
+    // this standalone-only transaction timeout cannot be exercised here.
     return;
   }
 
