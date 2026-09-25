@@ -67,6 +67,17 @@ force-save indexes are sorted sets with timestamp scores; cleanup removes
 expired members, so an index key itself can remain present after its members
 expire.
 
+Expiration cleanup is deliberately processed in batches of 100 members. The
+Redis `POP_EXPIRED` Lua operation is atomic, so this cap bounds both the
+number of sorted-set members it examines and the number it moves into the
+lease/claim sets; a large backlog cannot turn one invocation into an
+unbounded blocking operation. The GC drains a finite backlog over
+`ceil(backlog / 100)` passes. With the default schedules, document-presence
+cleanup runs every 2 seconds (up to 50 members/second) and force-save cleanup
+runs every minute (up to 100 members/minute). A sustained arrival rate above
+those rates will grow the backlog and should be treated as an operational
+capacity issue rather than addressed by making the Lua batch unbounded.
+
 ### Key schema
 
 The configured `services.CoAuthoring.redis.prefix` is prepended to every key

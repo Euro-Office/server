@@ -70,6 +70,13 @@ const REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS = 2000;
 const REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH = 256;
 const REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS = 0;
 const REDIS_UNAVAILABLE_CODE = 'REDIS_UNAVAILABLE';
+
+// Keep expiration claims small because POP_EXPIRED runs atomically in Redis.
+// One invocation examines at most 100 leased members and fills at most the
+// remaining slots from the source index, so the Lua operation cannot grow
+// with the backlog.  GC drains a finite backlog over ceil(backlog / 100)
+// passes (every 2 seconds for presence and every minute for force-save with
+// the default schedules).
 const POP_EXPIRED_BATCH_SIZE = 100;
 const POP_EXPIRED_LEASE_MS = 5 * 60 * 1000;
 
