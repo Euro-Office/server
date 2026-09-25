@@ -12,7 +12,7 @@ const config = require('../../DocService/node_modules/config');
 const redis = require('../../DocService/node_modules/redis');
 const utils = require('../../Common/sources/utils');
 const memoryStorage = require('../../DocService/sources/editorDataMemory');
-const redisBase = require('../../DocService/sources/editorDataRedis/base');
+const redisTopologyConfig = require('../../DocService/sources/editorDataRedis/redisConfig');
 const {context} = require('./testHelpers');
 
 const WORKER_PATH = path.join(__dirname, 'editorDataRedis.process.worker.js');
@@ -71,16 +71,16 @@ async function waitFor(scenario, operation, predicate, timeoutMs = WAIT_TIMEOUT_
 
 function redisOptions() {
   const redisConfig = config.get('services.CoAuthoring.redis');
-  return redisBase.normalizeNodeOptions(redisConfig.get('options') || {}, undefined);
+  return redisTopologyConfig.normalizeNodeOptions(redisConfig.get('options') || {}, undefined);
 }
 
 function createTopologyClient() {
   const redisConfig = config.get('services.CoAuthoring.redis');
   if (process.env.TEST_REDIS_SENTINEL === 'true') {
-    return redis.createSentinel(redisBase.normalizeSentinelOptions(redisConfig.get('optionsSentinel') || {}, undefined));
+    return redis.createSentinel(redisTopologyConfig.normalizeSentinelOptions(redisConfig.get('optionsSentinel') || {}, undefined));
   }
   if (process.env.TEST_REDIS_CLUSTER === 'true') {
-    return redis.createCluster(redisBase.normalizeClusterOptions(redisConfig.get('optionsCluster') || {}));
+    return redis.createCluster(redisTopologyConfig.normalizeClusterOptions(redisConfig.get('optionsCluster') || {}));
   }
   return redis.createClient(redisOptions());
 }

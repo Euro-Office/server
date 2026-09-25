@@ -6,7 +6,9 @@ const assert = require('node:assert/strict');
 const {afterEach, describe, test} = require('@jest/globals');
 
 const {EditorStat} = require('../../DocService/sources/editorDataRedis');
-const {ADD_MONTH_USER_SCRIPT, cfgExpMonthUniqueUsers, jsonEncode} = require('../../DocService/sources/editorDataRedis/base');
+const {ADD_MONTH_USER_SCRIPT} = require('../../DocService/sources/editorDataRedis/scripts');
+const {cfgExpMonthUniqueUsers} = require('../../DocService/sources/editorDataRedis/editorStatSettings');
+const {jsonEncode} = require('../../DocService/sources/editorDataRedis/redisValueCodec');
 const {context, wait} = require('./testHelpers');
 
 const stores = new Set();

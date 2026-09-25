@@ -1,18 +1,16 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Euro-Office contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 'use strict';
 
 const crypto = require('crypto');
+const {EditorCommon} = require('./editorCommon');
+const {ttlSeconds, ttlMilliseconds, toRedisString, jsonEncode, jsonDecode, decodeHash, strictMax} = require('./redisValueCodec');
+const {encodePart} = require('./redisKeys');
+const {cfgExpShard, cfgExpMonthUniqueUsers} = require('./editorStatSettings');
 const {
-  EditorCommon,
-  cfgExpShard,
-  cfgExpMonthUniqueUsers,
-  ttlSeconds,
-  ttlMilliseconds,
-  encodePart,
-  toRedisString,
-  jsonEncode,
-  jsonDecode,
-  decodeHash,
-  strictMax,
   ADD_MONTH_USER_SCRIPT,
   ADD_UNIQUE_USER_SCRIPT,
   GET_UNIQUE_USERS_SCRIPT,
@@ -20,7 +18,7 @@ const {
   SET_SHARD_COUNT_SCRIPT,
   INCR_SHARD_COUNT_SCRIPT,
   GET_SHARD_COUNT_SCRIPT
-} = require('./base');
+} = require('./scripts');
 
 function EditorStat(database) {
   EditorCommon.call(this, database);
@@ -238,3 +236,13 @@ EditorStat.prototype.deleteKey = async function (key) {
 };
 
 module.exports = EditorStat;
+/*
+ * (c) Copyright Ascensio System SIA 2010-2025
+ *
+ * This program is a free software product and is distributed under the terms
+ * of the GNU Affero General Public License (AGPL) version 3.
+ *
+ * This program is distributed WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ */

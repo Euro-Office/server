@@ -8,8 +8,10 @@ storage instances in one process.
 ## What the suite does
 
 The suite forks two workers, `replica-a` and `replica-b`. Each worker has its
-own `EditorData` and `EditorStat` instances, event loop, timers, Redis
-connection, process ID, and replica identity. The parent communicates with the
+own `EditorData` and `EditorStat` instances, event loop, timers, shared
+per-database Redis connection, process ID, and replica identity. Within a
+worker, the data and stat instances lease the same default-database client;
+the proxy database, when enabled, remains isolated. The parent communicates with the
 workers through structured Node.js IPC messages containing request IDs.
 Every operation has a deadline, and protocol errors include the scenario and
 replica that produced them.
