@@ -230,6 +230,14 @@ local index = redis.call('HGET', KEYS[1], 'index')
 if time ~= ARGV[1] or index ~= ARGV[2] then
   return nil
 end
+local started = redis.call('HGET', KEYS[1], 'started')
+local ended = redis.call('HGET', KEYS[1], 'ended')
+-- DocsCoServer uses null convertInfo for the command-path reset. Do not clear
+-- an active conversion for that reset, but allow failed-conversion updates
+-- that carry conversion information.
+if started == '1' and ended == '0' and ARGV[3] == '0' and ARGV[4] == '0' and ARGV[5] == '1' and ARGV[6] == 'null' then
+  return nil
+end
 redis.call('HSET', KEYS[1], 'started', ARGV[3], 'ended', ARGV[4])
 if ARGV[5] == '1' then
   redis.call('HSET', KEYS[1], 'convertInfo', ARGV[6], 'convertInfoDefined', '1')
