@@ -31,11 +31,7 @@ describe('DocsCoServer force-save command path', () => {
     await data.setForceSave(ctx, docId, 400, 12, 'https://example.test', {change: 'initial'}, {failed: true});
     assert.ok(await data.checkAndStartForceSave(ctx, docId));
 
-    const result = await docsCoServer.startForceSave(
-      ctx,
-      docId,
-      commonDefines.c_oAscForceSaveTypes.Command
-    );
+    const result = await docsCoServer.startForceSave(ctx, docId, commonDefines.c_oAscForceSaveTypes.Command);
 
     assert.equal(result.code, commonDefines.c_oAscServerCommandErrors.UnknownError);
     assert.equal(result.time, null);

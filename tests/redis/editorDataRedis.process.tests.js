@@ -10,6 +10,7 @@ const {describe, test} = require('@jest/globals');
 
 const config = require('../../DocService/node_modules/config');
 const redis = require('../../DocService/node_modules/redis');
+const utils = require('../../Common/sources/utils');
 const memoryStorage = require('../../DocService/sources/editorDataMemory');
 const redisBase = require('../../DocService/sources/editorDataRedis/base');
 const {context} = require('./testHelpers');
@@ -49,6 +50,10 @@ function comparable(value) {
 
 function assertObservableEqual(actual, expected, message) {
   assert.equal(JSON.stringify(comparable(actual)), JSON.stringify(comparable(expected)), message);
+}
+
+function stablePresenceShape(values) {
+  return values.map(value => JSON.stringify(comparable(JSON.parse(value)))).sort();
 }
 
 async function waitFor(scenario, operation, predicate, timeoutMs = WAIT_TIMEOUT_MS) {
@@ -352,7 +357,71 @@ async function runTrace(call, ctx) {
   return result;
 }
 
+function presenceConnection(docId, userId) {
+  return {
+    docId,
+    id: `${userId}-connection`,
+    user: {
+      id: userId,
+      idOriginal: userId,
+      username: userId,
+      indexUser: 0,
+      view: false
+    },
+    isCloseCoAuthoring: false,
+    encrypted: false
+  };
+}
+
+async function runDocumentPresenceShapeDifferential(harness, memoryData) {
+  const tenant = config.get('tenants.defaultTenant');
+  const redisCtx = contextArgs(tenant);
+  const memoryCtx = context(tenant);
+  const docId = 'differential-presence-shape';
+  const connections = [
+    presenceConnection(docId, 'presence-user-b'),
+    presenceConnection(docId, 'presence-user-a'),
+    presenceConnection('other-document', 'ignored-user')
+  ];
+  const documentConnections = connections.filter(connection => connection.docId === docId);
+
+  // Redis receives the same serialized connection info that DocsCoServer writes.
+  // Memory intentionally receives the live connections instead; its presence write methods are no-ops.
+  for (const connection of [...documentConnections].reverse()) {
+    const info = utils.getConnectionInfoStr(connection);
+    await harness.request(
+      'replica-a',
+      'data',
+      'addPresence',
+      [redisCtx, docId, connection.user.id, info],
+      `presence shape write for ${connection.user.id}`
+    );
+  }
+
+  const expected = stablePresenceShape(documentConnections.map(connection => utils.getConnectionInfoStr(connection)));
+  const redisPresence = await harness.request('replica-a', 'data', 'getPresence', [redisCtx, docId], 'presence shape Redis read');
+  const memoryPresence = await memoryData.getPresence(memoryCtx, docId, connections);
+
+  assert.equal(
+    JSON.stringify(stablePresenceShape(redisPresence)),
+    JSON.stringify(expected),
+    'Redis presence must preserve the connection-info shape'
+  );
+  assert.equal(
+    JSON.stringify(stablePresenceShape(memoryPresence)),
+    JSON.stringify(expected),
+    'memory presence must expose the connection-info shape'
+  );
+  assert.equal(
+    JSON.stringify(stablePresenceShape(redisPresence)),
+    JSON.stringify(stablePresenceShape(memoryPresence)),
+    'Redis and memory presence shapes differ'
+  );
+}
+
 async function runCrossProcessRedisScenarios(harness) {
+  // These scenarios intentionally remain Redis-only: they cover persistence, expiry,
+  // concurrent removal, and document cleanup across independent processes.
   const ctx = contextArgs('cross-process-tenant');
   const info = JSON.stringify({id: 'presence-user', replica: 'replica-a'});
   await harness.request('replica-a', 'data', 'addPresence', [ctx, 'presence-document', 'presence-user', info], 'presence write from replica-a');
@@ -587,6 +656,19 @@ describe('editorDataRedis independent-process behavior', () => {
     }
   }, 40000);
 
+  test('compares document presence shape with the memory connection oracle', async () => {
+    const prefix = `${process.env.TEST_REDIS_PREFIX}process-presence-shape:${process.pid}:${randomUUID()}:`;
+    const harness = new ReplicaHarness(prefix);
+    const memoryData = new memoryStorage.EditorData();
+    try {
+      await harness.start();
+      await runDocumentPresenceShapeDifferential(harness, memoryData);
+    } finally {
+      await Promise.all([harness.shutdown(), memoryData.close()]);
+      await cleanupRedisPrefix(prefix);
+    }
+  }, 30000);
+
   test('allows only one replica to start a command-path force-save after a reset interleaving', async () => {
     const prefix = `${process.env.TEST_REDIS_PREFIX}process-force-save-race:${process.pid}:${randomUUID()}:`;
     const harness = new ReplicaHarness(prefix);
@@ -677,14 +759,9 @@ describe('editorDataRedis independent-process behavior', () => {
         'force-save response-loss command commit'
       );
       const startRequest = harness
-        .controlledDispatchWithOptions(
-          'replica-a',
-          'data',
-          'checkAndStartForceSave',
-          [ctx, docId],
-          'force-save response-loss start',
-          {holdAfterCommand: true}
-        )
+        .controlledDispatchWithOptions('replica-a', 'data', 'checkAndStartForceSave', [ctx, docId], 'force-save response-loss start', {
+          holdAfterCommand: true
+        })
         .request.catch(error => error);
 
       await committedCommand;
@@ -692,13 +769,7 @@ describe('editorDataRedis independent-process behavior', () => {
       const lostResponse = await startRequest;
       assert.equal(lostResponse instanceof Error, true, 'the start response must be lost with the killed replica');
 
-      const stateAfterLostResponse = await harness.request(
-        'replica-b',
-        'data',
-        'getForceSave',
-        [ctx, docId],
-        'force-save response-loss state read'
-      );
+      const stateAfterLostResponse = await harness.request('replica-b', 'data', 'getForceSave', [ctx, docId], 'force-save response-loss state read');
       assert.equal(stateAfterLostResponse.time, time);
       assert.equal(stateAfterLostResponse.index, index);
       assert.equal(stateAfterLostResponse.started, true);
