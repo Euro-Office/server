@@ -29,6 +29,8 @@ const moduleReloader = require('./../../Common/sources/moduleReloader');
 const config = moduleReloader.requireConfigWithRuntime();
 //process.env.NODE_ENV = config.get('services.CoAuthoring.server.mode');
 const logger = require('./../../Common/sources/logger');
+const {redisConnectionManager} = require('./editorDataRedis/redisConnectionManager');
+const notificationService = require('./../../Common/sources/notificationService');
 const co = require('co');
 const license = require('./../../Common/sources/license');
 const fs = require('fs');
@@ -479,13 +481,75 @@ server.on('clientError', (err, socket) => {
   socket.destroy();
 });
 
+let processShutdownPromise;
+
+async function closeRedisStores() {
+  const stores = [docsCoServer.editorData, docsCoServer.editorStat, docsCoServer.editorStatProxy];
+  const results = await Promise.allSettled([
+    ...stores.filter(store => store?.close).map(store => store.close()),
+    infoRouter.close?.(),
+    notificationService.close?.()
+  ]);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure) {
+    throw failure.reason;
+  }
+}
+
+function waitForHttpServerClose() {
+  if (!server.listening) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    server.close(error => {
+      if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+    // Do not keep shutdown waiting on idle keep-alive sockets. Active
+    // requests remain open and are allowed to finish before the callback.
+    server.closeIdleConnections?.();
+  });
+}
+
+async function shutdownRedis(signal, exitCode = 0) {
+  if (processShutdownPromise) {
+    return processShutdownPromise;
+  }
+  processShutdownPromise = (async () => {
+    if (server.listening) {
+      // Stop accepting new work and wait for active requests before releasing
+      // the stores. Existing Redis operations are drained by RedisConnection.close().
+      try {
+        await waitForHttpServerClose();
+      } catch (error) {
+        operationContext.global.logger.error('HTTP shutdown error (%s):%s', signal, error.stack);
+      }
+    }
+    try {
+      await closeRedisStores();
+    } catch (error) {
+      operationContext.global.logger.error('Redis shutdown error (%s):%s', signal, error.stack);
+    }
+    try {
+      await redisConnectionManager.closeAll({terminal: true});
+    } catch (error) {
+      operationContext.global.logger.error('Redis manager shutdown error (%s):%s', signal, error.stack);
+    }
+    logger.shutdown(() => process.exit(exitCode));
+  })();
+  return processShutdownPromise;
+}
+
 process.on('uncaughtException', err => {
   operationContext.global.logger.error('uncaughtException:%s', err.stack);
-  runtimeConfigManager.closeRuntimeConfigWatcher();
-  logger.shutdown(() => {
-    process.exit(1);
-  });
+  shutdownRedis('uncaughtException', 1);
 });
+
+process.once('SIGTERM', () => shutdownRedis('SIGTERM'));
+process.once('SIGINT', () => shutdownRedis('SIGINT'));
 
 //Initialize watch here to avoid circular import with operationContext
 runtimeConfigManager.initRuntimeConfigWatcher(operationContext.global).catch(err => {

@@ -6,7 +6,10 @@ const assert = require('node:assert/strict');
 const {afterEach, describe, test} = require('@jest/globals');
 
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
-const {POP_EXPIRED_BATCH_SIZE, POP_EXPIRED_SCRIPT, strictMax, documentMember} = require('../../DocService/sources/editorDataRedis/base');
+const {POP_EXPIRED_BATCH_SIZE} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
+const {POP_EXPIRED_SCRIPT} = require('../../DocService/sources/editorDataRedis/scripts');
+const {strictMax} = require('../../DocService/sources/editorDataRedis/redisValueCodec');
+const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context, wait} = require('./testHelpers');
 
 const queues = {

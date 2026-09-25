@@ -331,8 +331,13 @@ async function verify() {
     await data.close();
     await data.close();
     assert.equal(data.isConnected(), false);
-    assert.equal(await data.ping(), 'PONG');
-    assert.equal(data.isConnected(), true);
+    const reopened = new EditorData();
+    try {
+      assert.equal(await reopened.ping(), 'PONG');
+      assert.equal(reopened.isConnected(), true);
+    } finally {
+      await reopened.close();
+    }
   } finally {
     await Promise.all(resources.map(resource => resource.close()));
   }

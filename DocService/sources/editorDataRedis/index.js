@@ -1,12 +1,6 @@
 /*
- * (c) Copyright Ascensio System SIA 2010-2025
- *
- * This program is a free software product and is distributed under the terms
- * of the GNU Affero General Public License (AGPL) version 3.
- *
- * This program is distributed WITHOUT ANY WARRANTY; without even the implied
- * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU Affero General Public License for more details.
+ * SPDX-FileCopyrightText: 2026 Euro-Office contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 'use strict';
