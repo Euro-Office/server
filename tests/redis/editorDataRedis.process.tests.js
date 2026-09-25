@@ -587,6 +587,133 @@ describe('editorDataRedis independent-process behavior', () => {
     }
   }, 40000);
 
+  test('allows only one replica to start a command-path force-save after a reset interleaving', async () => {
+    const prefix = `${process.env.TEST_REDIS_PREFIX}process-force-save-race:${process.pid}:${randomUUID()}:`;
+    const harness = new ReplicaHarness(prefix);
+    const ctx = contextArgs('force-save-race-tenant', {'services.CoAuthoring.expire.forcesave': 10});
+    const docId = 'command-path-force-save-race';
+    const time = 300;
+    const index = 11;
+    try {
+      await harness.start();
+      await harness.request(
+        'replica-a',
+        'data',
+        'setForceSave',
+        [ctx, docId, time, index, 'https://example.test', {change: 'initial'}, {convert: 'initial'}],
+        'force-save race record creation'
+      );
+
+      const resetByReplicaA = await harness.request(
+        'replica-a',
+        'data',
+        'checkAndSetForceSave',
+        [ctx, docId, time, index, false, false, null],
+        'force-save race reset by replica-a'
+      );
+      assert.equal(resetByReplicaA.time, time);
+      assert.equal(resetByReplicaA.index, index);
+      assert.equal(resetByReplicaA.started, false);
+      assert.equal(resetByReplicaA.ended, false);
+
+      const startedByReplicaA = await harness.request(
+        'replica-a',
+        'data',
+        'checkAndStartForceSave',
+        [ctx, docId],
+        'force-save race start by replica-a'
+      );
+      assert.ok(startedByReplicaA, 'replica-a must be allowed to start the force-save');
+      assert.equal(startedByReplicaA.time, time);
+      assert.equal(startedByReplicaA.index, index);
+      assert.equal(startedByReplicaA.started, true);
+
+      const resetByReplicaB = await harness.request(
+        'replica-b',
+        'data',
+        'checkAndSetForceSave',
+        [ctx, docId, time, index, false, false, null],
+        'force-save race reset by replica-b'
+      );
+
+      const startedByReplicaB = await harness.request(
+        'replica-b',
+        'data',
+        'checkAndStartForceSave',
+        [ctx, docId],
+        'force-save race start by replica-b'
+      );
+      const starts = [startedByReplicaA, startedByReplicaB];
+      assert.equal(starts.filter(value => value !== undefined).length, 1, `force-save race must have one winner: ${JSON.stringify(starts)}`);
+      assert.equal(startedByReplicaB, undefined, 'replica-b must not start a force-save reset by replica-b');
+      assert.equal(resetByReplicaB, undefined, 'replica-b must not reset an active force-save');
+    } finally {
+      await harness.shutdown();
+      await cleanupRedisPrefix(prefix);
+    }
+  }, 30000);
+
+  test('keeps a committed force-save started when the start response is lost', async () => {
+    const prefix = `${process.env.TEST_REDIS_PREFIX}process-force-save-response-loss:${process.pid}:${randomUUID()}:`;
+    const harness = new ReplicaHarness(prefix);
+    const ctx = contextArgs('force-save-response-loss-tenant', {'services.CoAuthoring.expire.forcesave': 10});
+    const docId = 'force-save-response-loss';
+    const time = 301;
+    const index = 12;
+    try {
+      await harness.start();
+      await harness.request(
+        'replica-a',
+        'data',
+        'setForceSave',
+        [ctx, docId, time, index, 'https://example.test', {change: 'initial'}, {convert: 'initial'}],
+        'force-save response-loss record creation'
+      );
+
+      const requestId = `replica-a:${harness.nextRequestId + 1}`;
+      const committedCommand = harness.waitForEvent(
+        'replica-a',
+        message => message.type === 'redis-command-committed' && message.requestId === requestId,
+        'force-save response-loss command commit'
+      );
+      const startRequest = harness
+        .controlledDispatchWithOptions(
+          'replica-a',
+          'data',
+          'checkAndStartForceSave',
+          [ctx, docId],
+          'force-save response-loss start',
+          {holdAfterCommand: true}
+        )
+        .request.catch(error => error);
+
+      await committedCommand;
+      await harness.kill('replica-a', 'SIGKILL');
+      const lostResponse = await startRequest;
+      assert.equal(lostResponse instanceof Error, true, 'the start response must be lost with the killed replica');
+
+      const stateAfterLostResponse = await harness.request(
+        'replica-b',
+        'data',
+        'getForceSave',
+        [ctx, docId],
+        'force-save response-loss state read'
+      );
+      assert.equal(stateAfterLostResponse.time, time);
+      assert.equal(stateAfterLostResponse.index, index);
+      assert.equal(stateAfterLostResponse.started, true);
+      assert.equal(stateAfterLostResponse.ended, false);
+      assert.equal(
+        await harness.request('replica-b', 'data', 'checkAndStartForceSave', [ctx, docId], 'force-save response-loss retry'),
+        undefined,
+        'a committed force-save must not be started again after its response is lost'
+      );
+    } finally {
+      await harness.shutdown();
+      await cleanupRedisPrefix(prefix);
+    }
+  }, 30000);
+
   test('keeps the remaining replica usable after SIGKILL during a controlled Redis write', async () => {
     const prefix = `${process.env.TEST_REDIS_PREFIX}process-crash:${process.pid}:${randomUUID()}:`;
     const harness = new ReplicaHarness(prefix);

@@ -124,6 +124,25 @@ describe('editorDataRedis edge cases', () => {
     assert.equal(Object.hasOwn(nullAndMissing, 'convertInfo'), true);
   });
 
+  test('resets an in-flight force-save after a failed conversion', async () => {
+    const ctx = context('force-save-failed-conversion', {'services.CoAuthoring.expire.forcesave': 10});
+    const docId = 'document';
+    const failureInfo = {error: 'conversion failed'};
+
+    await data.setForceSave(ctx, docId, 200, 8, 'https://example.test', {change: 'initial'}, null);
+    assert.ok(await data.checkAndStartForceSave(ctx, docId));
+
+    const failed = await data.checkAndSetForceSave(ctx, docId, 200, 8, false, false, failureInfo);
+    assert.ok(failed, 'failed conversion state must be applied');
+    assert.equal(failed.started, false);
+    assert.equal(failed.ended, false);
+    assert.deepEqual(failed.convertInfo, failureInfo);
+
+    const retry = await data.checkAndStartForceSave(ctx, docId);
+    assert.ok(retry, 'a failed force-save must be restartable');
+    assert.equal(retry.started, true);
+  });
+
   test('updating a unique user replaces its information without duplicating the user', async () => {
     const ctx = context('unique-user-update');
 
