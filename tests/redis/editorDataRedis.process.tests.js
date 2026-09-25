@@ -69,25 +69,42 @@ function redisOptions() {
   return redisBase.normalizeNodeOptions(redisConfig.get('options') || {}, undefined);
 }
 
+function createTopologyClient() {
+  const redisConfig = config.get('services.CoAuthoring.redis');
+  if (process.env.TEST_REDIS_SENTINEL === 'true') {
+    return redis.createSentinel(redisBase.normalizeSentinelOptions(redisConfig.get('optionsSentinel') || {}, undefined));
+  }
+  if (process.env.TEST_REDIS_CLUSTER === 'true') {
+    return redis.createCluster(redisBase.normalizeClusterOptions(redisConfig.get('optionsCluster') || {}));
+  }
+  return redis.createClient(redisOptions());
+}
+
 async function createRedisClient() {
-  const client = redis.createClient(redisOptions());
+  const client = createTopologyClient();
   client.on('error', () => {});
   await client.connect();
   return client;
 }
 
+async function cleanupRedisClient(client, prefix) {
+  for await (const keys of client.scanIterator({MATCH: `${prefix}*`, COUNT: 1000})) {
+    for (let index = 0; index < keys.length; index += 100) {
+      await Promise.all(keys.slice(index, index + 100).map(key => client.del(key)));
+    }
+  }
+}
+
 async function cleanupRedisPrefix(prefix) {
   const client = await createRedisClient();
   try {
-    let cursor = '0';
-    do {
-      const reply = await client.sendCommand(['SCAN', cursor, 'MATCH', `${prefix}*`, 'COUNT', '1000']);
-      cursor = String(reply[0]);
-      const keys = reply[1] || [];
-      for (let index = 0; index < keys.length; index += 100) {
-        await client.sendCommand(['DEL', ...keys.slice(index, index + 100)]);
+    if (process.env.TEST_REDIS_CLUSTER === 'true') {
+      for (const master of client.masters) {
+        await cleanupRedisClient(master.client, prefix);
       }
-    } while (cursor !== '0');
+    } else {
+      await cleanupRedisClient(client, prefix);
+    }
   } finally {
     await client.close();
   }
@@ -118,8 +135,7 @@ class ReplicaHarness {
       env: {
         ...process.env,
         TEST_REDIS_PREFIX: this.prefix,
-        TEST_REDIS_REPLICA_ID: replicaId,
-        TEST_REDIS_CLUSTER: 'false'
+        TEST_REDIS_REPLICA_ID: replicaId
       },
       serialization: 'advanced',
       stdio: ['ignore', 'pipe', 'pipe', 'ipc']
@@ -544,10 +560,7 @@ async function runCrashScenario(harness) {
   );
 }
 
-const standalone = process.env.TEST_REDIS_CLUSTER !== 'true';
-const describeStandalone = standalone ? describe : describe.skip;
-
-describeStandalone('editorDataRedis independent-process behavior', () => {
+describe('editorDataRedis independent-process behavior', () => {
   test('shares state across two replicas and matches the in-memory oracle for successful operations', async () => {
     const prefix = `${process.env.TEST_REDIS_PREFIX}process-suite:${process.pid}:${randomUUID()}:`;
     const harness = new ReplicaHarness(prefix);

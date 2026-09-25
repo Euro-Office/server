@@ -3,19 +3,17 @@
 process.env.ALLOW_CONFIG_MUTATIONS = 'true';
 
 const config = require('../../DocService/node_modules/config');
+const {applyTestRedisConfig, parseTestRedisConfig} = require('./testConfig');
 
 const redisConfig = config.get('services.CoAuthoring.redis');
-const serverConfig = config.get('services.CoAuthoring.server');
+const testRedisConfig = parseTestRedisConfig(process.env, {
+  host: redisConfig.get('host'),
+  port: redisConfig.get('port')
+});
 
-process.env.TEST_REDIS_PREFIX = process.env.TEST_REDIS_PREFIX || `test:editor-data:${process.pid}:`;
-process.env.TEST_REDIS_PROXY_DB = process.env.TEST_REDIS_PROXY_DB || '1';
+process.env.TEST_REDIS_PREFIX = testRedisConfig.prefix;
+process.env.TEST_REDIS_PROXY_DB = String(testRedisConfig.proxyDatabase);
 
-redisConfig.prefix = process.env.TEST_REDIS_PREFIX;
-serverConfig.editorDataStorage = 'editorDataRedis';
-if (process.env.TEST_REDIS_CLUSTER === 'true') {
-  redisConfig.optionsCluster = {
-    rootNodes: process.env.TEST_REDIS_CLUSTER_NODES.split(',').map(url => ({url}))
-  };
-}
+applyTestRedisConfig(config, testRedisConfig);
 
 module.exports = config;
