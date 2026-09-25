@@ -133,7 +133,11 @@ EditorStat.prototype.setEditorConnections = async function (ctx, countEdit, coun
     id: `${this.sampleId}:${this.sampleSequence++}`,
     data
   });
-  await this._eval(SET_CONNECTION_SAMPLE_SCRIPT, [`${this._statBase(ctx)}editorconnections`], [String(now), member, strictMax(now - maxAge + 1)]);
+  await this._eval(
+    SET_CONNECTION_SAMPLE_SCRIPT,
+    [`${this._statBase(ctx)}editorconnections`],
+    [String(now), member, strictMax(now - maxAge + 1), String(maxAge)]
+  );
 };
 
 EditorStat.prototype.getEditorConnections = async function (ctx) {

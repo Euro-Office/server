@@ -273,6 +273,7 @@ if ttl < 0 then
   redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
   redis.call('PEXPIRE', KEYS[2], ARGV[3])
 end
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `;
 
@@ -306,6 +307,7 @@ return 1
 const SET_CONNECTION_SAMPLE_SCRIPT = `
 redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ARGV[4])
 return 1
 `;
 
