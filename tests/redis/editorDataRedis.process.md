@@ -43,6 +43,19 @@ Those values are parsed and validated by `testConfig.js`, including the
 standalone host and port, Cluster root nodes, Sentinel root nodes and master
 name, key prefix, database number, and mutually exclusive topology flags.
 
+The original harness guarded the whole `describe` block with
+`TEST_REDIS_CLUSTER !== 'true'`, so Jest discovered the file but skipped every
+independent-process scenario in the Cluster job. That was a test-selection
+limitation, not a Redis Cluster limitation. The workers now create the same
+topology-selected client as the parent, and Cluster cleanup scans each master.
+
+One separate single-process test remains intentionally standalone-only:
+`editorDataRedis.tests.js` checks timeout recovery for a Redis `MULTI`
+transaction, while the Cluster implementation routes command batches
+individually to preserve hash-slot correctness. This exclusion is limited to
+that transaction test and does not skip the process suite or its Cluster
+scenarios.
+
 ## Not covered by this suite
 
 This file does not test Sentinel master failover, Redis connection-failure
