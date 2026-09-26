@@ -173,15 +173,16 @@ class RedisConnection {
   }
 
   async connect() {
-    return this._withOperation(() => this._connect());
+    await this._withOperation(() => this._connect());
   }
 
   async _connect() {
     if (this.connectPromise) {
-      return this.connectPromise;
+      await this.connectPromise;
+      return this.client;
     }
     if (this.isConnected()) {
-      return;
+      return this.client;
     }
     if (this.sentinel && this.client && this.connectionAttempted && !this.client.isOpen) {
       this._abortClient();
@@ -214,6 +215,7 @@ class RedisConnection {
     try {
       await this.connectPromise;
       log('debug', 'connect ready after %dms (connector=%s)', Date.now() - startedAt, this.connector);
+      return this.client;
     } catch (error) {
       log(
         'error',
@@ -240,9 +242,16 @@ class RedisConnection {
     return Boolean(this.client.isReady ?? this.client.isOpen);
   }
 
+  _getClient(client) {
+    if (!client || client !== this.client) {
+      throw new RedisUnavailableError(new Error('Redis client is unavailable'));
+    }
+    return client;
+  }
+
   async command(args) {
     return this._withOperation(async () => {
-      await this._connect();
+      const client = this._getClient(await this._connect());
       const normalized = args.map(toRedisString);
       const commandName = normalized[0] ? normalized[0].toUpperCase() : 'UNKNOWN';
       const startedAt = Date.now();
@@ -252,11 +261,11 @@ class RedisConnection {
         if (this.cluster) {
           const command = normalized[0].toUpperCase();
           const firstKey = command === 'EVAL' ? normalized[3] : command === 'PING' ? undefined : normalized[1];
-          result = this.client.sendCommand(firstKey, false, normalized);
+          result = client.sendCommand(firstKey, false, normalized);
         } else if (this.sentinel) {
-          result = this.client.sendCommand(false, normalized);
+          result = client.sendCommand(false, normalized);
         } else {
-          result = this.client.sendCommand(normalized);
+          result = client.sendCommand(normalized);
         }
         result = await this._withCommandTimeout(result, `Redis command ${commandName}`);
         log('debug', 'command end %s after %dms', commandName, Date.now() - startedAt);
@@ -273,8 +282,8 @@ class RedisConnection {
       if (this.cluster) {
         return Promise.all(commands.map(command => this.command(command)));
       }
-      await this._connect();
-      const multi = this.client.multi();
+      const client = this._getClient(await this._connect());
+      const multi = client.multi();
       for (const args of commands) {
         const normalized = args.map(toRedisString);
         multi.addCommand(...(this.sentinel ? [false, normalized] : [normalized]));
