@@ -218,6 +218,34 @@ describe('editorDataRedis connection contract', () => {
     assert.deepEqual(calls, [['PING', '42']]);
   });
 
+  test('returns RedisUnavailableError when the client aborts after connect resolves', async () => {
+    let commandCalls = 0;
+    const connection = new RedisConnection();
+    const client = fakeClient({
+      sendCommand() {
+        commandCalls++;
+        return Promise.resolve('PONG');
+      }
+    });
+    connection.client = client;
+    connection.connector = 'redis';
+
+    const connect = connection._connect.bind(connection);
+    connection._connect = async () => {
+      const connectedClient = await connect();
+      connection._abortClient();
+      return connectedClient;
+    };
+
+    await assert.rejects(connection.command(['PING']), error => {
+      assert.ok(error instanceof RedisUnavailableError);
+      assert.equal(error.code, 'REDIS_UNAVAILABLE');
+      assert.equal(error instanceof TypeError, false);
+      return true;
+    });
+    assert.equal(commandCalls, 0);
+  });
+
   test('routes cluster commands by their first key and EVAL key', async () => {
     const calls = [];
     const connection = new RedisConnection();
