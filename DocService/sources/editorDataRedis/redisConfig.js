@@ -21,7 +21,7 @@ const cfgRedisHost = cfgRedis.get('host');
 const cfgRedisPort = cfgRedis.get('port');
 const cfgRedisOptions = cfgRedis.get('options');
 const cfgRedisOptionsCluster = cfgRedis.get('optionsCluster');
-const cfgRedisOptionsSentinel = cfgRedis.get('optionsSentinel');
+const cfgRedisOptionsSentinel = cfgRedis.has('optionsSentinel') ? cfgRedis.get('optionsSentinel') : {};
 
 function cloneConfig(value) {
   if (config.util && config.util.cloneDeep) {
