@@ -40,6 +40,23 @@ The workers use the same topology configuration as the parent test process.
 Cleanup uses a direct client for standalone Redis, scans every Cluster master,
 and scans the Sentinel-discovered master.
 
+The topology integration suite in `editorDataRedis.topology.tests.js` runs
+separately for Cluster and Sentinel. It promotes a real replica, verifies the
+topology reports the new master, exercises a command against the already-open
+`editorDataRedis` connection during the transition, and verifies that the same
+connection writes and reads successfully from the promoted master. Sentinel
+also verifies that its authenticated connection rejects a command while no
+master is usable before reconnecting.
+
+The dedicated topology CI steps set `TEST_REDIS_TOPOLOGY_REQUIRED=true`; when
+that flag is set, missing topology or failover configuration fails the test
+file instead of silently skipping its scenarios. The flag is not set for the
+general Redis suite, where topology-specific scenarios remain skipped.
+
+The CI fixtures authenticate every Redis node and Sentinel in the password
+matrix. A separate standalone job runs the same suite without a password so
+the unauthenticated configuration remains covered.
+
 The test topology is selected through the `TEST_REDIS_*` environment variables.
 Those values are parsed and validated by `testConfig.js`, including the
 standalone host and port, Cluster root nodes, Sentinel root nodes and master
@@ -60,7 +77,12 @@ scenarios.
 
 ## Not covered by this suite
 
-This file does not test Sentinel master failover, Redis connection-failure
-policy, recovery of a lost expiration claim, packaged-binary loading, or
-force-save payload serialization. Those concerns belong to separate topology,
-failure-policy, packaging, and regular behavior tests respectively.
+The separate `editorDataRedis.failure.integration.tests.js` test stops a real
+Redis container and verifies the production failure policy: lock acquisition
+and release fail closed, reads reject, and destructive cleanup stops after the
+connection failure. It runs in an isolated CI step because the Redis process
+is intentionally stopped.
+
+Not covered here: recovery of a lost expiration claim, packaged-binary
+loading, or force-save payload serialization. Those concerns belong to the
+expiration, packaging, and regular behavior tests respectively.
