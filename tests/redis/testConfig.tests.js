@@ -46,6 +46,8 @@ describe('Redis test configuration', () => {
     assert.deepEqual(result.clusterNodes, []);
     assert.equal(result.sentinelName, null);
     assert.deepEqual(result.sentinelNodes, []);
+    assert.equal(result.nodePassword, null);
+    assert.equal(result.sentinelPassword, null);
   });
 
   test('parses Cluster endpoints', () => {
@@ -62,6 +64,45 @@ describe('Redis test configuration', () => {
     assert.equal(result.topology, 'cluster');
     assert.deepEqual(result.clusterNodes, [{url: 'redis://127.0.0.1:7000'}, {url: 'redis://127.0.0.1:7001'}]);
     assert.equal(result.proxyDatabase, 2);
+  });
+
+  test('parses optional Redis and Sentinel passwords', () => {
+    const result = parseTestRedisConfig(
+      {
+        TEST_REDIS_SENTINEL: 'true',
+        TEST_REDIS_SENTINEL_NODES: '127.0.0.1:26379',
+        TEST_REDIS_NODE_PASSWORD: 'redis-password',
+        TEST_REDIS_SENTINEL_PASSWORD: 'sentinel-password'
+      },
+      standaloneConfig
+    );
+
+    assert.equal(result.nodePassword, 'redis-password');
+    assert.equal(result.sentinelPassword, 'sentinel-password');
+  });
+
+  test('applies standalone Redis authentication without discarding existing options', () => {
+    const testConfig = parseTestRedisConfig(
+      {
+        TEST_REDIS_PREFIX: 'test:standalone-auth:',
+        TEST_REDIS_NODE_PASSWORD: 'redis-password'
+      },
+      standaloneConfig
+    );
+    const fake = fakeConfig(
+      {
+        options: {username: 'redis-user', socket: {tls: true}}
+      },
+      {editorDataStorage: 'editorDataMemory'}
+    );
+
+    applyTestRedisConfig(fake.config, testConfig);
+
+    assert.deepEqual(fake.redisConfig.options, {
+      username: 'redis-user',
+      socket: {tls: true},
+      password: 'redis-password'
+    });
   });
 
   test('parses Sentinel endpoints', () => {
@@ -88,7 +129,8 @@ describe('Redis test configuration', () => {
       {
         TEST_REDIS_CLUSTER: 'true',
         TEST_REDIS_CLUSTER_NODES: '127.0.0.1:7000',
-        TEST_REDIS_PREFIX: 'test:cluster:'
+        TEST_REDIS_PREFIX: 'test:cluster:',
+        TEST_REDIS_NODE_PASSWORD: 'redis-password'
       },
       standaloneConfig
     );
@@ -107,7 +149,7 @@ describe('Redis test configuration', () => {
     applyTestRedisConfig(fake.config, testConfig);
 
     assert.deepEqual(fake.redisConfig.optionsCluster, {
-      defaults: {socket: {tls: true}},
+      defaults: {socket: {tls: true}, password: 'redis-password'},
       commandOptions: {timeout: 5000},
       rootNodes: [{url: 'redis://127.0.0.1:7000'}]
     });
@@ -134,13 +176,24 @@ describe('Redis test configuration', () => {
     assert.equal(fake.serverConfig.editorDataStorage, 'editorDataRedis');
   });
 
+  test('removes inherited standalone credentials when authentication is disabled', () => {
+    const testConfig = parseTestRedisConfig({TEST_REDIS_PREFIX: 'test:standalone-no-auth:'}, standaloneConfig);
+    const fake = fakeConfig({options: {username: 'redis-user', password: 'old-password'}}, {editorDataStorage: 'editorDataMemory'});
+
+    applyTestRedisConfig(fake.config, testConfig);
+
+    assert.deepEqual(fake.redisConfig.options, {username: 'redis-user'});
+  });
+
   test('applies Sentinel topology without discarding existing options', () => {
     const testConfig = parseTestRedisConfig(
       {
         TEST_REDIS_SENTINEL: 'true',
         TEST_REDIS_SENTINEL_NAME: 'mymaster',
         TEST_REDIS_SENTINEL_NODES: '127.0.0.1:26379',
-        TEST_REDIS_PREFIX: 'test:sentinel:'
+        TEST_REDIS_PREFIX: 'test:sentinel:',
+        TEST_REDIS_NODE_PASSWORD: 'redis-password',
+        TEST_REDIS_SENTINEL_PASSWORD: 'sentinel-password'
       },
       standaloneConfig
     );
@@ -163,13 +216,72 @@ describe('Redis test configuration', () => {
     assert.deepEqual(fake.redisConfig.optionsSentinel, {
       name: 'mymaster',
       sentinelRootNodes: [{host: '127.0.0.1', port: 26379}],
-      nodeClientOptions: {socket: {tls: true}, username: 'redis-user'},
+      nodeClientOptions: {socket: {tls: true}, username: 'redis-user', password: 'redis-password'},
       sentinelClientOptions: {password: 'sentinel-password'},
       commandOptions: {timeout: 5000}
     });
     assert.deepEqual(fake.redisConfig.optionsCluster, {});
     assert.equal(fake.redisConfig.prefix, 'test:sentinel:');
     assert.equal(fake.serverConfig.editorDataStorage, 'editorDataRedis');
+  });
+
+  test('removes inherited Cluster credentials when authentication is disabled', () => {
+    const testConfig = parseTestRedisConfig(
+      {
+        TEST_REDIS_CLUSTER: 'true',
+        TEST_REDIS_CLUSTER_NODES: '127.0.0.1:7000',
+        TEST_REDIS_PREFIX: 'test:cluster-no-auth:'
+      },
+      standaloneConfig
+    );
+    const fake = fakeConfig(
+      {
+        optionsCluster: {
+          defaults: {socket: {tls: true}, password: 'old-password'},
+          rootNodes: [{url: 'redis://old-node:7000'}]
+        }
+      },
+      {editorDataStorage: 'editorDataMemory'}
+    );
+
+    applyTestRedisConfig(fake.config, testConfig);
+
+    assert.deepEqual(fake.redisConfig.optionsCluster, {
+      defaults: {socket: {tls: true}},
+      rootNodes: [{url: 'redis://127.0.0.1:7000'}]
+    });
+  });
+
+  test('removes inherited Sentinel credentials when authentication is disabled', () => {
+    const testConfig = parseTestRedisConfig(
+      {
+        TEST_REDIS_SENTINEL: 'true',
+        TEST_REDIS_SENTINEL_NAME: 'mymaster',
+        TEST_REDIS_SENTINEL_NODES: '127.0.0.1:26379',
+        TEST_REDIS_PREFIX: 'test:sentinel-no-auth:'
+      },
+      standaloneConfig
+    );
+    const fake = fakeConfig(
+      {
+        optionsSentinel: {
+          name: 'old-master',
+          sentinelRootNodes: [{host: 'old-sentinel', port: 26379}],
+          nodeClientOptions: {username: 'redis-user', password: 'old-node-password'},
+          sentinelClientOptions: {password: 'old-sentinel-password'}
+        }
+      },
+      {editorDataStorage: 'editorDataMemory'}
+    );
+
+    applyTestRedisConfig(fake.config, testConfig);
+
+    assert.deepEqual(fake.redisConfig.optionsSentinel, {
+      name: 'mymaster',
+      sentinelRootNodes: [{host: '127.0.0.1', port: 26379}],
+      nodeClientOptions: {username: 'redis-user'},
+      sentinelClientOptions: {}
+    });
   });
 
   test('rejects invalid topology flags and endpoints', () => {
@@ -202,6 +314,9 @@ describe('Redis test configuration', () => {
     assert.throws(() => parseTestRedisConfig({TEST_REDIS_PROXY_DB: ''}, standaloneConfig), /TEST_REDIS_PROXY_DB/);
     assert.throws(() => parseTestRedisConfig({TEST_REDIS_PROXY_DB: '1.5'}, standaloneConfig), /TEST_REDIS_PROXY_DB/);
     assert.throws(() => parseTestRedisConfig({TEST_REDIS_PROXY_DB: '-1'}, standaloneConfig), /TEST_REDIS_PROXY_DB/);
+    assert.throws(() => parseTestRedisConfig({TEST_REDIS_NODE_PASSWORD: ''}, standaloneConfig), /TEST_REDIS_NODE_PASSWORD/);
+    assert.throws(() => parseTestRedisConfig({TEST_REDIS_NODE_PASSWORD: 'redis\npassword'}, standaloneConfig), /TEST_REDIS_NODE_PASSWORD/);
+    assert.throws(() => parseTestRedisConfig({TEST_REDIS_SENTINEL_PASSWORD: '\u0000'}, standaloneConfig), /TEST_REDIS_SENTINEL_PASSWORD/);
     assert.throws(() => parseTestRedisConfig({}, {host: '127.0.0.1', port: ' '}), /services\.CoAuthoring\.redis\.port/);
   });
 });

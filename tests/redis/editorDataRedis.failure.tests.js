@@ -74,4 +74,25 @@ describe('editorDataRedis failure policy', () => {
     await assert.rejects(data.cleanDocumentOnExit(ctx, 'document'), /Redis unavailable/);
     assert.equal(evalCalls, 1);
   });
+
+  test('does not attempt force-save index cleanup after document deletion succeeds but index cleanup fails', async () => {
+    let evalCalls = 0;
+    let commandCalls = 0;
+    data._eval = async () => {
+      evalCalls++;
+      if (evalCalls === 1) {
+        return [1, '123'];
+      }
+      throw new Error('Redis unavailable');
+    };
+    data._command = async () => {
+      commandCalls++;
+      throw new Error('force-save index cleanup should not be attempted');
+    };
+    const ctx = context('cleanup-index-failure');
+
+    await assert.rejects(data.cleanDocumentOnExit(ctx, 'document'), /Redis unavailable/);
+    assert.equal(evalCalls, 2);
+    assert.equal(commandCalls, 0);
+  });
 });
