@@ -32,7 +32,8 @@ const {
   ADD_LOCKS_NX_SCRIPT,
   REMOVE_LOCKS_SCRIPT,
   ADD_MESSAGE_SCRIPT,
-  GETDEL_SCRIPT,
+  CLAIM_SAVED_SCRIPT,
+  ACK_SAVED_SCRIPT,
   FORCE_SAVE_FIELDS,
   START_FORCE_SAVE_SCRIPT,
   SET_FORCE_SAVE_SCRIPT,
@@ -41,6 +42,14 @@ const {
 } = require('./scripts');
 
 const expiredClaimIds = new WeakMap();
+
+class SavedStateUnknownError extends Error {
+  constructor(docId) {
+    super(`Saved state for document ${docId} has an unresolved Redis claim`);
+    this.name = 'SavedStateUnknownError';
+    this.code = 'EDITOR_DATA_SAVED_UNKNOWN';
+  }
+}
 
 function EditorData() {
   EditorCommon.call(this);
@@ -71,6 +80,9 @@ EditorData.prototype._docKeys = function (ctx, docId) {
     locks: `${base}locks`,
     messages: `${base}message`,
     saved: `${base}saved`,
+    // Keep the claim under the document hash tag so the claim/read/delete
+    // script remains atomic on Redis Cluster as well as standalone Redis.
+    savedClaim: `${base}saved:claim`,
     forceSave: `${base}forcesave`
   };
 };
@@ -246,8 +258,45 @@ EditorData.prototype.setSaved = async function (ctx, docId, status) {
   await this._command(['SET', this._docKeys(ctx, docId).saved, String(status), 'EX', String(ttl)]);
 };
 
-EditorData.prototype.getdelSaved = async function (ctx, docId) {
-  return this._eval(GETDEL_SCRIPT, [this._docKeys(ctx, docId).saved], []);
+/**
+ * Claim the saved status for a logical operation.
+ *
+ * A caller that may retry after a lost Redis reply must pass the same
+ * operationId on every attempt.  `null` means that no saved value or claim
+ * exists.  An unresolved claim owned by another operation, or an invalid
+ * Redis response, throws SavedStateUnknownError instead of being reported as
+ * an absent value.
+ */
+EditorData.prototype.getdelSaved = async function (ctx, docId, operationId) {
+  const keys = this._docKeys(ctx, docId);
+  const claimId = operationId === undefined || operationId === null || operationId === '' ? randomUUID() : String(operationId);
+  const result = await this._eval(CLAIM_SAVED_SCRIPT, [keys.saved, keys.savedClaim], [claimId]);
+  if (!Array.isArray(result) || result.length === 0) {
+    throw new SavedStateUnknownError(docId);
+  }
+  const state = toRedisString(result[0]);
+  if (state === 'absent') {
+    return null;
+  }
+  if (state === 'value' && result.length > 1 && result[1] !== null && result[1] !== undefined) {
+    return toRedisString(result[1]);
+  }
+  throw new SavedStateUnknownError(docId);
+};
+
+// A successful getdelSaved is a claim, not an acknowledgement.  The caller
+// acknowledges only after it has decided that the saved result is usable.  If
+// the claim response is lost, the same operation id can still recover the
+// value; a different operation must fail closed until the claim is resolved.
+EditorData.prototype.ackSaved = async function (ctx, docId, operationId) {
+  if (operationId === undefined || operationId === null || operationId === '') {
+    throw new SavedStateUnknownError(docId);
+  }
+  const result = await this._eval(ACK_SAVED_SCRIPT, [this._docKeys(ctx, docId).savedClaim], [String(operationId)]);
+  if (Number(result) !== 1) {
+    throw new SavedStateUnknownError(docId);
+  }
+  return true;
 };
 
 function decodeForceSavePayload(raw, defined) {
@@ -323,12 +372,26 @@ EditorData.prototype.removeForceSave = async function (ctx, docId) {
   await this._command(['DEL', this._docKeys(ctx, docId).forceSave]);
 };
 
-EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId) {
+// Terminal cleanup recovers an abandoned saved claim.  A caller that owns the
+// claim passes its operation id so the claim survives cleanup and can be acked
+// after the rest of the operation succeeds.
+EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId) {
   const keys = this._docKeys(ctx, docId);
   const result = await this._eval(
     CLEAN_DOCUMENT_SCRIPT,
-    [keys.presenceSet, keys.presenceHash, keys.presenceVersion, keys.saveLock, keys.authLock, keys.locks, keys.messages, keys.saved, keys.forceSave],
-    [String(Date.now())]
+    [
+      keys.presenceSet,
+      keys.presenceHash,
+      keys.presenceVersion,
+      keys.saveLock,
+      keys.authLock,
+      keys.locks,
+      keys.messages,
+      keys.saved,
+      keys.savedClaim,
+      keys.forceSave
+    ],
+    [String(Date.now()), savedClaimId === undefined || savedClaimId === null ? '' : String(savedClaimId)]
   );
   if (result && Number(result[0]) === 1) {
     const member = documentMember(ctx, docId);
@@ -350,3 +413,4 @@ EditorData.prototype.getForceSaveTimer = function (now) {
 };
 
 module.exports = EditorData;
+module.exports.SavedStateUnknownError = SavedStateUnknownError;

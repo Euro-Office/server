@@ -10,5 +10,6 @@ const EditorStat = require('./editorStat');
 
 module.exports = {
   EditorData,
-  EditorStat
+  EditorStat,
+  SavedStateUnknownError: EditorData.SavedStateUnknownError
 };

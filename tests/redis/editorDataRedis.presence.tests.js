@@ -21,20 +21,21 @@ async function seedDocumentState(data, ctx, docId) {
 
 async function readDocumentState(data, ctx, docId) {
   const keys = data._docKeys(ctx, docId);
-  const [saveLock, authLock, saved, timer, locks, messages, forceSave] = await Promise.all([
+  const [saveLock, authLock, saved, savedClaim, timer, locks, messages, forceSave] = await Promise.all([
     data._command(['GET', keys.saveLock]),
     data._command(['GET', keys.authLock]),
     data._command(['GET', keys.saved]),
+    data._command(['HGET', keys.savedClaim, 'id']),
     data._command(['ZSCORE', data.forceSaveTimerKey, documentMember(ctx, docId)]),
     data.getLocks(ctx, docId),
     data.getMessages(ctx, docId),
     data.getForceSave(ctx, docId)
   ]);
-  return {saveLock, authLock, saved, timer, locks, messages, forceSave};
+  return {saveLock, authLock, saved, savedClaim, timer, locks, messages, forceSave};
 }
 
 function emptyDocumentState() {
-  return {saveLock: null, authLock: null, saved: null, timer: null, locks: {}, messages: [], forceSave: null};
+  return {saveLock: null, authLock: null, saved: null, savedClaim: null, timer: null, locks: {}, messages: [], forceSave: null};
 }
 
 describe('editorDataRedis presence invariants', () => {

@@ -1522,11 +1522,11 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
     }
   }
 });
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  yield editorData.cleanDocumentOnExit(ctx, docId);
+  yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
   if (preStopFlag && editorStatProxy?.deleteKey) {
     yield editorStatProxy.deleteKey(docId);
   }

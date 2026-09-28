@@ -191,11 +191,14 @@ EditorData.prototype.setSaved = async function (ctx, docId, status) {
   const data = this._getDocumentData(ctx, docId);
   data.saved = status;
 };
-EditorData.prototype.getdelSaved = async function (ctx, docId) {
+EditorData.prototype.getdelSaved = async function (ctx, docId, _operationId) {
   const data = this._getDocumentData(ctx, docId);
   const res = data.saved;
   data.saved = null;
   return res;
+};
+EditorData.prototype.ackSaved = async function (_ctx, _docId, _operationId) {
+  return true;
 };
 EditorData.prototype.setForceSave = async function (ctx, docId, time, index, baseUrl, changeInfo, convertInfo) {
   const data = this._getDocumentData(ctx, docId);
@@ -231,7 +234,7 @@ EditorData.prototype.removeForceSave = async function (ctx, docId) {
   data.forceSave = undefined;
 };
 
-EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId) {
+EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, _savedClaimId) {
   const tenantData = this.data[ctx.tenant];
   if (tenantData) {
     delete tenantData[docId];
