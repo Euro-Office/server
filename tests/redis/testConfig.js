@@ -125,6 +125,26 @@ function parseSentinelName(value) {
   return name;
 }
 
+function parseOptionalPassword(value, name) {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string' || value.length === 0 || hasControlCharacters(value)) {
+    invalid(name, 'expected a non-empty password without control characters');
+  }
+  return value;
+}
+
+function applyOptionalPassword(options, password) {
+  const result = {...options};
+  if (password === null) {
+    delete result.password;
+  } else {
+    result.password = password;
+  }
+  return result;
+}
+
 function parseTestRedisConfig(env, standaloneConfig) {
   const cluster = parseBoolean(env.TEST_REDIS_CLUSTER, 'TEST_REDIS_CLUSTER');
   const sentinel = parseBoolean(env.TEST_REDIS_SENTINEL, 'TEST_REDIS_SENTINEL');
@@ -141,7 +161,9 @@ function parseTestRedisConfig(env, standaloneConfig) {
     standalone: {host, port},
     clusterNodes: [],
     sentinelName: null,
-    sentinelNodes: []
+    sentinelNodes: [],
+    nodePassword: parseOptionalPassword(env.TEST_REDIS_NODE_PASSWORD, 'TEST_REDIS_NODE_PASSWORD'),
+    sentinelPassword: parseOptionalPassword(env.TEST_REDIS_SENTINEL_PASSWORD, 'TEST_REDIS_SENTINEL_PASSWORD')
   };
 
   if (cluster) {
@@ -158,16 +180,23 @@ function parseTestRedisConfig(env, standaloneConfig) {
 function applyTestRedisConfig(config, testRedisConfig) {
   const redisConfig = config.get('services.CoAuthoring.redis');
   const serverConfig = config.get('services.CoAuthoring.server');
+  const existingNodeOptions = redisConfig.get('options') || {};
   const existingClusterOptions = redisConfig.get('optionsCluster') || {};
   const existingSentinelOptions = redisConfig.get('optionsSentinel') || {};
 
   redisConfig.prefix = testRedisConfig.prefix;
   serverConfig.editorDataStorage = 'editorDataRedis';
+  redisConfig.options = applyOptionalPassword(existingNodeOptions, testRedisConfig.nodePassword);
   redisConfig.optionsCluster =
     testRedisConfig.topology === 'cluster'
       ? {
           ...existingClusterOptions,
-          rootNodes: testRedisConfig.clusterNodes
+          rootNodes: testRedisConfig.clusterNodes,
+          ...(existingClusterOptions.defaults || testRedisConfig.nodePassword !== null
+            ? {
+                defaults: applyOptionalPassword(existingClusterOptions.defaults || {}, testRedisConfig.nodePassword)
+              }
+            : {})
         }
       : {};
   redisConfig.optionsSentinel =
@@ -176,8 +205,8 @@ function applyTestRedisConfig(config, testRedisConfig) {
           ...existingSentinelOptions,
           name: testRedisConfig.sentinelName,
           sentinelRootNodes: testRedisConfig.sentinelNodes,
-          nodeClientOptions: {...(existingSentinelOptions.nodeClientOptions || {})},
-          sentinelClientOptions: {...(existingSentinelOptions.sentinelClientOptions || {})}
+          nodeClientOptions: applyOptionalPassword(existingSentinelOptions.nodeClientOptions || {}, testRedisConfig.nodePassword),
+          sentinelClientOptions: applyOptionalPassword(existingSentinelOptions.sentinelClientOptions || {}, testRedisConfig.sentinelPassword)
         }
       : {};
 }
