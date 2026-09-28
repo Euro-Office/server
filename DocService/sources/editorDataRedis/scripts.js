@@ -178,12 +178,44 @@ redis.call('EXPIRE', KEYS[1], ARGV[2])
 return length
 `;
 
-const GETDEL_SCRIPT = `
-local value = redis.call('GET', KEYS[1])
-if value then
-  redis.call('DEL', KEYS[1])
+const CLAIM_SAVED_SCRIPT = `
+-- Claim the saved status instead of deleting it before the caller has had a
+-- chance to observe the reply.  The claim is the durable operation record and
+-- intentionally has no expiry: retrying with the same operation id must keep
+-- recovering the value even after the source saved key's TTL would have
+-- elapsed.  An abandoned claim is resolved by acknowledgement or document
+-- cleanup, never by silently becoming an absent result.
+local currentClaim = redis.call('HGET', KEYS[2], 'id')
+if currentClaim then
+  if currentClaim == ARGV[1] then
+    local claimedValue = redis.call('HGET', KEYS[2], 'value')
+    if claimedValue then
+      return {'value', claimedValue}
+    end
+    return {'unknown'}
+  end
+  return {'unknown'}
 end
-return value
+
+local value = redis.call('GET', KEYS[1])
+if not value then
+  return {'absent'}
+end
+
+redis.call('HSET', KEYS[2], 'id', ARGV[1], 'value', value)
+redis.call('DEL', KEYS[1])
+return {'value', value}
+`;
+
+const ACK_SAVED_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+if redis.call('HGET', KEYS[1], 'id') ~= ARGV[1] then
+  return 0
+end
+redis.call('DEL', KEYS[1])
+return 1
 `;
 
 // Force-save records use one hash field per scalar and payload.  Payload
@@ -344,7 +376,10 @@ return result
 const CLEAN_DOCUMENT_SCRIPT = `
 -- Presence is shared by all replicas.  Expire stale entries first, then only
 -- remove document state when no live replica remains; otherwise an exiting
--- replica could delete another replica's locks or in-flight state.
+-- replica could delete another replica's locks or in-flight state.  During
+-- terminal cleanup, an unowned saved claim is recovered as abandoned.  The
+-- operation that owns a claim passes its id in ARGV[2], so its claim remains
+-- available for acknowledgement after cleanup.
 local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
 if #expired > 0 then
   redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
@@ -356,7 +391,12 @@ if redis.call('HLEN', KEYS[2]) > 0 then
   return {0, ''}
 end
 local version = redis.call('GET', KEYS[3]) or ''
-redis.call('DEL', unpack(KEYS))
+local claimOwner = redis.call('HGET', KEYS[9], 'id')
+if claimOwner and ARGV[2] ~= '' and claimOwner == ARGV[2] then
+  redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[10])
+else
+  redis.call('DEL', unpack(KEYS))
+end
 return {1, version}
 `;
 
@@ -375,7 +415,8 @@ module.exports = {
   ADD_LOCKS_NX_SCRIPT,
   REMOVE_LOCKS_SCRIPT,
   ADD_MESSAGE_SCRIPT,
-  GETDEL_SCRIPT,
+  CLAIM_SAVED_SCRIPT,
+  ACK_SAVED_SCRIPT,
   FORCE_SAVE_FIELDS,
   START_FORCE_SAVE_SCRIPT,
   SET_FORCE_SAVE_SCRIPT,
