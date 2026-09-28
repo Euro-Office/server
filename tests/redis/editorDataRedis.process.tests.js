@@ -326,8 +326,10 @@ async function runTrace(call, ctx) {
   result.messages = snapshot(await call('replica-a', 'data', 'getMessages', [ctx, messageDoc]));
 
   const savedDoc = 'differential-saved';
+  const savedClaimId = 'differential-saved-claim';
   await call('replica-a', 'data', 'setSaved', [ctx, savedDoc, 'saved']);
-  result.savedRead = await call('replica-b', 'data', 'getdelSaved', [ctx, savedDoc]);
+  result.savedRead = await call('replica-b', 'data', 'getdelSaved', [ctx, savedDoc, savedClaimId]);
+  await call('replica-b', 'data', 'ackSaved', [ctx, savedDoc, savedClaimId]);
   result.savedEmpty = await call('replica-a', 'data', 'getdelSaved', [ctx, savedDoc]);
 
   const forceDoc = 'differential-force-save';
@@ -497,12 +499,46 @@ async function runCrossProcessRedisScenarios(harness) {
 
   const savedDoc = 'cross-process-saved';
   await harness.request('replica-a', 'data', 'setSaved', [ctx, savedDoc, 'saved'], 'cross-process saved write');
-  const savedReads = await Promise.all([
-    harness.request('replica-a', 'data', 'getdelSaved', [ctx, savedDoc], 'saved getdel replica-a'),
-    harness.request('replica-b', 'data', 'getdelSaved', [ctx, savedDoc], 'saved getdel replica-b')
-  ]);
-  assert.equal(savedReads.filter(value => value === 'saved').length, 1, `saved state must be consumed once: ${JSON.stringify(savedReads)}`);
-  assert.equal(savedReads.filter(value => value === null).length, 1, `saved state must be empty for the other reader: ${JSON.stringify(savedReads)}`);
+  const savedConsumers = [
+    {replicaId: 'replica-a', claimId: 'saved-claim-a'},
+    {replicaId: 'replica-b', claimId: 'saved-claim-b'}
+  ];
+  const savedReads = await Promise.all(
+    savedConsumers.map(async consumer => {
+      try {
+        return {
+          consumer,
+          value: await harness.request(
+            consumer.replicaId,
+            'data',
+            'getdelSaved',
+            [ctx, savedDoc, consumer.claimId],
+            `saved getdel ${consumer.replicaId}`
+          )
+        };
+      } catch (error) {
+        return {consumer, error};
+      }
+    })
+  );
+  assert.equal(savedReads.filter(result => result.value === 'saved').length, 1, `saved state must be consumed once: ${JSON.stringify(savedReads)}`);
+  assert.equal(
+    savedReads.filter(result => result.error && /SavedStateUnknownError|EDITOR_DATA_SAVED_UNKNOWN/.test(result.error.message)).length,
+    1,
+    `the competing saved consumer must fail closed: ${JSON.stringify(savedReads)}`
+  );
+  const savedWinner = savedReads.find(result => result.value === 'saved');
+  await harness.request(
+    savedWinner.consumer.replicaId,
+    'data',
+    'ackSaved',
+    [ctx, savedDoc, savedWinner.consumer.claimId],
+    'saved claim acknowledgement'
+  );
+  assert.equal(
+    await harness.request('replica-a', 'data', 'getdelSaved', [ctx, savedDoc, 'saved-claim-after-ack'], 'saved getdel after acknowledgement'),
+    null
+  );
 
   const forceContext = contextArgs('cross-process-tenant', {'services.CoAuthoring.expire.forcesave': 10});
   const forceDoc = 'cross-process-force-save';
@@ -778,6 +814,99 @@ describe('editorDataRedis independent-process behavior', () => {
         await harness.request('replica-b', 'data', 'checkAndStartForceSave', [ctx, docId], 'force-save response-loss retry'),
         undefined,
         'a committed force-save must not be started again after its response is lost'
+      );
+    } finally {
+      await harness.shutdown();
+      await cleanupRedisPrefix(prefix);
+    }
+  }, 30000);
+
+  test('recovers a saved value when the claim response is lost after Redis commits', async () => {
+    const prefix = `${process.env.TEST_REDIS_PREFIX}process-saved-response-loss:${process.pid}:${randomUUID()}:`;
+    const harness = new ReplicaHarness(prefix);
+    const ctx = contextArgs('saved-response-loss-tenant');
+    const docId = 'saved-response-loss';
+    const claimId = 'saved-response-loss-claim';
+    try {
+      await harness.start();
+      await harness.request('replica-a', 'data', 'setSaved', [ctx, docId, '1'], 'saved response-loss record creation');
+
+      const requestId = `replica-a:${harness.nextRequestId + 1}`;
+      const committedCommand = harness.waitForEvent(
+        'replica-a',
+        message => message.type === 'redis-command-committed' && message.requestId === requestId,
+        'saved response-loss claim commit'
+      );
+      const claimRequest = harness
+        .controlledDispatchWithOptions('replica-a', 'data', 'getdelSaved', [ctx, docId, claimId], 'saved response-loss claim', {
+          holdAfterCommand: true
+        })
+        .request.catch(error => error);
+
+      await committedCommand;
+      await harness.kill('replica-a', 'SIGKILL');
+      const lostResponse = await claimRequest;
+      assert.equal(lostResponse instanceof Error, true, 'the claim response must be lost with the killed replica');
+      assert.equal(
+        await harness.request('replica-b', 'data', 'getdelSaved', [ctx, docId, claimId], 'saved response-loss retry'),
+        '1',
+        'a retry with the same operation id must recover the claimed value'
+      );
+      await assert.rejects(
+        harness.request('replica-b', 'data', 'getdelSaved', [ctx, docId, 'different-claim'], 'saved response-loss competing consumer'),
+        /SavedStateUnknownError|EDITOR_DATA_SAVED_UNKNOWN/
+      );
+      await harness.request('replica-b', 'data', 'ackSaved', [ctx, docId, claimId], 'saved response-loss acknowledgement');
+      assert.equal(
+        await harness.request(
+          'replica-b',
+          'data',
+          'getdelSaved',
+          [ctx, docId, 'different-claim'],
+          'saved response-loss absent after acknowledgement'
+        ),
+        null
+      );
+    } finally {
+      await harness.shutdown();
+      await cleanupRedisPrefix(prefix);
+    }
+  }, 30000);
+
+  test('reports an acknowledged claim as resolved when the ack response is lost', async () => {
+    const prefix = `${process.env.TEST_REDIS_PREFIX}process-saved-ack-response-loss:${process.pid}:${randomUUID()}:`;
+    const harness = new ReplicaHarness(prefix);
+    const ctx = contextArgs('saved-ack-response-loss-tenant');
+    const docId = 'saved-ack-response-loss';
+    const claimId = 'saved-ack-response-loss-claim';
+    try {
+      await harness.start();
+      await harness.request('replica-a', 'data', 'setSaved', [ctx, docId, '1'], 'saved ack response-loss record creation');
+      assert.equal(await harness.request('replica-a', 'data', 'getdelSaved', [ctx, docId, claimId], 'saved ack response-loss claim'), '1');
+
+      const requestId = `replica-a:${harness.nextRequestId + 1}`;
+      const committedCommand = harness.waitForEvent(
+        'replica-a',
+        message => message.type === 'redis-command-committed' && message.requestId === requestId,
+        'saved ack response-loss acknowledgement commit'
+      );
+      const ackRequest = harness
+        .controlledDispatchWithOptions('replica-a', 'data', 'ackSaved', [ctx, docId, claimId], 'saved ack response-loss acknowledgement', {
+          holdAfterCommand: true
+        })
+        .request.catch(error => error);
+
+      await committedCommand;
+      await harness.kill('replica-a', 'SIGKILL');
+      const lostResponse = await ackRequest;
+      assert.equal(lostResponse instanceof Error, true, 'the acknowledgement response must be lost with the killed replica');
+      await assert.rejects(
+        harness.request('replica-b', 'data', 'ackSaved', [ctx, docId, claimId], 'saved ack response-loss retry'),
+        /SavedStateUnknownError|EDITOR_DATA_SAVED_UNKNOWN/
+      );
+      assert.equal(
+        await harness.request('replica-b', 'data', 'getdelSaved', [ctx, docId, 'different-claim'], 'saved ack response-loss resolved read'),
+        null
       );
     } finally {
       await harness.shutdown();
