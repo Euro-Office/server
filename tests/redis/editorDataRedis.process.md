@@ -19,15 +19,23 @@ replica that produced them.
 One test compares a successful-operation trace between the in-memory backend
 and the two Redis workers. The comparison covers observable results for locks,
 unlock enums, object-lock conflicts and removal, messages, saved-value
-read/delete operations, force-save transitions, first-write-wins force-save
+claim/read/ack operations, force-save transitions, first-write-wins force-save
 timers, unique-user statistics, and notification mutexes.
 
 Redis-only scenarios cover cross-process visibility and races for presence,
-presence expiry, locks, messages, saved values, force-save operations, timers,
+presence expiry, locks, messages, saved-value claims, force-save operations, timers,
 and notification mutexes. The crash scenario kills `replica-a` after Redis
 has acknowledged a presence write but before the public method completes.
 `replica-b` must still observe the committed presence, answer a ping, acquire
 and release a lock, and remove the remaining presence.
+
+Saved-state reads are durable claims. The claim operation ID is stable across
+retries, so a response lost after Redis commits can recover the value. A
+different consumer receives an unknown-outcome error until the claim is
+acknowledged; only an actually absent saved key returns `null`. Terminal
+document cleanup recovers claims whose owner is no longer completing the
+operation, while the active owner passes its claim ID through cleanup before
+acknowledging it.
 
 ## Cleanup and topology coverage
 
@@ -83,6 +91,5 @@ and release fail closed, reads reject, and destructive cleanup stops after the
 connection failure. It runs in an isolated CI step because the Redis process
 is intentionally stopped.
 
-Not covered here: recovery of a lost expiration claim, packaged-binary
-loading, or force-save payload serialization. Those concerns belong to the
-expiration, packaging, and regular behavior tests respectively.
+Not covered here: packaged-binary loading or force-save payload serialization.
+Those concerns belong to the packaging and regular behavior tests respectively.

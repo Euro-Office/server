@@ -45,6 +45,7 @@ async function verify() {
       'getLocks',
       'getMessages',
       'getPresence',
+      'ackSaved',
       'getdelSaved',
       'healthCheck',
       'isConnected',
@@ -191,9 +192,16 @@ async function verify() {
 
     const savedDoc = 'saved';
     await data.setSaved(ctx, savedDoc, '1');
-    const savedReads = await race(100, index => dataStores[index % dataStores.length].getdelSaved(ctx, savedDoc));
-    assert.equal(savedReads.filter(value => value === '1').length, 1);
-    assert.equal(savedReads.filter(value => value === null).length, 99);
+    const savedReads = await race(100, index =>
+      dataStores[index % dataStores.length].getdelSaved(ctx, savedDoc, `verify-saved-${index}`).then(
+        value => ({value}),
+        error => ({error})
+      )
+    );
+    assert.equal(savedReads.filter(result => result.value === '1').length, 1);
+    assert.equal(savedReads.filter(result => result.error?.code === 'EDITOR_DATA_SAVED_UNKNOWN').length, 99);
+    const savedWinner = savedReads.find(result => result.value === '1');
+    await data.ackSaved(ctx, savedDoc, `verify-saved-${savedReads.indexOf(savedWinner)}`);
 
     const forceDoc = 'force-save';
     await data.setForceSave(ctx, forceDoc, 100, 5, 'https://example.test', {user: 'one'}, {stale: true});
