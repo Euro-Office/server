@@ -11,6 +11,7 @@ const {EditorCommon} = require('./editorCommon');
 const {connectionGroups} = require('./redisConnectionManager');
 const {
   EDITOR_INDEX_SHARD_COUNT,
+  EDITOR_INDEX_QUEUES,
   editorIndexKeys,
   editorIndexKeysForItem,
   editorIndexKeysForShard,
@@ -50,10 +51,6 @@ const {
 } = require('./scripts');
 
 const expiredClaimIds = new WeakMap();
-const EXPIRED_INDEX_QUEUES = Object.freeze({
-  documents: Object.freeze({index: 'documents', lease: 'documentsExpiredLease', claims: 'documentsExpiredClaims'}),
-  forceSaveTimer: Object.freeze({index: 'forceSaveTimer', lease: 'forceSaveExpiredLease', claims: 'forceSaveExpiredClaims'})
-});
 
 class SavedStateUnknownError extends Error {
   constructor(docId) {
@@ -188,14 +185,19 @@ EditorData.prototype._ackExpired = async function (leaseKey, claimsKey, item) {
 };
 
 EditorData.prototype._ackDocumentPresenceExpired = function (item) {
-  const keys = this._indexKeysForItem(item);
-  return keys ? this._ackExpired(keys.documentsExpiredLease, keys.documentsExpiredClaims, item) : false;
+  return this._ackExpiredQueue('documents', item);
 };
 
-EditorData.prototype._popExpiredAcrossShards = async function (index, now) {
-  const queue = EXPIRED_INDEX_QUEUES[index];
+EditorData.prototype._ackExpiredQueue = function (queueName, item) {
+  const queue = EDITOR_INDEX_QUEUES[queueName];
+  const keys = this._indexKeysForItem(item);
+  return queue && keys ? this._ackExpired(keys[queue.lease], keys[queue.claims], item) : false;
+};
+
+EditorData.prototype._popExpiredAcrossShards = async function (queueName, now) {
+  const queue = EDITOR_INDEX_QUEUES[queueName];
   if (!queue) {
-    throw new Error(`Unknown expired editor-data queue: ${index}`);
+    throw new Error(`Unknown expired editor-data queue: ${queueName}`);
   }
   const batches = await Promise.all(
     Array.from({length: EDITOR_INDEX_SHARD_COUNT}, (_, shard) => {
@@ -431,8 +433,7 @@ EditorData.prototype.addForceSaveTimerNX = async function (ctx, docId, expireAt)
 };
 
 EditorData.prototype._ackForceSaveTimer = function (item) {
-  const keys = this._indexKeysForItem(item);
-  return keys ? this._ackExpired(keys.forceSaveExpiredLease, keys.forceSaveExpiredClaims, item) : false;
+  return this._ackExpiredQueue('forceSaveTimer', item);
 };
 
 EditorData.prototype.getForceSaveTimer = function (now) {
