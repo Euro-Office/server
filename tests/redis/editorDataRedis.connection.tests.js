@@ -4,7 +4,9 @@ require('./testSetup');
 
 const assert = require('node:assert/strict');
 const {EventEmitter} = require('node:events');
+const net = require('node:net');
 const {describe, test} = require('@jest/globals');
+const redis = require('../../DocService/node_modules/redis');
 
 const {
   RedisConnection,
@@ -232,12 +234,62 @@ describe('editorDataRedis connection contract', () => {
 
   test('uses RESP2 for standalone node-redis clients', () => {
     assert.equal(normalizeNodeOptions({}, 0).RESP, 2);
+    assert.equal(normalizeNodeOptions({}, 0).disableOfflineQueue, true);
   });
 
   test('applies the adapter timeout to node-redis command options', () => {
     assert.equal(normalizeNodeOptions({}, 0).commandOptions.timeout, 30000);
     assert.equal(normalizeNodeOptions({commandOptions: {timeout: 0}}, 0).commandOptions.timeout, 0);
   });
+
+  test('reproduces node-redis 6.2.1 offline queuing before initial readiness', async () => {
+    const sockets = new Set();
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.on('error', () => {});
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const socket = {host: '127.0.0.1', port: server.address().port, reconnectStrategy: false, connectTimeout: 1000};
+    const queuedClient = redis.createClient({socket});
+    const failFastClient = redis.createClient({socket, disableOfflineQueue: true});
+    queuedClient.on('error', () => {});
+    failFastClient.on('error', () => {});
+    const destroy = client => {
+      try {
+        client.destroy();
+      } catch (_error) {
+        // The client may already have been destroyed by its failed connection.
+      }
+    };
+
+    try {
+      const queuedConnect = queuedClient.connect().catch(() => undefined);
+      const failFastConnect = failFastClient.connect().catch(() => undefined);
+      await new Promise(resolve => setImmediate(resolve));
+
+      const queuedCommand = queuedClient.sendCommand(['PING']);
+      const queuedResult = await Promise.race([
+        queuedCommand.then(() => 'settled', () => 'settled'),
+        new Promise(resolve => setTimeout(() => resolve('pending'), 25))
+      ]);
+      assert.equal(queuedResult, 'pending');
+      await assert.rejects(failFastClient.sendCommand(['PING']), /offline/i);
+
+      destroy(queuedClient);
+      destroy(failFastClient);
+      await queuedCommand.catch(() => undefined);
+      await Promise.race([Promise.all([queuedConnect, failFastConnect]), new Promise(resolve => setTimeout(resolve, 100))]);
+    } finally {
+      destroy(queuedClient);
+      destroy(failFastClient);
+      sockets.forEach(socket => socket.destroy());
+      await new Promise(resolve => server.close(resolve));
+    }
+  }, 10000);
 
   test('normalizes Cluster defaults without routing them to a standalone endpoint', () => {
     const options = normalizeClusterOptions({
@@ -246,7 +298,7 @@ describe('editorDataRedis connection contract', () => {
     });
 
     assert.deepEqual(options.rootNodes, [{url: 'redis://cluster-node:7000'}]);
-    assert.deepEqual(options.defaults, {password: 'secret', socket: {connectTimeout: 15000}});
+    assert.deepEqual(options.defaults, {password: 'secret', socket: {connectTimeout: 15000}, disableOfflineQueue: true});
     assert.equal(options.commandOptions.timeout, 30000);
     assert.equal(options.RESP, 2);
   });
@@ -541,7 +593,7 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(connection.isConnected(), false);
   });
 
-  test('fails fast while a disconnected client is reconnecting, then uses it after ready', async () => {
+  test('fails fast for any topology while a client is reconnecting, then uses it after ready', async () => {
     let commandCalls = 0;
     const client = fakeClient({
       sendCommand: async () => {
@@ -552,7 +604,7 @@ describe('editorDataRedis connection contract', () => {
     const connection = new RedisConnection();
     connection.client = client;
     connection.connector = 'redis';
-    connection.sentinel = true;
+    connection.sentinel = false;
     connection.connectionAttempted = true;
 
     client.isReady = false;
