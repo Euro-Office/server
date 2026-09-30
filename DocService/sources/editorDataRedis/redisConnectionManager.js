@@ -40,6 +40,9 @@ const connectionGroups = Object.freeze({
 });
 
 function connectionScope(database, group = connectionGroups.default) {
+  // Groups are caller-defined scope labels. The exported groups cover the
+  // built-in stores, while tests and extensions may intentionally share a
+  // custom scope.
   const serialized = JSON.stringify(
     stableConnectionValue({
       database: connectionDatabaseKey(database),

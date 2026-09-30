@@ -12,7 +12,7 @@ const {
   REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
   REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS
 } = require('../../DocService/sources/editorDataRedis/redisConnection');
-const {RedisConnectionManager, redisConnectionManager, connectionScope} = require('../../DocService/sources/editorDataRedis/redisConnectionManager');
+const {RedisConnectionManager, redisConnectionManager, connectionScope, connectionGroups} = require('../../DocService/sources/editorDataRedis/redisConnectionManager');
 const {EditorCommon} = require('../../DocService/sources/editorDataRedis/editorCommon');
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
 const {
@@ -135,7 +135,7 @@ describe('editorDataRedis connection contract', () => {
 
     try {
       assert.equal(connectionScope(), connectionScope(0));
-      assert.notEqual(connectionScope(0, 'editor-data'), connectionScope(0, 'editor-stat'));
+      assert.notEqual(connectionScope(0, connectionGroups.editorData), connectionScope(0, connectionGroups.editorStat));
       assert.notEqual(data.redis, stat.redis);
       assert.equal(redisConnectionManager.size(), 2);
     } finally {
