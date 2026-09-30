@@ -13,6 +13,10 @@ const {publicMethods} = require('./testHelpers');
 
 const ctx = {tenant: 'tenant:世界'};
 
+function clusterKeySlot(data, key) {
+  return data._command(['CLUSTER', 'KEYSLOT', key]);
+}
+
 describe('editorDataRedis contract', () => {
   test('keeps the complete EditorData and EditorStat interfaces', async () => {
     const redisData = new redisStorage.EditorData();
@@ -40,6 +44,7 @@ describe('editorDataRedis contract', () => {
     const first = data._docKeys(ctx, 'doc:世界');
     const second = data._docKeys(ctx, 'other-doc');
     const otherTenant = data._docKeys({tenant: 'other'}, 'doc:世界');
+    const indexKeys = data._indexKeys(ctx, 'doc:世界');
 
     try {
       const firstHashTags = Object.values(first).map(key => key.match(/\{[^}]+\}/)?.[0]);
@@ -47,7 +52,57 @@ describe('editorDataRedis contract', () => {
       assert.notEqual(first.presenceSet, second.presenceSet);
       assert.notEqual(first.presenceSet, otherTenant.presenceSet);
       assert.match(first.presenceSet, /[A-Za-z0-9_-]+$/);
-      assert.equal(data.documentsKey, `${redisKeys.cfgRedisPrefix}{editor:index}:documents`);
+      const shard = redisKeys.editorIndexShard(ctx, 'doc:世界');
+      assert.deepEqual(
+        Array.from({length: 3}, () => redisKeys.editorIndexShard(ctx, 'doc:世界')),
+        [shard, shard, shard]
+      );
+      assert.equal(redisKeys.editorIndexTag(ctx, 'doc:世界'), `{editor:index:${shard}}`);
+      assert.deepEqual(indexKeys, redisKeys.editorIndexKeys(ctx, 'doc:世界'));
+      assert.deepEqual(indexKeys, redisKeys.editorIndexKeysForShard(shard));
+      assert.deepEqual(indexKeys, redisKeys.editorIndexKeysForItem(JSON.parse(redisKeys.documentMember(ctx, 'doc:世界'))));
+      assert.throws(() => redisKeys.editorIndexTagForShard(redisKeys.EDITOR_INDEX_SHARD_COUNT), /Invalid editor index shard/);
+      assert.equal(indexKeys.documents.match(/\{[^}]+\}/)?.[0], indexKeys.forceSaveTimer.match(/\{[^}]+\}/)?.[0]);
+      assert.equal(indexKeys.documents, `${redisKeys.cfgRedisPrefix}${redisKeys.editorIndexTag(ctx, 'doc:世界')}:documents`);
+      assert.equal(indexKeys.forceSaveTimer, `${redisKeys.cfgRedisPrefix}${redisKeys.editorIndexTag(ctx, 'doc:世界')}:forcesavetimer`);
+    } finally {
+      await data.close();
+    }
+  });
+
+  test('deterministically distributes different documents across index shards', async () => {
+    const data = new redisStorage.EditorData();
+    const documents = Array.from({length: redisKeys.EDITOR_INDEX_SHARD_COUNT * 4}, (_, index) => `distribution-document-${index}`);
+
+    try {
+      const shards = new Set(documents.map(docId => redisKeys.editorIndexShard(ctx, docId)));
+      assert.ok(shards.size > 1);
+      const tenantShards = new Set(['tenant-a', 'tenant-b', 'tenant-c'].map(tenant => redisKeys.editorIndexShard({tenant}, 'same-document')));
+      assert.ok(tenantShards.size > 1);
+
+      if (process.env.TEST_REDIS_CLUSTER === 'true') {
+        const slots = await Promise.all(documents.map(docId => data._command(['CLUSTER', 'KEYSLOT', data._indexKeys(ctx, docId).documents])));
+        assert.ok(new Set(slots.map(Number)).size > 1);
+
+        for (const docId of documents.slice(0, 8)) {
+          const keys = data._indexKeys(ctx, docId);
+          const [documentSlot, forceSaveSlot] = await Promise.all([clusterKeySlot(data, keys.documents), clusterKeySlot(data, keys.forceSaveTimer)]);
+          assert.equal(Number(documentSlot), Number(forceSaveSlot));
+        }
+
+        const allIndexSlots = await Promise.all(Object.values(data._indexKeys(ctx, documents[0])).map(key => clusterKeySlot(data, key)));
+        assert.equal(new Set(allIndexSlots.map(Number)).size, 1);
+      }
+    } finally {
+      await data.close();
+    }
+  });
+
+  test('rejects unknown expiration queues instead of selecting a queue implicitly', async () => {
+    const data = new redisStorage.EditorData();
+
+    try {
+      await assert.rejects(data._popExpiredAcrossShards('unknown', Date.now()), /Unknown expired editor-data queue/);
     } finally {
       await data.close();
     }

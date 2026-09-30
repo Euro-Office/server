@@ -21,12 +21,13 @@ async function seedDocumentState(data, ctx, docId) {
 
 async function readDocumentState(data, ctx, docId) {
   const keys = data._docKeys(ctx, docId);
+  const indexKeys = data._indexKeys(ctx, docId);
   const [saveLock, authLock, saved, savedClaim, timer, locks, messages, forceSave] = await Promise.all([
     data._command(['GET', keys.saveLock]),
     data._command(['GET', keys.authLock]),
     data._command(['GET', keys.saved]),
     data._command(['HGET', keys.savedClaim, 'id']),
-    data._command(['ZSCORE', data.forceSaveTimerKey, documentMember(ctx, docId)]),
+    data._command(['ZSCORE', indexKeys.forceSaveTimer, documentMember(ctx, docId)]),
     data.getLocks(ctx, docId),
     data.getMessages(ctx, docId),
     data.getForceSave(ctx, docId)
@@ -56,6 +57,19 @@ describe('editorDataRedis presence invariants', () => {
     await stores[0].addPresence(ctx, 'document', 'user-1', info);
 
     assert.deepEqual(await stores[1].getPresence(ctx, 'document'), [info]);
+  });
+
+  test('public presence and force-save timer writes use the document index shard', async () => {
+    const ctx = context('presence-index-shard-write');
+    const docId = 'document';
+    const member = documentMember(ctx, docId);
+    const indexKeys = stores[0]._indexKeys(ctx, docId);
+
+    await stores[0].addPresence(ctx, docId, 'user-1', JSON.stringify({id: 'user-1'}));
+    await stores[0].addForceSaveTimerNX(ctx, docId, Date.now() + 60000);
+
+    assert.notEqual(await stores[1]._command(['ZSCORE', indexKeys.documents, member]), null);
+    assert.notEqual(await stores[1]._command(['ZSCORE', indexKeys.forceSaveTimer, member]), null);
   });
 
   test('a refresh after explicit removal does not resurrect the user', async () => {
@@ -111,7 +125,7 @@ describe('editorDataRedis presence invariants', () => {
 
     assert.deepEqual(await stores[1].getPresence(ctx, docId), []);
     assert.deepEqual(await readDocumentState(stores[1], ctx, docId), emptyDocumentState());
-    assert.equal(await stores[1]._command(['ZSCORE', stores[1].documentsKey, documentMember(ctx, docId)]), null);
+    assert.equal(await stores[1]._command(['ZSCORE', stores[1]._indexKeys(ctx, docId).documents, documentMember(ctx, docId)]), null);
   });
 
   test('skips cleanup while any live presence entry remains', async () => {
@@ -163,8 +177,9 @@ describe('editorDataRedis presence invariants', () => {
 
       assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
       assert.deepEqual(await readDocumentState(stores[0], ctx, docId), before);
-      assert.notEqual(await stores[0]._command(['ZSCORE', stores[0].documentsKey, documentMember(ctx, docId)]), null);
-      assert.notEqual(await stores[0]._command(['ZSCORE', stores[0].forceSaveTimerKey, documentMember(ctx, docId)]), null);
+      const indexKeys = stores[0]._indexKeys(ctx, docId);
+      assert.notEqual(await stores[0]._command(['ZSCORE', indexKeys.documents, documentMember(ctx, docId)]), null);
+      assert.notEqual(await stores[0]._command(['ZSCORE', indexKeys.forceSaveTimer, documentMember(ctx, docId)]), null);
     } finally {
       await stores[1].removePresence(ctx, docId, 'other-replica-user');
       await stores[1].cleanDocumentOnExit(ctx, docId);

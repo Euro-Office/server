@@ -90,8 +90,8 @@ const POP_EXPIRED_SCRIPT = `
 -- POP_EXPIRED is a bounded, at-least-once claim.  The caller must acknowledge
 -- each returned member after processing it.  Until then, the member stays in
 -- the lease set and is reclaimed after ARGV[2] if the response or worker is
--- lost.  All keys use the editor:index hash tag, so the operation is atomic
--- on both standalone Redis and Redis Cluster.
+-- lost.  All keys use the same editor:index shard hash tag, so the operation
+-- is atomic on both standalone Redis and Redis Cluster.
 local values = {}
 local limit = tonumber(ARGV[3])
 local leaseUntil = ARGV[2]
