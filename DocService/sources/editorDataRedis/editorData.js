@@ -8,6 +8,7 @@
 const {randomUUID} = require('crypto');
 
 const {EditorCommon} = require('./editorCommon');
+const {connectionGroups} = require('./redisConnectionManager');
 const {
   EDITOR_INDEX_SHARD_COUNT,
   editorIndexKeys,
@@ -63,7 +64,7 @@ class SavedStateUnknownError extends Error {
 }
 
 function EditorData() {
-  EditorCommon.call(this);
+  EditorCommon.call(this, undefined, connectionGroups.editorData);
   this.expiredClaimOwner = randomUUID();
   this.expiredClaimSequence = 0;
   // Tests can shorten this internal lease; production keeps enough time for a

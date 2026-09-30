@@ -14,6 +14,7 @@ const {
 } = require('../../DocService/sources/editorDataRedis/redisConnection');
 const {RedisConnectionManager, redisConnectionManager, connectionScope} = require('../../DocService/sources/editorDataRedis/redisConnectionManager');
 const {EditorCommon} = require('../../DocService/sources/editorDataRedis/editorCommon');
+const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
 const {
   normalizeNodeOptions,
   normalizeClusterOptions,
@@ -125,18 +126,108 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(redisConnectionManager.owns(connection), false);
   });
 
-  test('shares the default client across info and notification stores', async () => {
-    const infoRouter = require('../../DocService/sources/routes/info');
+  test('shares the statistics client across stats, info, and notification stores', async () => {
     const notificationService = require('../../Common/sources/notificationService');
-    const owner = new EditorCommon();
+    assert.equal(redisConnectionManager.size(), 1);
+    const infoRouter = require('../../DocService/sources/routes/info');
+    const data = new EditorData();
+    const stat = new EditorStat();
 
     try {
       assert.equal(connectionScope(), connectionScope(0));
-      assert.equal(redisConnectionManager.size(), 1);
+      assert.notEqual(connectionScope(0, 'editor-data'), connectionScope(0, 'editor-stat'));
+      assert.notEqual(data.redis, stat.redis);
+      assert.equal(redisConnectionManager.size(), 2);
     } finally {
-      await Promise.all([infoRouter.close(), notificationService.close(), owner.close()]);
+      await Promise.all([infoRouter.close(), notificationService.close(), data.close(), stat.close()]);
     }
     assert.equal(redisConnectionManager.size(), 0);
+  });
+
+  test('does not let a stale timeout abort a replacement client', async () => {
+    let destroyed = false;
+    const pending = [];
+    const firstClient = fakeClient({
+      sendCommand() {
+        return new Promise(resolve => {
+          pending.push(resolve);
+        });
+      },
+      destroy() {
+        destroyed = true;
+        this.isOpen = false;
+      }
+    });
+    const replacementClient = fakeClient({sendCommand: async () => 'PONG'});
+    const connection = new RedisConnection();
+    connection.client = firstClient;
+    connection.connector = 'redis';
+    connection.commandTimeoutMs = 10;
+    connection._createClient = () => {
+      connection.client = replacementClient;
+      connection.connector = 'redis';
+      connection.cluster = false;
+      connection.sentinel = false;
+    };
+
+    const firstCommand = connection.command(['PING']);
+    await new Promise(resolve => setImmediate(resolve));
+    connection.commandTimeoutMs = 30;
+    const staleCommand = connection.command(['PING']);
+    await assert.rejects(firstCommand, error => error.code === 'ETIMEDOUT');
+    assert.equal(destroyed, true);
+    assert.equal(connection.client, null);
+
+    assert.equal(await connection.command(['PING']), 'PONG');
+    assert.equal(connection.client, replacementClient);
+
+    await assert.rejects(staleCommand, error => error.code === 'ETIMEDOUT');
+    assert.equal(connection.client, replacementClient);
+    pending.forEach(resolve => resolve('late PONG'));
+  });
+
+  test('keeps a normal timeout local while concurrent commands fail and later commands reconnect', async () => {
+    const pending = [];
+    let destroyCalls = 0;
+    const firstClient = fakeClient({
+      sendCommand() {
+        return new Promise(resolve => pending.push(resolve));
+      },
+      destroy() {
+        destroyCalls++;
+        this.isOpen = false;
+      }
+    });
+    const replacementClient = fakeClient({sendCommand: async () => 'PONG'});
+    const connection = new RedisConnection();
+    connection.client = firstClient;
+    connection.connector = 'redis';
+    connection.commandTimeoutMs = 10;
+    connection._createClient = () => {
+      connection.client = replacementClient;
+      connection.connector = 'redis';
+      connection.cluster = false;
+      connection.sentinel = false;
+    };
+
+    const unhandled = [];
+    const onUnhandledRejection = reason => unhandled.push(reason);
+    const initialExitCode = process.exitCode;
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      const commands = [connection.command(['PING']), connection.command(['PING'])];
+      await assert.rejects(commands[0], error => error.code === 'ETIMEDOUT');
+      await assert.rejects(commands[1], error => error.code === 'ETIMEDOUT');
+      assert.equal(destroyCalls, 1);
+      assert.equal(await connection.command(['PING']), 'PONG');
+      assert.equal(connection.client, replacementClient);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(unhandled, []);
+      assert.equal(process.exitCode, initialExitCode);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+      pending.forEach(resolve => resolve('late PONG'));
+    }
   });
 
   test('uses RESP2 for standalone node-redis clients', () => {
@@ -526,6 +617,33 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(connection.isConnected(), false);
   });
 
+  test('recovers after a failed initial connection', async () => {
+    let attempts = 0;
+    const connection = new RedisConnection();
+    connection._createClient = () => {
+      attempts++;
+      const client = fakeClient({isOpen: false, isReady: false});
+      client.connect = async () => {
+        if (attempts === 1) {
+          throw new Error('connection refused');
+        }
+        client.isOpen = true;
+        client.isReady = true;
+      };
+      connection.client = client;
+      connection.connector = 'redis';
+      connection.cluster = false;
+      connection.sentinel = false;
+    };
+
+    await assert.rejects(connection.connect(), /connection refused/);
+    assert.equal(connection.closed, false);
+    await connection.connect();
+    assert.equal(connection.isConnected(), true);
+    assert.equal(attempts, 2);
+    await connection.close();
+  });
+
   test('propagates the final connection error after bounded reconnect exhaustion', async () => {
     const finalError = new Error('Sentinel retry limit reached');
     const client = fakeClient({
@@ -597,5 +715,21 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(closed, true);
     assert.equal(client.isOpen, false);
     assert.equal(connection.client, null);
+  });
+
+  test('deliberate shutdown permanently rejects future operations', async () => {
+    const connection = new RedisConnection();
+    connection.client = fakeClient({
+      async close() {
+        this.isOpen = false;
+      }
+    });
+
+    await connection.close();
+    await assert.rejects(connection.command(['PING']), error => {
+      assert.ok(error instanceof RedisUnavailableError);
+      return true;
+    });
+    assert.equal(connection.closed, true);
   });
 });

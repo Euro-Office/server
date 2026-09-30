@@ -372,6 +372,11 @@ jobs:
 
       - name: Run ${{ matrix.name }} Sentinel promotion and reconnect integration test
         env:
+          TEST_REDIS_SENTINEL: 'true'
+          TEST_REDIS_SENTINEL_NAME: 'mymaster'
+          TEST_REDIS_SENTINEL_NODES: '127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381'
+          TEST_REDIS_NODE_PASSWORD: ${{ env.TEST_REDIS_NODE_PASSWORD }}
+          TEST_REDIS_SENTINEL_PASSWORD: ${{ env.TEST_REDIS_SENTINEL_PASSWORD }}
           TEST_REDIS_TOPOLOGY_REQUIRED: 'true'
           TEST_REDIS_SENTINEL_PRIMARY_CONTAINER: '${{ matrix.name }}-sentinel-primary'
           TEST_REDIS_SENTINEL_REPLICA_PORT: '6381'
