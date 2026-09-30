@@ -9,50 +9,40 @@ const {EditorData} = require('../../DocService/sources/editorDataRedis');
 const {POP_EXPIRED_BATCH_SIZE, POP_EXPIRED_MAX_BATCH_SIZE} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
 const {POP_EXPIRED_SCRIPT} = require('../../DocService/sources/editorDataRedis/scripts');
 const {strictMax} = require('../../DocService/sources/editorDataRedis/redisValueCodec');
-const {EDITOR_INDEX_SHARD_COUNT, documentMember, editorIndexShard} = require('../../DocService/sources/editorDataRedis/redisKeys');
+const {EDITOR_INDEX_QUEUES, EDITOR_INDEX_SHARD_COUNT, documentMember, editorIndexShard} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context, wait} = require('./testHelpers');
 
+function queueDefinition(name, pop, acknowledge) {
+  const queue = EDITOR_INDEX_QUEUES[name];
+  return {
+    add(data, ctx, docId) {
+      return data._command(['ZADD', data._indexKeys(ctx, docId)[queue.index], '0', documentMember(ctx, docId)]);
+    },
+    pop,
+    acknowledge,
+    index(data, ctx, docId) {
+      return data._indexKeys(ctx, docId)[queue.index];
+    },
+    lease(data, ctx, docId) {
+      return data._indexKeys(ctx, docId)[queue.lease];
+    },
+    claims(data, ctx, docId) {
+      return data._indexKeys(ctx, docId)[queue.claims];
+    }
+  };
+}
+
 const queues = {
-  presence: {
-    add(data, ctx, docId) {
-      return data._command(['ZADD', data._indexKeys(ctx, docId).documents, '0', documentMember(ctx, docId)]);
-    },
-    pop(data, now) {
-      return data.getDocumentPresenceExpired(now);
-    },
-    acknowledge(data, item) {
-      return data._ackDocumentPresenceExpired(item);
-    },
-    index(data, ctx, docId) {
-      return data._indexKeys(ctx, docId).documents;
-    },
-    lease(data, ctx, docId) {
-      return data._indexKeys(ctx, docId).documentsExpiredLease;
-    },
-    claims(data, ctx, docId) {
-      return data._indexKeys(ctx, docId).documentsExpiredClaims;
-    }
-  },
-  forceSave: {
-    add(data, ctx, docId) {
-      return data._command(['ZADD', data._indexKeys(ctx, docId).forceSaveTimer, '0', documentMember(ctx, docId)]);
-    },
-    pop(data, now) {
-      return data.getForceSaveTimer(now);
-    },
-    acknowledge(data, item) {
-      return data._ackForceSaveTimer(item);
-    },
-    index(data, ctx, docId) {
-      return data._indexKeys(ctx, docId).forceSaveTimer;
-    },
-    lease(data, ctx, docId) {
-      return data._indexKeys(ctx, docId).forceSaveExpiredLease;
-    },
-    claims(data, ctx, docId) {
-      return data._indexKeys(ctx, docId).forceSaveExpiredClaims;
-    }
-  }
+  presence: queueDefinition(
+    'documents',
+    (data, now) => data.getDocumentPresenceExpired(now),
+    (data, item) => data._ackDocumentPresenceExpired(item)
+  ),
+  forceSave: queueDefinition(
+    'forceSaveTimer',
+    (data, now) => data.getForceSaveTimer(now),
+    (data, item) => data._ackForceSaveTimer(item)
+  )
 };
 
 async function seed(data, queue, tenant, count, sameShard = false) {
