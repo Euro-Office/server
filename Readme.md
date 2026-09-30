@@ -67,16 +67,16 @@ force-save indexes are sorted sets with timestamp scores; cleanup removes
 expired members, so an index key itself can remain present after its members
 expire.
 
-Expiration cleanup is deliberately processed in batches of 100 members. The
-Redis `POP_EXPIRED` Lua operation is atomic, so this cap bounds both the
-number of sorted-set members it examines and the number it moves into the
-lease/claim sets; a large backlog cannot turn one invocation into an
-unbounded blocking operation. The GC drains a finite backlog over
-`ceil(backlog / 100)` passes. With the default schedules, document-presence
-cleanup runs every 2 seconds (up to 50 members/second) and force-save cleanup
-runs every minute (up to 100 members/minute). A sustained arrival rate above
-those rates will grow the backlog and should be treated as an operational
-capacity issue rather than addressed by making the Lua batch unbounded.
+Expiration cleanup is processed in batches of 6 members per index shard. The
+Redis `POP_EXPIRED` Lua operation is atomic for one shard, so this cap bounds
+both the number of sorted-set members it examines and the number it moves into
+that shard's lease/claim sets; a large backlog cannot turn one Lua invocation
+into an unbounded blocking operation. Each GC pass checks all 16 shards, and
+therefore claims at most 96 entries for either expiration queue per pass. The
+at-least-once lease is acknowledged only after the document operation
+completes. A sustained arrival rate above the resulting aggregate capacity
+should be treated as an operational capacity issue rather than addressed by
+making the Lua batch unbounded.
 
 ### Key schema
 
@@ -95,16 +95,25 @@ The per-document keys are the base followed by `presence:set`,
 `presence:hash`, `presence:version`, `savelock`, `lockdocument`, `locks`,
 `message`, `saved`, and `forcesave`.
 
-Global editor-data indexes use the separate hash tag `{editor:index}`:
+Cross-document editor-data indexes use 16 fixed shards. The shard is the
+FNV-1a hash of the UTF-8 JSON pair `[tenant, document]`, reduced modulo 16.
+The tenant is always part of the input, including single-tenant deployments.
+The document index and force-save timer for one document deliberately share
+the same Redis Cluster hash tag:
 
 ```text
-<prefix>{editor:index}:documents
-<prefix>{editor:index}:forcesavetimer
-<prefix>{editor:index}:documents:expired:lease
-<prefix>{editor:index}:documents:expired:claims
-<prefix>{editor:index}:forcesavetimer:expired:lease
-<prefix>{editor:index}:forcesavetimer:expired:claims
+<prefix>{editor:index:<shard>}:documents
+<prefix>{editor:index:<shard>}:forcesavetimer
+<prefix>{editor:index:<shard>}:documents:expired:lease
+<prefix>{editor:index:<shard>}:documents:expired:claims
+<prefix>{editor:index:<shard>}:forcesavetimer:expired:lease
+<prefix>{editor:index:<shard>}:forcesavetimer:expired:claims
 ```
+
+The shard count is a documented implementation constant, not a runtime
+setting. Keep it stable because changing it changes the key schema. Redis
+Cluster operations never combine keys from different shards in one Lua script
+or transaction.
 
 Tenant statistics use the hash tag `{stat:<base64url(tenant)>}`. Their keys
 include presence uniqueness (`presence:unique:*`), monthly presence
@@ -113,7 +122,8 @@ statistics (`presence:month:*`), editor connection samples
 `connections:<type>:updated`), and notification locks
 (`notification:<base64url(type)>`). The braces are intentional Redis Cluster
 hash tags: all keys for one document or one tenant's statistics stay in the
-same slot, while global indexes use their own slot.
+same slot, while cross-document index traffic is distributed over the 16 index
+slots.
 
 ## Known limitation: replication failover and locks
 
