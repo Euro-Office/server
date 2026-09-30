@@ -7,6 +7,7 @@
 
 const crypto = require('crypto');
 const {EditorCommon} = require('./editorCommon');
+const {connectionGroups} = require('./redisConnectionManager');
 const {ttlSeconds, ttlMilliseconds, toRedisString, jsonEncode, jsonDecode, decodeHash, strictMax} = require('./redisValueCodec');
 const {encodePart} = require('./redisKeys');
 const {cfgExpShard, cfgExpMonthUniqueUsers} = require('./editorStatSettings');
@@ -21,7 +22,7 @@ const {
 } = require('./scripts');
 
 function EditorStat(database) {
-  EditorCommon.call(this, database);
+  EditorCommon.call(this, database, connectionGroups.editorStat);
   this.sampleId = `${process.pid}:${crypto.randomBytes(12).toString('hex')}`;
   this.sampleSequence = 0;
 }

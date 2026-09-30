@@ -227,8 +227,7 @@ class RedisConnection {
         this.database ?? 0,
         errorDetails(error)
       );
-      await this._closeClient();
-      this.closed = true;
+      await this._closeClient(currentClient);
       throw error;
     } finally {
       this.connectPromise = null;
@@ -267,7 +266,7 @@ class RedisConnection {
         } else {
           result = client.sendCommand(normalized);
         }
-        result = await this._withCommandTimeout(result, `Redis command ${commandName}`);
+        result = await this._withCommandTimeout(result, `Redis command ${commandName}`, client);
         log('debug', 'command end %s after %dms', commandName, Date.now() - startedAt);
         return result;
       } catch (error) {
@@ -288,7 +287,7 @@ class RedisConnection {
         const normalized = args.map(toRedisString);
         multi.addCommand(...(this.sentinel ? [false, normalized] : [normalized]));
       }
-      return this._withCommandTimeout(multi.exec(), `Redis transaction with ${commands.length} commands`);
+      return this._withCommandTimeout(multi.exec(), `Redis transaction with ${commands.length} commands`, client);
     });
   }
 
@@ -317,7 +316,10 @@ class RedisConnection {
     }
   }
 
-  async _closeClient() {
+  async _closeClient(expectedClient = this.client) {
+    if (expectedClient && expectedClient !== this.client) {
+      return;
+    }
     const client = this.client;
     this.client = null;
     this.connectPromise = null;
@@ -369,7 +371,10 @@ class RedisConnection {
     return new Promise(resolve => this.idleWaiters.push(resolve));
   }
 
-  _abortClient() {
+  _abortClient(expectedClient = this.client) {
+    if (expectedClient && expectedClient !== this.client) {
+      return;
+    }
     const client = this.client;
     this.client = null;
     this.connectPromise = null;
@@ -385,12 +390,12 @@ class RedisConnection {
     }
   }
 
-  async _withCommandTimeout(promise, description) {
+  async _withCommandTimeout(promise, description, client = this.client) {
     try {
       return await withTimeout(promise, this.commandTimeoutMs, description);
     } catch (error) {
       if (error.code === 'ETIMEDOUT') {
-        this._abortClient();
+        this._abortClient(client);
       }
       throw error;
     }
