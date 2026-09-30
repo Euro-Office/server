@@ -14,6 +14,10 @@ const cfgRedisPrefix = config.get('services.CoAuthoring.redis').get('prefix');
 // this stable: changing it changes the key schema and requires an explicit
 // migration of existing index entries.
 const EDITOR_INDEX_SHARD_COUNT = 16;
+const EDITOR_INDEX_QUEUES = Object.freeze({
+  documents: Object.freeze({index: 'documents', lease: 'documentsExpiredLease', claims: 'documentsExpiredClaims'}),
+  forceSaveTimer: Object.freeze({index: 'forceSaveTimer', lease: 'forceSaveExpiredLease', claims: 'forceSaveExpiredClaims'})
+});
 
 function encodePart(value) {
   return Buffer.from(String(value), 'utf8').toString('base64url');
@@ -82,6 +86,7 @@ function decodeDocumentMember(value) {
 module.exports = {
   cfgRedisPrefix,
   EDITOR_INDEX_SHARD_COUNT,
+  EDITOR_INDEX_QUEUES,
   encodePart,
   tenantName,
   documentMember,

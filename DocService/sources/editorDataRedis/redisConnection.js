@@ -316,15 +316,20 @@ class RedisConnection {
     }
   }
 
-  async _closeClient(expectedClient = this.client) {
+  _detachClient(expectedClient = this.client) {
     if (expectedClient && expectedClient !== this.client) {
-      return;
+      return null;
     }
     const client = this.client;
     this.client = null;
     this.connectPromise = null;
     this.connectionAttempted = false;
     this.lastError = null;
+    return client;
+  }
+
+  async _closeClient(expectedClient = this.client) {
+    const client = this._detachClient(expectedClient);
     if (!client || !client.isOpen) {
       return;
     }
@@ -372,14 +377,7 @@ class RedisConnection {
   }
 
   _abortClient(expectedClient = this.client) {
-    if (expectedClient && expectedClient !== this.client) {
-      return;
-    }
-    const client = this.client;
-    this.client = null;
-    this.connectPromise = null;
-    this.connectionAttempted = false;
-    this.lastError = null;
+    const client = this._detachClient(expectedClient);
     if (!client || !client.isOpen) {
       return;
     }
