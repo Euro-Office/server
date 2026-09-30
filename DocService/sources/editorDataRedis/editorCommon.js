@@ -6,17 +6,18 @@
 'use strict';
 
 const commonDefines = require('./../../../Common/sources/commondefines');
-const {redisConnectionManager} = require('./redisConnectionManager');
+const {redisConnectionManager, connectionGroups} = require('./redisConnectionManager');
 const {RedisUnavailableError} = require('./redisConnection');
 const {LOCK_SCRIPT, UNLOCK_SCRIPT} = require('./scripts');
 const {cfgRedisPrefix, encodePart, tenantName} = require('./redisKeys');
 const {jsonEncode, ttlMilliseconds} = require('./redisValueCodec');
 
-function EditorCommon(database) {
+function EditorCommon(database, connectionGroup = connectionGroups.default) {
   this.database = database;
+  this.connectionGroup = connectionGroup;
   // EditorCommon instances lease a shared connection. The manager keeps the
   // physical client alive until every component using that database releases it.
-  this.redis = redisConnectionManager.acquire(database);
+  this.redis = redisConnectionManager.acquire(database, connectionGroup);
   this.closed = false;
 }
 
@@ -25,7 +26,7 @@ EditorCommon.prototype._ensureRedisLease = function () {
     throw new RedisUnavailableError(new Error('Editor data store is closed'));
   }
   if (!redisConnectionManager.owns(this.redis)) {
-    this.redis = redisConnectionManager.acquire(this.database);
+    this.redis = redisConnectionManager.acquire(this.database, this.connectionGroup);
   }
   return this.redis;
 };

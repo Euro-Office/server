@@ -33,10 +33,17 @@ function stableConnectionValue(value) {
   return value;
 }
 
-function connectionScope(database) {
+const connectionGroups = Object.freeze({
+  default: 'default',
+  editorData: 'editor-data',
+  editorStat: 'editor-stat'
+});
+
+function connectionScope(database, group = connectionGroups.default) {
   const serialized = JSON.stringify(
     stableConnectionValue({
       database: connectionDatabaseKey(database),
+      group,
       connector: cfgRedisName,
       host: cfgRedisHost,
       port: cfgRedisPort,
@@ -55,10 +62,11 @@ class RedisConnectionManager {
     this.terminal = false;
   }
 
-  acquire(database, scope = connectionScope(database)) {
+  acquire(database, group = connectionGroups.default) {
     if (this.terminal) {
       throw new RedisUnavailableError(new Error('Redis connection manager is shut down'));
     }
+    const scope = connectionScope(database, group);
     let entry = this.connections.get(scope);
     if (!entry) {
       entry = {connection: this.createConnection(connectionDatabaseKey(database)), references: 0};
@@ -105,5 +113,6 @@ const redisConnectionManager = new RedisConnectionManager();
 module.exports = {
   RedisConnectionManager,
   redisConnectionManager,
-  connectionScope
+  connectionScope,
+  connectionGroups
 };
