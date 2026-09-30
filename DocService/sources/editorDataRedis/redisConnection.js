@@ -184,14 +184,14 @@ class RedisConnection {
     if (this.isConnected()) {
       return this.client;
     }
-    if (this.sentinel && this.client && this.connectionAttempted && !this.client.isOpen) {
+    if (this.client && this.connectionAttempted && !this.client.isOpen) {
       this._abortClient();
     }
     if (!this.client) {
       this._createClient();
     }
     const currentClient = this.client;
-    if (this.sentinel && this.connectionAttempted && currentClient.isOpen && !currentClient.isReady) {
+    if (this.connectionAttempted && currentClient.isOpen && !currentClient.isReady) {
       throw new RedisUnavailableError(this.lastError);
     }
     const startedAt = Date.now();
