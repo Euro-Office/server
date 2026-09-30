@@ -14,12 +14,16 @@
  * module is simply absent from the binary and the service crashes at runtime with
  * MODULE_NOT_FOUND. This script turns that silent omission into a build failure.
  *
- * Every current `pkg.scripts` entry is a literal path (no glob metacharacters).
- * For a literal pattern, `fs.statSync(resolved).isFile()` is equivalent to pkg's
- * own `tinyglobby.globSync([resolved], {absolute, dot})` followed by an isFile
- * check, so the resolution here is faithful without a glob dependency. If a real
- * glob is ever added to `pkg.scripts`, the guard refuses to guess (see below)
- * rather than diverge from pkg.
+ * The current entries are all literal paths. For a literal pattern,
+ * `fs.statSync(resolved).isFile()` is equivalent to pkg's own
+ * `tinyglobby.globSync([resolved], {absolute, dot})` followed by an isFile check,
+ * so resolution here is faithful without pulling in a glob dependency. An entry
+ * that contains actual glob syntax is refused rather than guessed at (see below),
+ * so the guard can never diverge from pkg by mis-resolving a pattern.
+ *
+ * Components are discovered, not hardcoded: any package.json (outside node_modules)
+ * carrying a `pkg.scripts` block is checked, so a newly added component is covered
+ * automatically instead of silently escaping the guard.
  *
  * Run after `npm install`: some entries point into `node_modules` (axios, statsd)
  * and only exist post-install, exactly as pkg requires.
@@ -28,12 +32,55 @@
 const fs = require('fs');
 const path = require('path');
 
-// Components whose package.json carries a `pkg` block consumed by @yao-pkg/pkg.
-const COMPONENTS = ['DocService', 'FileConverter', 'Metrics', 'AdminPanel/server'];
+// Never descend into these while discovering components.
+const DISCOVERY_SKIP_DIRS = new Set(['node_modules', 'tests', '.git']);
 
-// picomatch metacharacters. tinyglobby (pkg's matcher) treats an entry containing
-// any of these as a glob; a plain isFile check would be wrong for those.
-const GLOB_METACHARS = /[*?[\]{}()!+@]/;
+// Glob syntax picomatch (pkg's matcher) acts on. Bare `@ + !` are NOT globs on
+// their own (only as extglobs such as `@(...)`, still caught here via `(`), so they
+// are excluded: a literal path like `node_modules/@scope/pkg/index.js` must not be
+// mistaken for a pattern.
+const GLOB_SYNTAX = /[*?[\]{}()]/;
+
+function hasPkgScripts(dir) {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    return Array.isArray(manifest.pkg && manifest.pkg.scripts);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find every component that carries a `pkg.scripts` block. Scans the repo's own
+ * directories (depth 1, plus one nested level so `AdminPanel/server` is found),
+ * skipping node_modules and test fixtures.
+ * @returns {string[]} component paths relative to repoRoot, sorted
+ */
+function discoverComponents(repoRoot) {
+  const components = [];
+  const scan = (relDir, depth) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(path.join(repoRoot, relDir), {withFileTypes: true});
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.') || DISCOVERY_SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
+      const rel = relDir ? path.join(relDir, entry.name) : entry.name;
+      if (hasPkgScripts(path.join(repoRoot, rel))) {
+        components.push(rel);
+      }
+      if (depth > 1) {
+        scan(rel, depth - 1);
+      }
+    }
+  };
+  scan('', 2);
+  return components.sort();
+}
 
 /**
  * Check one component's pkg.scripts entries.
@@ -65,7 +112,7 @@ function checkComponent(repoRoot, component) {
     if (entry.startsWith('!')) {
       continue;
     }
-    if (GLOB_METACHARS.test(entry)) {
+    if (GLOB_SYNTAX.test(entry)) {
       failures.push({
         component,
         entry,
@@ -93,18 +140,22 @@ function checkComponent(repoRoot, component) {
 }
 
 /**
- * Check every component's pkg.scripts entries.
+ * Check every component's pkg.scripts entries. Components are discovered from the
+ * repo unless an explicit list is passed (used by the tests against fixtures).
  * @returns {Array<{component: string, entry: string, reason: string}>} failures
  */
-function checkAll(repoRoot, components = COMPONENTS) {
-  return components.flatMap(component => checkComponent(repoRoot, component));
+function checkAll(repoRoot, components) {
+  const list = components || discoverComponents(repoRoot);
+  return list.flatMap(component => checkComponent(repoRoot, component));
 }
 
-module.exports = {COMPONENTS, checkComponent, checkAll};
+module.exports = {checkComponent, checkAll, discoverComponents};
 
 if (require.main === module) {
   const repoRoot = path.resolve(__dirname, '..');
-  const failures = checkAll(repoRoot);
+  const components = discoverComponents(repoRoot);
+  console.log(`pkg.scripts guard: checking ${components.length} component(s): ${components.join(', ')}`);
+  const failures = checkAll(repoRoot, components);
 
   if (failures.length > 0) {
     console.error('pkg.scripts guard: the following entries match no file:\n');
