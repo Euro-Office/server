@@ -6,16 +6,16 @@ const assert = require('node:assert/strict');
 const {afterEach, describe, test} = require('@jest/globals');
 
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
-const {POP_EXPIRED_BATCH_SIZE} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
+const {POP_EXPIRED_BATCH_SIZE, POP_EXPIRED_MAX_BATCH_SIZE} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
 const {POP_EXPIRED_SCRIPT} = require('../../DocService/sources/editorDataRedis/scripts');
 const {strictMax} = require('../../DocService/sources/editorDataRedis/redisValueCodec');
-const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
+const {EDITOR_INDEX_SHARD_COUNT, documentMember, editorIndexShard} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context, wait} = require('./testHelpers');
 
 const queues = {
   presence: {
     add(data, ctx, docId) {
-      return data._command(['ZADD', data.documentsKey, '0', documentMember(ctx, docId)]);
+      return data._command(['ZADD', data._indexKeys(ctx, docId).documents, '0', documentMember(ctx, docId)]);
     },
     pop(data, now) {
       return data.getDocumentPresenceExpired(now);
@@ -23,19 +23,19 @@ const queues = {
     acknowledge(data, item) {
       return data._ackDocumentPresenceExpired(item);
     },
-    index(data) {
-      return data.documentsKey;
+    index(data, ctx, docId) {
+      return data._indexKeys(ctx, docId).documents;
     },
-    lease(data) {
-      return data.documentsExpiredLeaseKey;
+    lease(data, ctx, docId) {
+      return data._indexKeys(ctx, docId).documentsExpiredLease;
     },
-    claims(data) {
-      return data.documentsExpiredClaimsKey;
+    claims(data, ctx, docId) {
+      return data._indexKeys(ctx, docId).documentsExpiredClaims;
     }
   },
   forceSave: {
     add(data, ctx, docId) {
-      return data._command(['ZADD', data.forceSaveTimerKey, '0', documentMember(ctx, docId)]);
+      return data._command(['ZADD', data._indexKeys(ctx, docId).forceSaveTimer, '0', documentMember(ctx, docId)]);
     },
     pop(data, now) {
       return data.getForceSaveTimer(now);
@@ -43,30 +43,38 @@ const queues = {
     acknowledge(data, item) {
       return data._ackForceSaveTimer(item);
     },
-    index(data) {
-      return data.forceSaveTimerKey;
+    index(data, ctx, docId) {
+      return data._indexKeys(ctx, docId).forceSaveTimer;
     },
-    lease(data) {
-      return data.forceSaveExpiredLeaseKey;
+    lease(data, ctx, docId) {
+      return data._indexKeys(ctx, docId).forceSaveExpiredLease;
     },
-    claims(data) {
-      return data.forceSaveExpiredClaimsKey;
+    claims(data, ctx, docId) {
+      return data._indexKeys(ctx, docId).forceSaveExpiredClaims;
     }
   }
 };
 
-async function seed(data, queue, tenant, count) {
+async function seed(data, queue, tenant, count, sameShard = false) {
   const ctx = context(tenant);
-  for (let index = 0; index < count; ++index) {
-    await queue.add(data, ctx, `document-${index}`);
+  const targetShard = editorIndexShard(ctx, 'document-0');
+  let candidate = 0;
+  let seeded = 0;
+  while (seeded < count) {
+    const docId = `document-${candidate++}`;
+    if (!sameShard || editorIndexShard(ctx, docId) === targetShard) {
+      await queue.add(data, ctx, docId);
+      seeded++;
+    }
   }
 }
 
-async function discardPopResponse(data, queue, claimId = 'discarded-response') {
+async function discardPopResponse(data, queue, tenant, docId, claimId = 'discarded-response') {
+  const ctx = context(tenant);
   const now = Date.now();
   await data._eval(
     POP_EXPIRED_SCRIPT,
-    [queue.index(data), queue.lease(data), queue.claims(data)],
+    [queue.index(data, ctx, docId), queue.lease(data, ctx, docId), queue.claims(data, ctx, docId)],
     [strictMax(now), String(now + data.expiredClaimLeaseMs), String(POP_EXPIRED_BATCH_SIZE), claimId]
   );
 }
@@ -78,7 +86,7 @@ async function assertBatchLimit(queueName) {
   const count = POP_EXPIRED_BATCH_SIZE * 2 + 5;
 
   try {
-    await seed(data, queue, tenant, count);
+    await seed(data, queue, tenant, count, true);
 
     const first = await queue.pop(data, Date.now());
     assert.equal(first.length, POP_EXPIRED_BATCH_SIZE);
@@ -106,13 +114,78 @@ async function assertResponseDiscarded(queueName) {
   try {
     await seed(data, queue, tenant, 1);
     // Redis has executed the claim, but the client deliberately discards the reply.
-    await discardPopResponse(data, queue);
+    await discardPopResponse(data, queue, tenant, 'document-0');
     await wait(60);
 
     const recovered = await queue.pop(data, Date.now());
     assert.deepEqual(recovered, [[tenant, 'document-0']]);
     assert.equal(await queue.acknowledge(data, recovered[0]), true);
     assert.deepEqual(await queue.pop(data, Date.now()), []);
+  } finally {
+    await data.close();
+  }
+}
+
+async function assertAllShards(queueName) {
+  const data = new EditorData();
+  const queue = queues[queueName];
+  const tenant = `all-shards-${queueName}`;
+  const ctx = context(tenant);
+  const documents = [];
+  const shards = new Set();
+
+  try {
+    for (let candidate = 0; shards.size < EDITOR_INDEX_SHARD_COUNT; ++candidate) {
+      const docId = `document-${candidate}`;
+      const shard = editorIndexShard(ctx, docId);
+      if (!shards.has(shard)) {
+        shards.add(shard);
+        documents.push(docId);
+        await queue.add(data, ctx, docId);
+      }
+    }
+
+    const expired = await queue.pop(data, Date.now());
+    assert.deepEqual(new Set(expired.map(item => item[1])), new Set(documents), `${queueName} expiration did not process every shard`);
+    await Promise.all(expired.map(item => queue.acknowledge(data, item)));
+    assert.deepEqual(await queue.pop(data, Date.now()), []);
+  } finally {
+    await data.close();
+  }
+}
+
+async function assertAggregateBatchLimit(queueName) {
+  const data = new EditorData();
+  const queue = queues[queueName];
+  const tenant = `aggregate-batch-${queueName}`;
+  const ctx = context(tenant);
+  const shardCounts = new Map();
+  const documents = [];
+  let fullShards = 0;
+
+  try {
+    for (let candidate = 0; fullShards < EDITOR_INDEX_SHARD_COUNT; ++candidate) {
+      const docId = `document-${candidate}`;
+      const shard = editorIndexShard(ctx, docId);
+      const count = shardCounts.get(shard) || 0;
+      if (count < POP_EXPIRED_BATCH_SIZE + 1) {
+        const nextCount = count + 1;
+        shardCounts.set(shard, nextCount);
+        if (nextCount === POP_EXPIRED_BATCH_SIZE + 1) {
+          fullShards++;
+        }
+        documents.push(docId);
+        await queue.add(data, ctx, docId);
+      }
+    }
+
+    const first = await queue.pop(data, Date.now());
+    assert.equal(first.length, POP_EXPIRED_MAX_BATCH_SIZE);
+    await Promise.all(first.map(item => queue.acknowledge(data, item)));
+
+    const remaining = await queue.pop(data, Date.now());
+    assert.equal(remaining.length, documents.length - first.length);
+    await Promise.all(remaining.map(item => queue.acknowledge(data, item)));
   } finally {
     await data.close();
   }
@@ -196,6 +269,8 @@ describe('editorDataRedis expiration claims', () => {
 
   test('limits document-presence expiration batches', () => assertBatchLimit('presence'));
   test('limits force-save expiration batches', () => assertBatchLimit('forceSave'));
+  test('bounds document-presence claims across all shards', () => assertAggregateBatchLimit('presence'));
+  test('bounds force-save claims across all shards', () => assertAggregateBatchLimit('forceSave'));
 
   test('recovers a document-presence entry after a discarded response', () => assertResponseDiscarded('presence'));
   test('recovers a force-save entry after a discarded response', () => assertResponseDiscarded('forceSave'));
@@ -205,6 +280,9 @@ describe('editorDataRedis expiration claims', () => {
 
   test('recovers only the unacknowledged document-presence item after a partial batch', () => assertPartialBatchRecovery('presence'));
   test('recovers only the unacknowledged force-save item after a partial batch', () => assertPartialBatchRecovery('forceSave'));
+
+  test('processes document-presence expiration from every shard', () => assertAllShards('presence'));
+  test('processes force-save timers from every shard', () => assertAllShards('forceSave'));
 
   test('recovers document-presence expiration after a client timeout', async () => {
     if (process.env.TEST_REDIS_CLUSTER === 'true') {

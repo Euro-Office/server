@@ -8,7 +8,14 @@
 const {randomUUID} = require('crypto');
 
 const {EditorCommon} = require('./editorCommon');
-const {cfgRedisPrefix, documentMember, decodeDocumentMember} = require('./redisKeys');
+const {
+  EDITOR_INDEX_SHARD_COUNT,
+  editorIndexKeys,
+  editorIndexKeysForItem,
+  editorIndexKeysForShard,
+  documentMember,
+  decodeDocumentMember
+} = require('./redisKeys');
 const {ttlSeconds, jsonEncode, jsonDecode, decodeHash, argsFromObject, strictMax, toRedisString} = require('./redisValueCodec');
 const {
   cfgExpPresence,
@@ -42,6 +49,10 @@ const {
 } = require('./scripts');
 
 const expiredClaimIds = new WeakMap();
+const EXPIRED_INDEX_QUEUES = Object.freeze({
+  documents: Object.freeze({index: 'documents', lease: 'documentsExpiredLease', claims: 'documentsExpiredClaims'}),
+  forceSaveTimer: Object.freeze({index: 'forceSaveTimer', lease: 'forceSaveExpiredLease', claims: 'forceSaveExpiredClaims'})
+});
 
 class SavedStateUnknownError extends Error {
   constructor(docId) {
@@ -53,12 +64,6 @@ class SavedStateUnknownError extends Error {
 
 function EditorData() {
   EditorCommon.call(this);
-  this.documentsKey = `${cfgRedisPrefix}{editor:index}:documents`;
-  this.forceSaveTimerKey = `${cfgRedisPrefix}{editor:index}:forcesavetimer`;
-  this.documentsExpiredLeaseKey = `${cfgRedisPrefix}{editor:index}:documents:expired:lease`;
-  this.documentsExpiredClaimsKey = `${cfgRedisPrefix}{editor:index}:documents:expired:claims`;
-  this.forceSaveExpiredLeaseKey = `${cfgRedisPrefix}{editor:index}:forcesavetimer:expired:lease`;
-  this.forceSaveExpiredClaimsKey = `${cfgRedisPrefix}{editor:index}:forcesavetimer:expired:claims`;
   this.expiredClaimOwner = randomUUID();
   this.expiredClaimSequence = 0;
   // Tests can shorten this internal lease; production keeps enough time for a
@@ -68,6 +73,10 @@ function EditorData() {
 
 EditorData.prototype = Object.create(EditorCommon.prototype);
 EditorData.prototype.constructor = EditorData;
+
+EditorData.prototype._indexKeysForShard = editorIndexKeysForShard;
+EditorData.prototype._indexKeys = editorIndexKeys;
+EditorData.prototype._indexKeysForItem = editorIndexKeysForItem;
 
 EditorData.prototype._docKeys = function (ctx, docId) {
   const base = this._docBase(ctx, docId);
@@ -97,10 +106,10 @@ EditorData.prototype.addPresence = async function (ctx, docId, userId, userInfo)
     [String(userId), String(userInfo), String(expireAt), String(ttl)]
   );
   // The document index is intentionally updated separately: document presence
-  // keys are hash-tagged per document, while this global index has its own
+  // keys are hash-tagged per document, while this sharded index has its own
   // hash tag. Redis Cluster cannot execute both key groups in one Lua script.
   // The expiry score and cleanup paths tolerate a briefly stale index entry.
-  await this._command(['ZADD', this.documentsKey, String(expireAt), documentMember(ctx, docId)]);
+  await this._command(['ZADD', this._indexKeys(ctx, docId).documents, String(expireAt), documentMember(ctx, docId)]);
 };
 
 EditorData.prototype.updatePresence = async function (ctx, docId, userId) {
@@ -113,7 +122,7 @@ EditorData.prototype.updatePresence = async function (ctx, docId, userId) {
     [String(userId), String(expireAt), String(ttl)]
   );
   if (Number(updated) === 1) {
-    await this._command(['ZADD', this.documentsKey, String(expireAt), documentMember(ctx, docId)]);
+    await this._command(['ZADD', this._indexKeys(ctx, docId).documents, String(expireAt), documentMember(ctx, docId)]);
   }
 };
 
@@ -178,11 +187,26 @@ EditorData.prototype._ackExpired = async function (leaseKey, claimsKey, item) {
 };
 
 EditorData.prototype._ackDocumentPresenceExpired = function (item) {
-  return this._ackExpired(this.documentsExpiredLeaseKey, this.documentsExpiredClaimsKey, item);
+  const keys = this._indexKeysForItem(item);
+  return keys ? this._ackExpired(keys.documentsExpiredLease, keys.documentsExpiredClaims, item) : false;
+};
+
+EditorData.prototype._popExpiredAcrossShards = async function (index, now) {
+  const queue = EXPIRED_INDEX_QUEUES[index];
+  if (!queue) {
+    throw new Error(`Unknown expired editor-data queue: ${index}`);
+  }
+  const batches = await Promise.all(
+    Array.from({length: EDITOR_INDEX_SHARD_COUNT}, (_, shard) => {
+      const keys = this._indexKeysForShard(shard);
+      return this._popExpired(keys[queue.index], keys[queue.lease], keys[queue.claims], now);
+    })
+  );
+  return batches.flat();
 };
 
 EditorData.prototype.getDocumentPresenceExpired = function (now) {
-  return this._popExpired(this.documentsKey, this.documentsExpiredLeaseKey, this.documentsExpiredClaimsKey, now);
+  return this._popExpiredAcrossShards('documents', now);
 };
 
 EditorData.prototype.removePresenceDocument = async function (ctx, docId) {
@@ -191,7 +215,7 @@ EditorData.prototype.removePresenceDocument = async function (ctx, docId) {
   if (result && Number(result[0]) === 1) {
     await this._eval(
       REMOVE_DOCUMENT_INDEX_SCRIPT,
-      [this.documentsKey],
+      [this._indexKeys(ctx, docId).documents],
       [documentMember(ctx, docId), toRedisString(result[1] || ''), String(Date.now())]
     );
   }
@@ -395,21 +419,23 @@ EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClai
   );
   if (result && Number(result[0]) === 1) {
     const member = documentMember(ctx, docId);
-    await this._eval(REMOVE_DOCUMENT_INDEX_SCRIPT, [this.documentsKey], [member, toRedisString(result[1] || ''), String(Date.now())]);
-    await this._command(['ZREM', this.forceSaveTimerKey, member]);
+    const indexKeys = this._indexKeys(ctx, docId);
+    await this._eval(REMOVE_DOCUMENT_INDEX_SCRIPT, [indexKeys.documents], [member, toRedisString(result[1] || ''), String(Date.now())]);
+    await this._command(['ZREM', indexKeys.forceSaveTimer, member]);
   }
 };
 
 EditorData.prototype.addForceSaveTimerNX = async function (ctx, docId, expireAt) {
-  await this._command(['ZADD', this.forceSaveTimerKey, 'NX', String(expireAt), documentMember(ctx, docId)]);
+  await this._command(['ZADD', this._indexKeys(ctx, docId).forceSaveTimer, 'NX', String(expireAt), documentMember(ctx, docId)]);
 };
 
 EditorData.prototype._ackForceSaveTimer = function (item) {
-  return this._ackExpired(this.forceSaveExpiredLeaseKey, this.forceSaveExpiredClaimsKey, item);
+  const keys = this._indexKeysForItem(item);
+  return keys ? this._ackExpired(keys.forceSaveExpiredLease, keys.forceSaveExpiredClaims, item) : false;
 };
 
 EditorData.prototype.getForceSaveTimer = function (now) {
-  return this._popExpired(this.forceSaveTimerKey, this.forceSaveExpiredLeaseKey, this.forceSaveExpiredClaimsKey, now);
+  return this._popExpiredAcrossShards('forceSaveTimer', now);
 };
 
 module.exports = EditorData;
