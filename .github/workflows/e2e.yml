@@ -94,6 +94,8 @@ jobs:
           for d in Common DocService FileConverter Metrics; do
             ( cd "$d" && npm install )
           done
+          # Fail before pkg silently drops a module whose pkg.scripts entry matches no file.
+          npm run check:pkg-scripts
           mkdir -p "$BUILD_ROOT"
           ( cd DocService    && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/docservice" )
           ( cd FileConverter && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/fileconverter" )
