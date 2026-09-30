@@ -62,10 +62,12 @@ describe('pkg.scripts guard', () => {
     expect(failures[0].component).toBe('zeroMatch');
   });
 
-  test('discovers only components that declare pkg.scripts', () => {
+  test('discovers only components that declare pkg.scripts, at any depth', () => {
     const components = discoverComponents(FIXTURES);
     // Every fixture with a pkg.scripts block is found...
     expect(components).toEqual(expect.arrayContaining(['valid', 'zeroMatch', 'scopedLiteral', 'globEntry', 'negation', 'nonString']));
+    // ...including one nested deeper than two levels (discovery is unbounded)...
+    expect(components).toContain(path.join('nested', 'inner', 'deepComponent'));
     // ...and the pkg-block-without-scripts fixture is not.
     expect(components).not.toContain('noScripts');
   });

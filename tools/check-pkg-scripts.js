@@ -41,6 +41,9 @@ const DISCOVERY_SKIP_DIRS = new Set(['node_modules', 'tests', '.git']);
 // mistaken for a pattern.
 const GLOB_SYNTAX = /[*?[\]{}()]/;
 
+// A dir counts as a component only if its package.json parses and declares pkg.scripts.
+// Validating that the manifest is well-formed JSON is not this guard's job: it runs after
+// `npm install`, which parses every package.json and fails first on a malformed one.
 function hasPkgScripts(dir) {
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
@@ -51,14 +54,14 @@ function hasPkgScripts(dir) {
 }
 
 /**
- * Find every component that carries a `pkg.scripts` block. Scans the repo's own
- * directories (depth 1, plus one nested level so `AdminPanel/server` is found),
- * skipping node_modules and test fixtures.
+ * Find every component that carries a `pkg.scripts` block. Recurses the whole repo,
+ * pruning node_modules/.git/tests and not following symlinks, so the walk stays in
+ * the source tree and cannot cycle (a real directory tree is acyclic).
  * @returns {string[]} component paths relative to repoRoot, sorted
  */
 function discoverComponents(repoRoot) {
   const components = [];
-  const scan = (relDir, depth) => {
+  const scan = relDir => {
     let entries;
     try {
       entries = fs.readdirSync(path.join(repoRoot, relDir), {withFileTypes: true});
@@ -66,6 +69,7 @@ function discoverComponents(repoRoot) {
       return;
     }
     for (const entry of entries) {
+      // isDirectory() is false for a symlink, so symlinked dirs are never followed.
       if (!entry.isDirectory() || entry.name.startsWith('.') || DISCOVERY_SKIP_DIRS.has(entry.name)) {
         continue;
       }
@@ -73,12 +77,10 @@ function discoverComponents(repoRoot) {
       if (hasPkgScripts(path.join(repoRoot, rel))) {
         components.push(rel);
       }
-      if (depth > 1) {
-        scan(rel, depth - 1);
-      }
+      scan(rel);
     }
   };
-  scan('', 2);
+  scan('');
   return components.sort();
 }
 
