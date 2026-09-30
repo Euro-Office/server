@@ -9,7 +9,7 @@ const {describe, test} = require('@jest/globals');
 
 const config = require('../../DocService/node_modules/config');
 const redis = require('../../DocService/node_modules/redis');
-const {EditorData} = require('../../DocService/sources/editorDataRedis');
+const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
 const redisTopologyConfig = require('../../DocService/sources/editorDataRedis/redisConfig');
 
 const WAIT_TIMEOUT_MS = 15000;
@@ -123,6 +123,20 @@ if (process.env.TEST_REDIS_TOPOLOGY_REQUIRED === 'true' && !failoverConfigured) 
 }
 const describeClusterFailover = failoverConfigured && topology === 'cluster' ? describe : describe.skip;
 const describeSentinelFailover = failoverConfigured && topology === 'sentinel' ? describe : describe.skip;
+
+test('uses independent editor-data and editor-stat clients on the configured topology', async () => {
+  const data = new EditorData();
+  const stat = new EditorStat();
+
+  try {
+    assert.notEqual(data.redis, stat.redis);
+    await Promise.all([data.connect(), stat.connect()]);
+    assert.equal(await data.ping(), 'PONG');
+    assert.equal(await stat.ping(), 'PONG');
+  } finally {
+    await Promise.all([data.close(), stat.close()]);
+  }
+}, 30000);
 
 describeClusterFailover('editorDataRedis Cluster failover integration', () => {
   test('promotes a Cluster replica and reconnects the existing editorData client', async () => {
