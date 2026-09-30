@@ -48,6 +48,9 @@ function sentinelReconnectStrategy(retries) {
 function normalizeNodeOptions(source, database, includeEndpoint = true, includeCommandOptions = true) {
   const options = cloneConfig(source) || {};
   options.RESP = REDIS_RESP_VERSION;
+  if (includeEndpoint) {
+    options.disableOfflineQueue = true;
+  }
   if (options.user !== undefined && options.username === undefined) {
     options.username = options.user;
   }
@@ -87,6 +90,7 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
 function normalizeClusterOptions(source) {
   const options = cloneConfig(source) || {};
   options.defaults = normalizeNodeOptions(options.defaults || {}, undefined, false, false);
+  options.defaults.disableOfflineQueue = true;
   delete options.defaults.RESP;
   delete options.defaults.database;
   delete options.defaults.commandOptions;
