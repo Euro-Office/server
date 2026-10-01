@@ -14,7 +14,7 @@ const sqlBase = require('../../DocService/sources/databaseConnectors/baseConnect
 const storage = require('../../Common/sources/storage/storage-base');
 const taskResult = require('../../DocService/sources/taskresult');
 
-function command() {
+function command(overrides = {}) {
   return new commonDefines.InputCommand({
     id: 'saved-state-document',
     userid: 'user-1',
@@ -23,7 +23,8 @@ function command() {
     status_info: constants.NO_ERROR,
     status_info_in: 12,
     savekey: 'save-key',
-    outputpath: 'output.docx'
+    outputpath: 'output.docx',
+    ...overrides
   });
 }
 
@@ -151,5 +152,67 @@ describe('canvasservice saved-state handling', () => {
     assert.equal(cleanDocumentOnExitPromise.mock.calls[0][2], true);
     assert.equal(cleanDocumentOnExitPromise.mock.calls[0][3], 1);
     assert.equal(cleanDocumentOnExitPromise.mock.calls[0][4], 'save-key');
+  });
+
+  test.each([
+    ['conversion error', {status_info: constants.CONVERT_READ_FILE, savedValue: '0', encrypted: false}],
+    ['encrypted save', {status_info: constants.NO_ERROR, savedValue: '0', encrypted: true}],
+    ['missing output file', {status_info: constants.NO_ERROR, savedValue: '0', encrypted: false, missingFile: true}]
+  ])('acknowledges a claimed saved state on the %s path', async (_scenario, options) => {
+    const getdelSaved = jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue(options.savedValue);
+    const ackSaved = jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
+    spies.push(getdelSaved, ackSaved);
+    if (options.missingFile) {
+      const getSignedUrl = jest.spyOn(storage, 'getSignedUrl').mockResolvedValue(undefined);
+      spies.push(getSignedUrl);
+    }
+
+    await canvasservice.commandSfcCallback(context(), command({status_info: options.status_info}), false, options.encrypted);
+
+    assert.equal(getdelSaved.mock.calls.length, 1);
+    assert.equal(ackSaved.mock.calls.length, 1);
+    assert.equal(ackSaved.mock.calls[0][1], 'saved-state-document');
+    assert.equal(ackSaved.mock.calls[0][2], 'save-key');
+  });
+
+  test('handles duplicate delivery of a task with the same saved-state claim', async () => {
+    const ctx = context();
+    const editorData = docsCoServer.editorData;
+    await editorData.setSaved(ctx, 'saved-state-document', '1');
+    const claimKey = editorData._docKeys(ctx, 'saved-state-document').savedClaim;
+    const getdelSaved = jest.spyOn(editorData, 'getdelSaved');
+    const ackSaved = jest.spyOn(editorData, 'ackSaved');
+    const cleanDocumentOnExitPromise = jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockResolvedValue(undefined);
+    const publish = jest.spyOn(docsCoServer, 'publish').mockResolvedValue(undefined);
+    spies.push(getdelSaved, ackSaved, cleanDocumentOnExitPromise, publish);
+
+    await canvasservice.commandSfcCallback(ctx, command(), false, false);
+    assert.equal(await editorData._command(['EXISTS', claimKey]), 0);
+    await canvasservice.commandSfcCallback(ctx, command(), false, false);
+
+    assert.equal(getdelSaved.mock.calls.length, 2);
+    assert.equal(await getdelSaved.mock.results[0].value, '1');
+    assert.equal(await getdelSaved.mock.results[1].value, null);
+    assert.equal(ackSaved.mock.calls.length, 1);
+    assert.equal(ackSaved.mock.calls[0][1], 'saved-state-document');
+    assert.equal(ackSaved.mock.calls[0][2], 'save-key');
+  });
+
+  test.each([
+    ['Redis failure', new Error('Redis unavailable')],
+    ['unknown saved state', Object.assign(new Error('saved state unknown'), {code: 'EDITOR_DATA_SAVED_UNKNOWN'})]
+  ])('acknowledges queue delivery when saved-state processing fails: %s', async (_scenario, error) => {
+    const update = jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
+    const getdelSaved = jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockRejectedValue(error);
+    const ack = jest.fn();
+    const task = new commonDefines.TaskQueueData();
+    task.setCtx({tenant: 'saved-state-tenant', docId: 'saved-state-document', userId: 'user-1'});
+    task.setCmd(command({c: 'sfc'}));
+    spies.push(update, getdelSaved);
+
+    await canvasservice.receiveTask(JSON.stringify(task), ack);
+
+    assert.equal(getdelSaved.mock.calls.length, 1);
+    assert.equal(ack.mock.calls.length, 1);
   });
 });

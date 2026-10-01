@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const {EditorData, SavedStateUnknownError} = require('../../DocService/sources/editorDataRedis');
+const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context, wait} = require('./testHelpers');
 
 describe('editorDataRedis saved-state claims', () => {
@@ -27,6 +28,7 @@ describe('editorDataRedis saved-state claims', () => {
     await stores[0].setSaved(ctx, docId, '1');
     assert.equal(await stores[0].getdelSaved(ctx, docId, operationId), '1');
     assert.equal(await stores[0]._command(['GET', stores[0]._docKeys(ctx, docId).saved]), null);
+    assert.equal(await stores[0].ackSaved(ctx, docId, operationId), true);
     assert.equal(await stores[0].ackSaved(ctx, docId, operationId), true);
     assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), null);
   });
@@ -83,17 +85,82 @@ describe('editorDataRedis saved-state claims', () => {
     assert.equal(await stores[0].getdelSaved(ctx, docId, 'operation-b'), null);
   });
 
-  test('keeps a committed claim recoverable after the saved key TTL expires', async () => {
-    const ctx = context('saved-claim-ttl', {'services.CoAuthoring.expire.saved': 1});
+  test('expires an abandoned claim and allows a later saved state to recover', async () => {
+    const ctx = context('saved-claim-ttl', {
+      'services.CoAuthoring.expire.saved': 1,
+      'services.CoAuthoring.expire.savedClaim': 1
+    });
     const docId = 'document';
     const operationId = 'operation-a';
 
     await stores[0].setSaved(ctx, docId, '1');
     assert.equal(await stores[0].getdelSaved(ctx, docId, operationId), '1');
+    const claimKey = stores[0]._docKeys(ctx, docId).savedClaim;
+    assert.ok((await stores[0]._command(['PTTL', claimKey])) > 0);
     await wait(1200);
 
-    assert.equal(await stores[1].getdelSaved(ctx, docId, operationId), '1');
-    await stores[1].ackSaved(ctx, docId, operationId);
+    assert.equal(await stores[1]._command(['EXISTS', claimKey]), 0);
+    await stores[1].setSaved(ctx, docId, '0');
+    assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
+    await stores[1].ackSaved(ctx, docId, 'operation-b');
+  });
+
+  test('uses a separate longer lease for saved-state claims', async () => {
+    const ctx = context('saved-claim-separate-ttl', {
+      'services.CoAuthoring.expire.saved': 1,
+      'services.CoAuthoring.expire.savedClaim': 10
+    });
+    const docId = 'document';
+
+    await stores[0].setSaved(ctx, docId, '1');
+    assert.equal(await stores[0].getdelSaved(ctx, docId, 'operation-a'), '1');
+    const keys = stores[0]._docKeys(ctx, docId);
+
+    assert.equal(await stores[0]._command(['TTL', keys.saved]), -2);
+    assert.ok((await stores[0]._command(['TTL', keys.savedClaim])) >= 9);
+    await stores[0].ackSaved(ctx, docId, 'operation-a');
+  });
+
+  test('migrates a legacy claim without a TTL', async () => {
+    const ctx = context('saved-claim-legacy', {'services.CoAuthoring.expire.savedClaim': 10});
+    const docId = 'document';
+    const operationId = 'operation-a';
+    const keys = stores[0]._docKeys(ctx, docId);
+
+    await stores[0]._command(['HSET', keys.savedClaim, 'id', operationId, 'value', '1']);
+    assert.equal(await stores[0]._command(['TTL', keys.savedClaim]), -1);
+    assert.equal(await stores[0].getdelSaved(ctx, docId, operationId), '1');
+    assert.ok((await stores[0]._command(['TTL', keys.savedClaim])) >= 9);
+    await stores[0].ackSaved(ctx, docId, operationId);
+  });
+
+  test('does not let stale cleanup delete a newer saved-state claim', async () => {
+    const ctx = context('saved-claim-stale-cleanup', {
+      'services.CoAuthoring.expire.saved': 1,
+      'services.CoAuthoring.expire.savedClaim': 1
+    });
+    const docId = 'document';
+
+    await stores[0].addPresence(ctx, docId, 'user-a', JSON.stringify({id: 'user-a'}));
+    await stores[0].setSaved(ctx, docId, '1');
+    assert.equal(await stores[0].getdelSaved(ctx, docId, 'operation-a'), '1');
+    await stores[0].removePresence(ctx, docId, 'user-a');
+    await stores[0].addForceSaveTimerNX(ctx, docId, 12345);
+    await wait(1200);
+
+    await stores[1].setSaved(ctx, docId, '0');
+    assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
+
+    const indexKeys = stores[0]._indexKeys(ctx, docId);
+    const member = documentMember(ctx, docId);
+    assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), null);
+
+    await stores[0].cleanDocumentOnExit(ctx, docId, 'operation-a');
+
+    assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), null);
+    assert.equal(await stores[0]._command(['ZSCORE', indexKeys.forceSaveTimer, member]), '12345');
+    assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
+    await stores[1].ackSaved(ctx, docId, 'operation-b');
   });
 
   test('keeps an outstanding claim while another replica still has presence', async () => {

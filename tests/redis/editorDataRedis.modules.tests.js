@@ -47,6 +47,7 @@ describe('editorDataRedis module boundaries', () => {
     assert.equal(dataSettings.cfgExpMessage, expire.get('message'));
     assert.equal(dataSettings.cfgExpForceSave, expire.get('forcesave'));
     assert.equal(dataSettings.cfgExpSaved, expire.get('saved'));
+    assert.equal(dataSettings.cfgExpSavedClaim, expire.get('savedClaim'));
     assert.equal(statSettings.cfgExpShard, expire.get('shard'));
     assert.equal(statSettings.cfgExpMonthUniqueUsers, ms(expire.get('monthUniqueUsers')));
   });
