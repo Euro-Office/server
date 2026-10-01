@@ -5,6 +5,7 @@
 'use strict';
 
 const util = require('util');
+const constants = require('../constants');
 
 const SECRETS = [
   [/([?&](?:token|doc)=)[^&#\s"'\\]*/gi, '$1[Filtered]'],
@@ -55,11 +56,18 @@ function configure(config, layouts, findAppender, levels) {
     const [template] = logEvent.data;
     const error = logEvent.data.find(arg => arg instanceof Error);
     const message = util.format(...logEvent.data);
+    const {TENANT, DOCID} = logEvent.context || {};
     const context = {
       level: logEvent.level.isGreaterThanOrEqualTo(levels.FATAL) ? 'fatal' : 'error',
       tags: {logger: logEvent.categoryName},
       extra: {message}
     };
+    if (TENANT) {
+      context.tags.tenant = TENANT;
+    }
+    if (DOCID && DOCID !== constants.DEFAULT_DOC_ID) {
+      context.tags.docId = DOCID;
+    }
     if (typeof template === 'string') {
       context.fingerprint = [template];
     }
