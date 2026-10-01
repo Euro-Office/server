@@ -255,12 +255,15 @@ return length
 const CLAIM_SAVED_SCRIPT = `
 -- Claim the saved status instead of deleting it before the caller has had a
 -- chance to observe the reply.  The claim is the durable operation record and
--- intentionally has no expiry: retrying with the same operation id must keep
--- recovering the value even after the source saved key's TTL would have
--- elapsed.  An abandoned claim is resolved by acknowledgement or document
--- cleanup, never by silently becoming an absent result.
+-- has its own lease.  This bounds abandoned state while leaving enough time
+-- for a retry after a lost response or worker crash.
 local currentClaim = redis.call('HGET', KEYS[2], 'id')
 if currentClaim then
+  -- Claims written before leases were introduced have no TTL.  Migrate them
+  -- when first observed without extending claims that already have a lease.
+  if redis.call('TTL', KEYS[2]) < 0 then
+    redis.call('EXPIRE', KEYS[2], ARGV[2])
+  end
   if currentClaim == ARGV[1] then
     local claimedValue = redis.call('HGET', KEYS[2], 'value')
     if claimedValue then
@@ -277,13 +280,16 @@ if not value then
 end
 
 redis.call('HSET', KEYS[2], 'id', ARGV[1], 'value', value)
+redis.call('EXPIRE', KEYS[2], ARGV[2])
 redis.call('DEL', KEYS[1])
 return {'value', value}
 `;
 
 const ACK_SAVED_SCRIPT = `
 if redis.call('EXISTS', KEYS[1]) == 0 then
-  return 0
+  -- A duplicate acknowledgement, or an acknowledgement after the claim
+  -- expired, is already resolved and is therefore harmless.
+  return 1
 end
 if redis.call('HGET', KEYS[1], 'id') ~= ARGV[1] then
   return 0
@@ -475,6 +481,11 @@ if redis.call('HLEN', KEYS[2]) > 0 then
 end
 local version = redis.call('GET', KEYS[3]) or ''
 local claimOwner = redis.call('HGET', KEYS[9], 'id')
+if claimOwner and ARGV[2] ~= '' and claimOwner ~= ARGV[2] then
+  -- A newer saved-state operation owns the document.  A stale worker must
+  -- not clean up its state or the newer claim.
+  return {2, version}
+end
 if claimOwner and ARGV[2] ~= '' and claimOwner == ARGV[2] then
   redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[10])
 else

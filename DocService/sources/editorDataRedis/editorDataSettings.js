@@ -22,6 +22,7 @@ module.exports = {
   cfgExpMessage: expire.get('message'),
   cfgExpForceSave: expire.get('forcesave'),
   cfgExpSaved: expire.get('saved'),
+  cfgExpSavedClaim: expire.get('savedClaim'),
   POP_EXPIRED_BATCH_SIZE,
   POP_EXPIRED_MAX_BATCH_SIZE,
   POP_EXPIRED_LEASE_MS
