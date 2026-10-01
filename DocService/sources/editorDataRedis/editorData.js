@@ -25,6 +25,7 @@ const {
   cfgExpMessage,
   cfgExpForceSave,
   cfgExpSaved,
+  cfgExpSavedClaim,
   POP_EXPIRED_BATCH_SIZE,
   POP_EXPIRED_LEASE_MS
 } = require('./editorDataSettings');
@@ -312,7 +313,8 @@ EditorData.prototype.setSaved = async function (ctx, docId, status) {
 EditorData.prototype.getdelSaved = async function (ctx, docId, operationId) {
   const keys = this._docKeys(ctx, docId);
   const claimId = operationId === undefined || operationId === null || operationId === '' ? randomUUID() : String(operationId);
-  const result = await this._eval(CLAIM_SAVED_SCRIPT, [keys.saved, keys.savedClaim], [claimId]);
+  const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.savedClaim', cfgExpSavedClaim);
+  const result = await this._eval(CLAIM_SAVED_SCRIPT, [keys.saved, keys.savedClaim], [claimId, String(ttl)]);
   if (!Array.isArray(result) || result.length === 0) {
     throw new SavedStateUnknownError(docId);
   }
@@ -329,7 +331,8 @@ EditorData.prototype.getdelSaved = async function (ctx, docId, operationId) {
 // A successful getdelSaved is a claim, not an acknowledgement.  The caller
 // acknowledges only after it has decided that the saved result is usable.  If
 // the claim response is lost, the same operation id can still recover the
-// value; a different operation must fail closed until the claim is resolved.
+// value until the claim lease expires; a different operation must fail closed
+// until the claim is resolved.
 EditorData.prototype.ackSaved = async function (ctx, docId, operationId) {
   if (operationId === undefined || operationId === null || operationId === '') {
     throw new SavedStateUnknownError(docId);
@@ -435,6 +438,9 @@ EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClai
     ],
     [String(Date.now()), savedClaimId === undefined || savedClaimId === null ? '' : String(savedClaimId)]
   );
+  if (result && Number(result[0]) === 2) {
+    return;
+  }
   if (result && Number(result[0]) === 1) {
     await this._syncPresenceIndex(ctx, docId, toRedisString(result[1] || ''), '');
     await this._command(['ZREM', this._indexKeys(ctx, docId).forceSaveTimer, documentMember(ctx, docId)]);

@@ -981,9 +981,10 @@ describe('editorDataRedis independent-process behavior', () => {
       await harness.kill('replica-a', 'SIGKILL');
       const lostResponse = await ackRequest;
       assert.equal(lostResponse instanceof Error, true, 'the acknowledgement response must be lost with the killed replica');
-      await assert.rejects(
-        harness.request('replica-b', 'data', 'ackSaved', [ctx, docId, claimId], 'saved ack response-loss retry'),
-        /SavedStateUnknownError|EDITOR_DATA_SAVED_UNKNOWN/
+      assert.equal(
+        await harness.request('replica-b', 'data', 'ackSaved', [ctx, docId, claimId], 'saved ack response-loss retry'),
+        true,
+        'a retry after a committed acknowledgement must be idempotent'
       );
       assert.equal(
         await harness.request('replica-b', 'data', 'getdelSaved', [ctx, docId, 'different-claim'], 'saved ack response-loss resolved read'),
