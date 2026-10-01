@@ -18,6 +18,7 @@ const {
   RootNodesUnavailableError
 } = require('../../DocService/node_modules/@redis/client/dist/lib/errors');
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
+const {createSentinelClient} = require('../../DocService/sources/editorDataRedis/redisConnection');
 const redisTopologyConfig = require('../../DocService/sources/editorDataRedis/redisConfig');
 
 const WAIT_TIMEOUT_MS = 30000;
@@ -107,8 +108,12 @@ function clusterNodeRecords(reply) {
       const endpoint = fields[1].split('@')[0];
       const [host, port] = endpoint.split(':');
       return {
-        id: fields[0], host, port: Number(port), flags: fields[2].split(','),
-        masterId: fields[3], slots: fields.slice(8)
+        id: fields[0],
+        host,
+        port: Number(port),
+        flags: fields[2].split(','),
+        masterId: fields[3],
+        slots: fields.slice(8)
       };
     });
 }
@@ -121,51 +126,61 @@ function ownsSlot(node, slot) {
 }
 
 async function clusterKeyOwner(rootHost, rootPort, password, key) {
-  return withDirectClient(rootPort, password, async client => {
-    const slot = calculateClusterSlot(key);
-    const nodesReply = await client.sendCommand(['CLUSTER', 'NODES']);
-    const nodes = clusterNodeRecords(nodesReply);
-    const master = nodes.find(node => node.flags.includes('master') && ownsSlot(node, slot));
-    assert.ok(master, `Cluster has no master for slot ${slot}`);
-    const replica = nodes.find(
-      node => node.masterId === master.id && (node.flags.includes('slave') || node.flags.includes('replica'))
-    );
-    assert.ok(replica, `Cluster has no replica for slot ${slot}`);
-    return {slot, master, replica};
-  }, rootHost);
+  return withDirectClient(
+    rootPort,
+    password,
+    async client => {
+      const slot = calculateClusterSlot(key);
+      const nodesReply = await client.sendCommand(['CLUSTER', 'NODES']);
+      const nodes = clusterNodeRecords(nodesReply);
+      const master = nodes.find(node => node.flags.includes('master') && ownsSlot(node, slot));
+      assert.ok(master, `Cluster has no master for slot ${slot}`);
+      const replica = nodes.find(node => node.masterId === master.id && (node.flags.includes('slave') || node.flags.includes('replica')));
+      assert.ok(replica, `Cluster has no replica for slot ${slot}`);
+      return {slot, master, replica};
+    },
+    rootHost
+  );
 }
 
 async function keyOwnedByReplicaMaster(rootHost, rootPort, password, replicaPort, prefix) {
-  return withDirectClient(rootPort, password, async client => {
-    const nodes = clusterNodeRecords(await client.sendCommand(['CLUSTER', 'NODES']));
-    const replica = nodes.find(node => node.port === replicaPort);
-    assert.ok(replica, `Cluster has no replica on port ${replicaPort}`);
-    const master = nodes.find(node => node.id === replica.masterId);
-    assert.ok(master, `Cluster has no master for replica ${replicaPort}`);
-    for (let attempt = 0; attempt < 10000; attempt++) {
-      const key = `${prefix}${randomUUID()}`;
-      if (ownsSlot(master, calculateClusterSlot(key))) {
-        return key;
+  return withDirectClient(
+    rootPort,
+    password,
+    async client => {
+      const nodes = clusterNodeRecords(await client.sendCommand(['CLUSTER', 'NODES']));
+      const replica = nodes.find(node => node.port === replicaPort);
+      assert.ok(replica, `Cluster has no replica on port ${replicaPort}`);
+      const master = nodes.find(node => node.id === replica.masterId);
+      assert.ok(master, `Cluster has no master for replica ${replicaPort}`);
+      for (let attempt = 0; attempt < 10000; attempt++) {
+        const key = `${prefix}${randomUUID()}`;
+        if (ownsSlot(master, calculateClusterSlot(key))) {
+          return key;
+        }
       }
-    }
-    assert.fail(`Could not find a key owned by Cluster master ${master.port}`);
-  }, rootHost);
+      assert.fail(`Could not find a key owned by Cluster master ${master.port}`);
+    },
+    rootHost
+  );
 }
 
 async function waitForClusterPromotion(rootHost, rootPort, password, key, promotedPort) {
   const slot = calculateClusterSlot(key);
-  return withDirectClient(rootPort, password, client =>
-    waitFor(
-      `Cluster replica ${promotedPort} promotion for ${key}`,
-      async () => {
-        const nodesReply = await client.sendCommand(['CLUSTER', 'NODES']);
-        return clusterNodeRecords(nodesReply).find(
-          node => node.port === promotedPort && node.flags.includes('master') && ownsSlot(node, slot)
-        );
-      },
-      Boolean
-    )
-  , rootHost);
+  return withDirectClient(
+    rootPort,
+    password,
+    client =>
+      waitFor(
+        `Cluster replica ${promotedPort} promotion for ${key}`,
+        async () => {
+          const nodesReply = await client.sendCommand(['CLUSTER', 'NODES']);
+          return clusterNodeRecords(nodesReply).find(node => node.port === promotedPort && node.flags.includes('master') && ownsSlot(node, slot));
+        },
+        Boolean
+      ),
+    rootHost
+  );
 }
 
 async function waitForClientClusterPromotion(client, key, promotedPort) {
@@ -183,13 +198,18 @@ async function promoteClusterReplica(replicaHost, replicaPort, password) {
 }
 
 async function waitForSentinelMaster(sentinelHost, sentinelPort, sentinelPassword, masterName, expectedHost, expectedPort) {
-  return withDirectClient(sentinelPort, sentinelPassword, client =>
-    waitFor(
-      `Sentinel promotion to ${expectedPort}`,
-      () => client.sendCommand(['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', masterName]),
-      reply => Array.isArray(reply) && (expectedHost === undefined || String(reply[0]) === expectedHost) && String(reply[1]) === String(expectedPort)
-    )
-  , sentinelHost);
+  return withDirectClient(
+    sentinelPort,
+    sentinelPassword,
+    client =>
+      waitFor(
+        `Sentinel promotion to ${expectedPort}`,
+        () => client.sendCommand(['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', masterName]),
+        reply =>
+          Array.isArray(reply) && (expectedHost === undefined || String(reply[0]) === expectedHost) && String(reply[1]) === String(expectedPort)
+      ),
+    sentinelHost
+  );
 }
 
 async function triggerSentinelFailover(sentinelHost, sentinelPort, sentinelPassword, masterName) {
@@ -218,7 +238,10 @@ async function createHeldSocketServer() {
 
 async function assertRejectsWithin(promise, scenario, errorPredicate, timeoutMs = 2000) {
   const result = await Promise.race([
-    promise.then(value => ({status: 'fulfilled', value}), error => ({status: 'rejected', error})),
+    promise.then(
+      value => ({status: 'fulfilled', value}),
+      error => ({status: 'rejected', error})
+    ),
     new Promise(resolve => setTimeout(() => resolve({status: 'timeout'}), timeoutMs))
   ]);
   assert.notEqual(result.status, 'timeout', `${scenario} remained queued`);
@@ -262,7 +285,11 @@ function isOfflineOrTopologyError(error) {
 }
 
 function isBoundedSentinelFailure(error) {
-  return error instanceof ConnectionTimeoutError || isOfflineOrTopologyError(error) || /timeout|unavailable|offline|closed|connection|master|sentinel/i.test(error?.message || '');
+  return (
+    error instanceof ConnectionTimeoutError ||
+    isOfflineOrTopologyError(error) ||
+    /timeout|unavailable|offline|closed|connection|master|sentinel/i.test(error?.message || '')
+  );
 }
 
 async function waitForReconnectSignal(client, selectedTopology, nodePort) {
@@ -331,7 +358,11 @@ test('rejects commands issued before initial readiness for every configured topo
           return redis.createClient(options);
         })
       );
-      await assertRejectsWithin(clients[0].client.sendCommand(['PING']), 'standalone pre-ready command', error => error instanceof ClientOfflineError);
+      await assertRejectsWithin(
+        clients[0].client.sendCommand(['PING']),
+        'standalone pre-ready command',
+        error => error instanceof ClientOfflineError
+      );
     } else if (selectedTopology === 'cluster') {
       clients.push(
         await createUnreadyClient(port => {
@@ -349,10 +380,11 @@ test('rejects commands issued before initial readiness for every configured topo
           options.sentinelRootNodes = [{host: '127.0.0.1', port}];
           options.nodeClientOptions.socket = {...options.nodeClientOptions.socket, connectTimeout: 100, reconnectStrategy: false};
           options.sentinelClientOptions.socket = {...options.sentinelClientOptions.socket, connectTimeout: 100, reconnectStrategy: false};
-          return redis.createSentinel(options);
+          return createSentinelClient(options);
         })
       );
       await assertRejectsWithin(clients[0].client.sendCommand(false, ['PING']), 'Sentinel pre-ready command', isBoundedSentinelFailure);
+      await assertRejectsWithin(clients[0].client.ping(), 'Sentinel pre-ready generated command', isBoundedSentinelFailure);
     }
   } finally {
     await Promise.all(clients.map(entry => entry.close()));
@@ -462,23 +494,21 @@ describeSentinelFailover('editorDataRedis Sentinel failover integration', () => 
       const promotedPort = Number(process.env.TEST_REDIS_SENTINEL_REPLICA_PORT);
       await triggerSentinelFailover(sentinelHost, sentinelPort, sentinelPassword, options.name);
       await waitForSentinelMaster(sentinelHost, sentinelPort, sentinelPassword, options.name, undefined, promotedPort);
-      await withDirectClient(promotedPort, nodePassword, client =>
-        waitFor(
-          'Sentinel promoted master readiness',
-          () => client.sendCommand(['ROLE']),
-          reply => Array.isArray(reply) && reply[0] === 'master'
-        ),
+      await withDirectClient(
+        promotedPort,
+        nodePassword,
+        client =>
+          waitFor(
+            'Sentinel promoted master readiness',
+            () => client.sendCommand(['ROLE']),
+            reply => Array.isArray(reply) && reply[0] === 'master'
+          ),
         'redis-replica'
       );
       data.redis.commandTimeoutMs = 1000;
       stat.redis.commandTimeoutMs = 1000;
       const duringFailover = await Promise.race([
-        Promise.allSettled([
-          data.redis.command(['SET', key, 'during-failover']),
-          stat.redis.command(['PING']),
-          data.ping(),
-          stat.ping()
-        ]),
+        Promise.allSettled([data.redis.command(['SET', key, 'during-failover']), stat.redis.command(['PING']), data.ping(), stat.ping()]),
         new Promise(resolve => setTimeout(() => resolve('timeout'), 5000))
       ]);
       assert.notEqual(duringFailover, 'timeout', 'Sentinel commands remained queued during failover');
@@ -499,7 +529,12 @@ describeSentinelFailover('editorDataRedis Sentinel failover integration', () => 
         await Promise.all([recoveredData.close(), recoveredStat.close()]);
       }
       assert.equal(
-        await withDirectClient(Number(process.env.TEST_REDIS_SENTINEL_REPLICA_PORT), nodePassword, client => client.sendCommand(['GET', key]), 'redis-replica'),
+        await withDirectClient(
+          Number(process.env.TEST_REDIS_SENTINEL_REPLICA_PORT),
+          nodePassword,
+          client => client.sendCommand(['GET', key]),
+          'redis-replica'
+        ),
         'after-failover'
       );
     } finally {

@@ -14,7 +14,12 @@ const {
   REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
   REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS
 } = require('../../DocService/sources/editorDataRedis/redisConnection');
-const {RedisConnectionManager, redisConnectionManager, connectionScope, connectionGroups} = require('../../DocService/sources/editorDataRedis/redisConnectionManager');
+const {
+  RedisConnectionManager,
+  redisConnectionManager,
+  connectionScope,
+  connectionGroups
+} = require('../../DocService/sources/editorDataRedis/redisConnectionManager');
 const {EditorCommon} = require('../../DocService/sources/editorDataRedis/editorCommon');
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
 const {
@@ -273,7 +278,10 @@ describe('editorDataRedis connection contract', () => {
 
       const queuedCommand = queuedClient.sendCommand(['PING']);
       const queuedResult = await Promise.race([
-        queuedCommand.then(() => 'settled', () => 'settled'),
+        queuedCommand.then(
+          () => 'settled',
+          () => 'settled'
+        ),
         new Promise(resolve => setTimeout(() => resolve('pending'), 25))
       ]);
       assert.equal(queuedResult, 'pending');

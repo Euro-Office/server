@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
+const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context} = require('./testHelpers');
 
 describe('editorDataRedis edge cases', () => {
@@ -53,7 +54,8 @@ describe('editorDataRedis edge cases', () => {
     await data.cleanDocumentOnExit(ctx, docId);
 
     assert.deepEqual(await data.getMessages(ctx, docId), []);
-    assert.deepEqual(await data.getForceSaveTimer(Date.now() + 120000), []);
+    const indexKeys = data._indexKeys(ctx, docId);
+    assert.equal(await data._command(['ZSCORE', indexKeys.forceSaveTimer, documentMember(ctx, docId)]), null);
   });
 
   test('force-save transitions preserve opaque payloads and compare-and-set state', async () => {

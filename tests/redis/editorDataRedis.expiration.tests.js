@@ -9,7 +9,12 @@ const {EditorData} = require('../../DocService/sources/editorDataRedis');
 const {POP_EXPIRED_BATCH_SIZE, POP_EXPIRED_MAX_BATCH_SIZE} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
 const {POP_EXPIRED_SCRIPT} = require('../../DocService/sources/editorDataRedis/scripts');
 const {strictMax} = require('../../DocService/sources/editorDataRedis/redisValueCodec');
-const {EDITOR_INDEX_QUEUES, EDITOR_INDEX_SHARD_COUNT, documentMember, editorIndexShard} = require('../../DocService/sources/editorDataRedis/redisKeys');
+const {
+  EDITOR_INDEX_QUEUES,
+  EDITOR_INDEX_SHARD_COUNT,
+  documentMember,
+  editorIndexShard
+} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context, wait} = require('./testHelpers');
 
 function queueDefinition(name, pop, acknowledge) {
