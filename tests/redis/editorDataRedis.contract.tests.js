@@ -18,6 +18,12 @@ function clusterKeySlot(data, key) {
 }
 
 describe('editorDataRedis contract', () => {
+  test('returns null for an absent saved state in the memory backend', async () => {
+    const data = new memoryStorage.EditorData();
+
+    assert.equal(await data.getdelSaved(ctx, 'document', 'operation-a'), null);
+  });
+
   test('keeps the complete EditorData and EditorStat interfaces', async () => {
     const redisData = new redisStorage.EditorData();
     const memoryData = new memoryStorage.EditorData();
