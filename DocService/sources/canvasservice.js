@@ -1283,9 +1283,6 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
                 //remove forgotten file in cache
                 yield cleanupCache(ctx, docId);
               }
-              if (savedClaimed) {
-                yield docsCoServer.editorData.ackSaved(ctx, docId, savedClaimId);
-              }
               if (lastOpenDate) {
                 //todo error case
                 const time = new Date() - lastOpenDate;
@@ -1341,9 +1338,6 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
         //cleanupRes can be false in case of simultaneous opening. it is OK
         const cleanupRes = yield cleanupCacheIf(ctx, updateMask);
         ctx.logger.debug('storeForgotten cleanupRes=%s', cleanupRes);
-        if (savedClaimed) {
-          yield docsCoServer.editorData.ackSaved(ctx, docId, savedClaimId);
-        }
       }
     }
     if (forceSave) {
@@ -1358,6 +1352,13 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       const timeout = retry.createTimeout(attempt, tenCallbackBackoffOptions.timeout);
       ctx.logger.debug('commandSfcCallback backoff timeout = %d', timeout);
       yield* docsCoServer.addDelayed(queueData, timeout);
+    }
+    // A claim is retained through document cleanup so a worker crash can
+    // replay the same task.  Resolve it after saved-state work and retry
+    // scheduling for this callback are complete; version publication and
+    // shutdown bookkeeping below are outside this claim lifecycle.
+    if (savedClaimed && !needRetry) {
+      yield docsCoServer.editorData.ackSaved(ctx, docId, savedClaimId);
     }
   } else {
     ctx.logger.debug('commandSfcCallback cleanDocumentOnExitNoChangesPromise');
@@ -2110,6 +2111,9 @@ exports.receiveTask = function (data, ack) {
       ctx.logger.error('receiveTask error: %s', err.stack);
     } finally {
       ctx.logger.info('receiveTask end');
+      // Queue delivery is acknowledged even when processing fails.  Saved-state
+      // recovery is provided by callback retries and the Redis claim lease;
+      // broker redelivery is not used for these failures.
       ack();
     }
   });

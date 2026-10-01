@@ -427,6 +427,7 @@
         "forcesave": 604800,
         "forcesaveLock": 5000,
         "saved": 3600,
+        "savedClaim": 86400,
         "documentsCron": "0 */2 * * * *",
         "files": 86400,
         "filesCron": "00 00 */1 * * *",
