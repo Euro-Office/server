@@ -54,9 +54,14 @@ describe('editorDataRedis presence invariants', () => {
     const ctx = context('presence-cross-replica');
     const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
 
-    await stores[0].addPresence(ctx, 'document', 'user-1', info);
+    try {
+      await stores[0].addPresence(ctx, 'document', 'user-1', info);
 
-    assert.deepEqual(await stores[1].getPresence(ctx, 'document'), [info]);
+      assert.deepEqual(await stores[1].getPresence(ctx, 'document'), [info]);
+    } finally {
+      await stores[0].removePresence(ctx, 'document', 'user-1');
+      await stores[0].cleanDocumentOnExit(ctx, 'document');
+    }
   });
 
   test('public presence and force-save timer writes use the document index shard', async () => {
@@ -65,22 +70,32 @@ describe('editorDataRedis presence invariants', () => {
     const member = documentMember(ctx, docId);
     const indexKeys = stores[0]._indexKeys(ctx, docId);
 
-    await stores[0].addPresence(ctx, docId, 'user-1', JSON.stringify({id: 'user-1'}));
-    await stores[0].addForceSaveTimerNX(ctx, docId, Date.now() + 60000);
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', JSON.stringify({id: 'user-1'}));
+      await stores[0].addForceSaveTimerNX(ctx, docId, Date.now() + 60000);
 
-    assert.notEqual(await stores[1]._command(['ZSCORE', indexKeys.documents, member]), null);
-    assert.notEqual(await stores[1]._command(['ZSCORE', indexKeys.forceSaveTimer, member]), null);
+      assert.notEqual(await stores[1]._command(['ZSCORE', indexKeys.documents, member]), null);
+      assert.notEqual(await stores[1]._command(['ZSCORE', indexKeys.forceSaveTimer, member]), null);
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
   });
 
   test('a refresh after explicit removal does not resurrect the user', async () => {
     const ctx = context('presence-remove-refresh');
     const info = JSON.stringify({id: 'user-1'});
 
-    await stores[0].addPresence(ctx, 'document', 'user-1', info);
-    await stores[0].removePresence(ctx, 'document', 'user-1');
+    try {
+      await stores[0].addPresence(ctx, 'document', 'user-1', info);
+      await stores[0].removePresence(ctx, 'document', 'user-1');
 
-    assert.equal(await stores[1].updatePresence(ctx, 'document', 'user-1'), undefined);
-    assert.deepEqual(await stores[0].getPresence(ctx, 'document'), []);
+      assert.equal(await stores[1].updatePresence(ctx, 'document', 'user-1'), undefined);
+      assert.deepEqual(await stores[0].getPresence(ctx, 'document'), []);
+    } finally {
+      await stores[0].removePresence(ctx, 'document', 'user-1');
+      await stores[0].cleanDocumentOnExit(ctx, 'document');
+    }
   });
 
   test('concurrent refresh and removal preserve set/hash consistency', async () => {
@@ -89,13 +104,18 @@ describe('editorDataRedis presence invariants', () => {
     const info = JSON.stringify({id: 'user-1'});
     const keys = stores[0]._docKeys(ctx, docId);
 
-    for (let round = 0; round < 25; round++) {
-      await stores[0].addPresence(ctx, docId, 'user-1', info);
-      await Promise.all([stores[0].updatePresence(ctx, docId, 'user-1'), stores[1].removePresence(ctx, docId, 'user-1')]);
+    try {
+      for (let round = 0; round < 25; round++) {
+        await stores[0].addPresence(ctx, docId, 'user-1', info);
+        await Promise.all([stores[0].updatePresence(ctx, docId, 'user-1'), stores[1].removePresence(ctx, docId, 'user-1')]);
 
-      const members = await stores[0]._command(['ZRANGE', keys.presenceSet, '0', '-1']);
-      const fields = await stores[0]._command(['HKEYS', keys.presenceHash]);
-      assert.deepEqual(new Set(members), new Set(fields));
+        const members = await stores[0]._command(['ZRANGE', keys.presenceSet, '0', '-1']);
+        const fields = await stores[0]._command(['HKEYS', keys.presenceHash]);
+        assert.deepEqual(new Set(members), new Set(fields));
+      }
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
     }
   });
 

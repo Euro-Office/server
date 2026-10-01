@@ -50,7 +50,10 @@ describeIntegration('editorDataRedis real connection-failure policy', () => {
       ]);
       assert.notEqual(duringFailure, 'timeout', 'Redis-backed subsystems remained queued after socket loss');
       assert.equal(duringFailure.length, 4);
-      assert.ok(duringFailure.some(result => result.status === 'rejected'), 'at least one command should observe Redis failure');
+      assert.ok(
+        duringFailure.some(result => result.status === 'rejected'),
+        'at least one command should observe Redis failure'
+      );
       assert.equal(await data.lockSave(testContext, 'document', 'user', 5), false);
       assert.equal(await data.unlockSave(testContext, 'document', 'user'), commonDefines.c_oAscUnlockRes.Locked);
       await assert.rejects(data.getPresence(testContext, 'document'));
