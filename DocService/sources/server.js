@@ -57,6 +57,7 @@ const metaRouter = require('./routes/meta');
 const ms = require('ms');
 const aiProxyHandler = require('./ai/aiProxyHandler');
 const runtimeConfigManager = require('./../../Common/sources/runtimeConfigManager');
+const {installShutdownHandlers, resolveShutdownTimeout, trackUpgradedSockets, waitForServerClose} = require('./serverShutdown');
 
 const cfgWopiEnable = config.get('wopi.enable');
 const cfgWopiDummyEnable = config.get('wopi.dummy.enable');
@@ -106,8 +107,12 @@ if (process.env.NODE_ENV.startsWith('development-')) {
 app.set('views', path.resolve(process.cwd(), cfgHtmlTemplate));
 app.set('view engine', 'ejs');
 const server = http.createServer(app);
+let isShuttingDown = false;
+const upgradedSockets = trackUpgradedSockets(server, () => isShuttingDown);
 
 let licenseInfo, licenseOriginal, updatePluginsTime, userPlugins;
+let licenseUpdateInterval;
+let pluginsWatcher;
 const updatePluginsCacheExpire = ms('5m');
 
 const updatePlugins = (eventType, filename) => {
@@ -139,7 +144,7 @@ if (!(cfgTokenEnableBrowser && cfgTokenEnableRequestInbox && cfgTokenEnableReque
 
 updateLicense();
 fs.watchFile(cfgLicenseFile, updateLicense);
-setInterval(updateLicense, 86400000);
+licenseUpdateInterval = setInterval(updateLicense, 86400000);
 
 try {
   const staticContent = config.get('services.CoAuthoring.server.static_content');
@@ -148,7 +153,7 @@ try {
   if (staticContent[pluginsUri]) {
     pluginsPath = staticContent[pluginsUri].path;
   }
-  fs.watch(pluginsPath, updatePlugins);
+  pluginsWatcher = fs.watch(pluginsPath, updatePlugins);
 } catch (e) {
   operationContext.global.logger.warn(
     'Failed to subscribe to plugin folder updates. When changing the list of plugins, you must restart the server. https://nodejs.org/docs/latest/api/fs.html#fs_availability. %s',
@@ -482,6 +487,8 @@ server.on('clientError', (err, socket) => {
 });
 
 let processShutdownPromise;
+let shutdownExitCode = 0;
+const shutdownTimeout = resolveShutdownTimeout(process.env.DOCSERVICE_SHUTDOWN_TIMEOUT);
 
 async function closeRedisStores() {
   const stores = [docsCoServer.editorData, docsCoServer.editorStat, docsCoServer.editorStatProxy];
@@ -496,37 +503,55 @@ async function closeRedisStores() {
   }
 }
 
-function waitForHttpServerClose() {
-  if (!server.listening) {
-    return Promise.resolve();
+function closeLocalResources() {
+  const closeResource = (name, close) => {
+    try {
+      close();
+    } catch (error) {
+      operationContext.global.logger.error('Local resource cleanup error (%s):%s', name, error.stack || error.message || error);
+    }
+  };
+
+  const licenseTimer = licenseUpdateInterval;
+  licenseUpdateInterval = undefined;
+  if (licenseTimer) {
+    closeResource('license update timer', () => clearInterval(licenseTimer));
   }
-  return new Promise((resolve, reject) => {
-    server.close(error => {
-      if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') {
-        reject(error);
-      } else {
-        resolve();
-      }
-    });
-    // Do not keep shutdown waiting on idle keep-alive sockets. Active
-    // requests remain open and are allowed to finish before the callback.
-    server.closeIdleConnections?.();
+
+  closeResource('license file watcher', () => fs.unwatchFile(cfgLicenseFile, updateLicense));
+
+  const watcher = pluginsWatcher;
+  pluginsWatcher = undefined;
+  if (watcher) {
+    closeResource('plugins watcher', () => watcher.close());
+  }
+
+  closeResource('runtime configuration watcher', () => runtimeConfigManager.closeRuntimeConfigWatcher());
+}
+
+function waitForHttpServerClose() {
+  return waitForServerClose(server, upgradedSockets, {
+    timeout: shutdownTimeout,
+    logger: operationContext.global.logger,
+    closeSocketIo: docsCoServer.close
   });
 }
 
 async function shutdownRedis(signal, exitCode = 0) {
+  shutdownExitCode = Math.max(shutdownExitCode, exitCode);
   if (processShutdownPromise) {
     return processShutdownPromise;
   }
   processShutdownPromise = (async () => {
-    if (server.listening) {
-      // Stop accepting new work and wait for active requests before releasing
-      // the stores. Existing Redis operations are drained by RedisConnection.close().
-      try {
-        await waitForHttpServerClose();
-      } catch (error) {
-        operationContext.global.logger.error('HTTP shutdown error (%s):%s', signal, error.stack);
-      }
+    isShuttingDown = true;
+    closeLocalResources();
+    try {
+      // Stop accepting new work and close upgraded editor sockets before
+      // releasing the stores. Existing Redis operations are drained by
+      // RedisConnection.close().
+      await waitForHttpServerClose();
+    } catch (error) {
+      operationContext.global.logger.error('HTTP shutdown error (%s):%s', signal, error.stack || error.message || error);
     }
     try {
       await closeRedisStores();
@@ -538,18 +563,16 @@ async function shutdownRedis(signal, exitCode = 0) {
     } catch (error) {
       operationContext.global.logger.error('Redis manager shutdown error (%s):%s', signal, error.stack);
     }
-    logger.shutdown(() => process.exit(exitCode));
+    await new Promise(resolve => logger.shutdown(resolve));
+    return shutdownExitCode;
   })();
   return processShutdownPromise;
 }
 
-process.on('uncaughtException', err => {
-  operationContext.global.logger.error('uncaughtException:%s', err.stack);
-  shutdownRedis('uncaughtException', 1);
+installShutdownHandlers({
+  logger: operationContext.global.logger,
+  shutdown: shutdownRedis
 });
-
-process.once('SIGTERM', () => shutdownRedis('SIGTERM'));
-process.once('SIGINT', () => shutdownRedis('SIGINT'));
 
 //Initialize watch here to avoid circular import with operationContext
 runtimeConfigManager.initRuntimeConfigWatcher(operationContext.global).catch(err => {

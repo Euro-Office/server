@@ -26,6 +26,7 @@
 'use strict';
 
 const fs = require('fs/promises');
+const fsWatch = require('fs');
 const path = require('path');
 const config = require('config');
 const NodeCache = require('node-cache');
@@ -42,6 +43,8 @@ const nodeCache = new NodeCache(cfgRuntimeConfig.cache);
 
 // Debounce timer to wait for file write completion
 let reloadTimer = null;
+let runtimeConfigWatcher = null;
+let runtimeConfigWatcherClosed = false;
 const RELOAD_DEBOUNCE_MS = 200;
 
 /**
@@ -159,14 +162,37 @@ function handleConfigFileChange(eventTypeOrCurrent, filenameOrPrevious) {
  * Initialize the configuration directory watcher
  */
 async function initRuntimeConfigWatcher(ctx) {
+  runtimeConfigWatcherClosed = false;
   if (!configFilePath) {
     ctx.logger.info(`runtimeConfig.filePath is not specified`);
     return;
   }
   const configDir = path.dirname(configFilePath);
-  await utils.watchWithFallback(ctx, configDir, configFilePath, handleConfigFileChange);
+  const watcher = await utils.watchWithFallback(ctx, configDir, configFilePath, handleConfigFileChange);
+  if (runtimeConfigWatcherClosed) {
+    watcher?.close?.();
+    watcher?.stop?.();
+    fsWatch.unwatchFile(configFilePath, handleConfigFileChange);
+    return;
+  }
+  runtimeConfigWatcher = watcher;
+}
+
+function closeRuntimeConfigWatcher() {
+  runtimeConfigWatcherClosed = true;
+  if (reloadTimer) {
+    clearTimeout(reloadTimer);
+    reloadTimer = null;
+  }
+  runtimeConfigWatcher?.close?.();
+  runtimeConfigWatcher?.stop?.();
+  runtimeConfigWatcher = null;
+  // watchWithFallback may have replaced a native watcher with a polling
+  // watcher after an error, so also remove the file watcher explicitly.
+  fsWatch.unwatchFile(configFilePath, handleConfigFileChange);
 }
 module.exports = {
+  closeRuntimeConfigWatcher,
   initRuntimeConfigWatcher,
   getConfig,
   saveConfig,
