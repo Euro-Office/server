@@ -25,6 +25,7 @@
 
 'use strict';
 
+require('./../../Common/sources/reporters/sentry').init();
 const cluster = require('cluster');
 const config = require('config').get('SpellChecker');
 
