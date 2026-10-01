@@ -98,6 +98,77 @@ describe('editorDataRedis presence invariants', () => {
     }
   });
 
+  test('rebuilds presence and its document index after Redis presence data loss', async () => {
+    const ctx = context('presence-recovery');
+    const docId = 'document';
+    const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
+    const keys = stores[0]._docKeys(ctx, docId);
+    const member = documentMember(ctx, docId);
+
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      await stores[1]._command(['DEL', keys.presenceSet, keys.presenceHash, keys.presenceVersion]);
+
+      await stores[1].updatePresence(ctx, docId, 'user-1', info);
+
+      assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+      assert.ok((await stores[0]._command(['TTL', keys.presenceSet])) > 0);
+      assert.ok((await stores[0]._command(['TTL', keys.presenceHash])) > 0);
+      assert.notEqual(await stores[0]._command(['ZSCORE', stores[0]._indexKeys(ctx, docId).documents, member]), null);
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1', 'connection-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
+  test('refreshes a missing presence entry only when the connection data is supplied', async () => {
+    const ctx = context('presence-refresh-recovery');
+    const docId = 'document';
+    const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
+    const keys = stores[0]._docKeys(ctx, docId);
+
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      await stores[0]._command(['DEL', keys.presenceHash]);
+
+      await stores[1].updatePresence(ctx, docId, 'user-1');
+      assert.deepEqual(await stores[0].getPresence(ctx, docId), []);
+
+      await stores[1].updatePresence(ctx, docId, 'user-1', info);
+      assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1', 'connection-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
+  test('an older connection cannot remove a newer connection presence', async () => {
+    const ctx = context('presence-connection-race');
+    const docId = 'document';
+    const oldInfo = JSON.stringify({id: 'user-1', connectionId: 'old-connection'});
+    const newInfo = JSON.stringify({id: 'user-1', connectionId: 'new-connection'});
+    const member = documentMember(ctx, docId);
+    const indexKey = stores[0]._indexKeys(ctx, docId).documents;
+
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', oldInfo);
+      await stores[1].addPresence(ctx, docId, 'user-1', newInfo);
+
+      await stores[0].removePresence(ctx, docId, 'user-1', 'old-connection');
+
+      assert.deepEqual(await stores[1].getPresence(ctx, docId), [newInfo]);
+      assert.notEqual(await stores[0]._command(['ZSCORE', indexKey, member]), null);
+
+      await stores[0].removePresence(ctx, docId, 'user-1', 'new-connection');
+      assert.deepEqual(await stores[1].getPresence(ctx, docId), []);
+      assert.equal(await stores[0]._command(['ZSCORE', indexKey, member]), null);
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1', 'old-connection');
+      await stores[0].removePresence(ctx, docId, 'user-1', 'new-connection');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
   test('concurrent refresh and removal preserve set/hash consistency', async () => {
     const ctx = context('presence-race');
     const docId = 'document';
@@ -164,6 +235,75 @@ describe('editorDataRedis presence invariants', () => {
       assert.deepEqual(await readDocumentState(stores[0], ctx, docId), before);
     } finally {
       await stores[0].removePresence(ctx, docId, 'user-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
+  test('requeues a live document when GC cleanup races with an active presence', async () => {
+    const ctx = context('presence-gc-live');
+    const docId = 'document';
+    const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
+    const member = documentMember(ctx, docId);
+    const indexKey = stores[0]._indexKeys(ctx, docId).documents;
+
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      await stores[0]._command(['ZADD', indexKey, '0', member]);
+
+      const expired = await stores[1].getDocumentPresenceExpired(Date.now());
+      assert.deepEqual(expired, [['presence-gc-live', docId]]);
+      await stores[1].cleanDocumentOnExit(ctx, docId);
+      await stores[1]._ackDocumentPresenceExpired(expired[0]);
+
+      assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+      assert.ok(Number(await stores[0]._command(['ZSCORE', indexKey, member])) > Date.now());
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1', 'connection-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
+  test('keeps a live hash indexed across a presence TTL gap', async () => {
+    const ctx = context('presence-ttl-gap');
+    const docId = 'document';
+    const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
+    const keys = stores[0]._docKeys(ctx, docId);
+    const indexKey = stores[0]._indexKeys(ctx, docId).documents;
+    const member = documentMember(ctx, docId);
+
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      await stores[1]._command(['DEL', keys.presenceSet, keys.presenceVersion]);
+
+      await stores[1].cleanDocumentOnExit(ctx, docId);
+
+      assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+      assert.ok(Number(await stores[0]._command(['ZSCORE', indexKey, member])) > Date.now());
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1', 'connection-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
+  test('does not regress a newer replica index during version-marker loss', async () => {
+    const ctx = context('presence-index-race', {'services.CoAuthoring.expire.presence': 1});
+    const docId = 'document';
+    const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
+    const keys = stores[0]._docKeys(ctx, docId);
+    const indexKey = stores[0]._indexKeys(ctx, docId).documents;
+    const member = documentMember(ctx, docId);
+    const newerExpiry = Date.now() + 60000;
+
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      await stores[1]._command(['ZADD', indexKey, String(newerExpiry), member]);
+      await stores[1]._command(['DEL', keys.presenceSet, keys.presenceVersion]);
+
+      await stores[0].getPresence(ctx, docId);
+
+      assert.ok(Number(await stores[1]._command(['ZSCORE', indexKey, member])) >= newerExpiry);
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1', 'connection-1');
       await stores[0].cleanDocumentOnExit(ctx, docId);
     }
   });
