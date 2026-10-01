@@ -9,6 +9,7 @@ const canvasservice = require('../../DocService/sources/canvasservice');
 const commonDefines = require('../../Common/sources/commondefines');
 const constants = require('../../Common/sources/constants');
 const docsCoServer = require('../../DocService/sources/DocsCoServer');
+const memoryStorage = require('../../DocService/sources/editorDataMemory');
 const sqlBase = require('../../DocService/sources/databaseConnectors/baseConnector');
 const storage = require('../../Common/sources/storage/storage-base');
 const taskResult = require('../../DocService/sources/taskresult');
@@ -40,7 +41,7 @@ function context() {
   };
 }
 
-describe('canvasservice saved-state failure handling', () => {
+describe('canvasservice saved-state handling', () => {
   let spies;
 
   beforeEach(() => {
@@ -74,6 +75,32 @@ describe('canvasservice saved-state failure handling', () => {
   afterEach(() => {
     for (const spy of spies.reverse()) {
       spy.mockRestore();
+    }
+  });
+
+  test('reports a normal final save as successful with the in-memory saved-state backend', async () => {
+    const ctx = context();
+    const doc = command();
+    const previousEditorData = docsCoServer.editorData;
+    const editorData = new memoryStorage.EditorData();
+    docsCoServer.editorData = editorData;
+
+    const cleanDocumentOnExitPromise = jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockResolvedValue(undefined);
+    const publish = jest.spyOn(docsCoServer, 'publish').mockResolvedValue(undefined);
+    spies.push(cleanDocumentOnExitPromise, publish);
+
+    try {
+      const reply = await canvasservice.commandSfcCallback(ctx, doc, false, false);
+
+      assert.equal(reply, JSON.stringify({error: 0}));
+      assert.equal(cleanDocumentOnExitPromise.mock.calls.length, 1);
+      assert.equal(cleanDocumentOnExitPromise.mock.calls[0][4], undefined);
+      assert.equal(publish.mock.calls.length, 1);
+      assert.equal(publish.mock.calls[0][1].type, commonDefines.c_oPublishType.updateVersion);
+      assert.equal(publish.mock.calls[0][1].docId, doc.getDocId());
+      assert.equal(publish.mock.calls[0][1].success, true);
+    } finally {
+      docsCoServer.editorData = previousEditorData;
     }
   });
 

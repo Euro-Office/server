@@ -195,7 +195,7 @@ EditorData.prototype.getdelSaved = async function (ctx, docId, _operationId) {
   const data = this._getDocumentData(ctx, docId);
   const res = data.saved;
   data.saved = null;
-  return res;
+  return res ?? null;
 };
 EditorData.prototype.ackSaved = async function (_ctx, _docId, _operationId) {
   return true;
