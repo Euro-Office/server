@@ -45,6 +45,13 @@ describe('sentry reporter', () => {
     expect(reporters.appenders()).toEqual({sentry: {type: reporter}});
   });
 
+  test('tags tenant and docId from the log context, skipping placeholders', () => {
+    appender({...logEvent('ERROR', 'save error'), context: {TENANT: 'nc.example', DOCID: 'abc123', USERID: 'u1'}});
+    expect(Sentry.captureMessage.mock.calls[0][1].tags).toEqual({logger: 'nodeJS', tenant: 'nc.example', docId: 'abc123'});
+    appender({...logEvent('ERROR', 'save error'), context: {TENANT: 'localhost', DOCID: 'docId', USERID: 'userId'}});
+    expect(Sentry.captureMessage.mock.calls[1][1].tags).toEqual({logger: 'nodeJS', tenant: 'localhost'});
+  });
+
   test('ignores events below error', () => {
     appender(logEvent('WARN', 'warning %s', 'x'));
     expect(Sentry.captureMessage).not.toHaveBeenCalled();
