@@ -25,7 +25,7 @@
 
 'use strict';
 
-require('../../../Common/sources/reporters/sentry').init();
+require('../../../Common/sources/reporters').init('adminpanel');
 const moduleReloader = require('../../../Common/sources/moduleReloader');
 const config = moduleReloader.requireConfigWithRuntime();
 const logger = require('../../../Common/sources/logger');

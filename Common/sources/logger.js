@@ -31,7 +31,7 @@ const fs = require('fs');
 
 const log4js = require('log4js');
 const layouts = require('log4js/lib/layouts');
-const sentryReporter = require('./reporters/sentry');
+const reporters = require('./reporters');
 const logConfigPath = config.get('log.filePath');
 const logOptions = config.get('log.options');
 
@@ -78,20 +78,22 @@ log4js.addLayout('patternWithTokens', cfg => {
 const cachedLogConfig = JSON.parse(fs.readFileSync(logConfigPath, 'utf8'));
 let curLogConfig = cachedLogConfig;
 
-function withSentryAppender(logConfig) {
-  if (!sentryReporter.isEnabled()) {
+function withReporterAppenders(logConfig) {
+  const reporterAppenders = reporters.appenders();
+  const names = Object.keys(reporterAppenders);
+  if (names.length === 0) {
     return logConfig;
   }
   const categories = {};
   for (const [name, category] of Object.entries(logConfig.categories)) {
-    categories[name] = {...category, appenders: [...category.appenders, 'sentry']};
+    categories[name] = {...category, appenders: [...category.appenders, ...names]};
   }
-  return {...logConfig, appenders: {...logConfig.appenders, sentry: {type: sentryReporter}}, categories};
+  return {...logConfig, appenders: {...logConfig.appenders, ...reporterAppenders}, categories};
 }
 
 function configureLogger(options) {
   const mergedOptions = config.util.extendDeep({}, cachedLogConfig, options);
-  log4js.configure(withSentryAppender(mergedOptions));
+  log4js.configure(withReporterAppenders(mergedOptions));
   curLogConfig = mergedOptions;
 }
 configureLogger(logOptions);

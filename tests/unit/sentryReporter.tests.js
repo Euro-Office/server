@@ -15,6 +15,7 @@ jest.mock('../../Common/node_modules/@sentry/node', () => ({
 
 const Sentry = require('../../Common/node_modules/@sentry/node');
 const levels = require('../../Common/node_modules/log4js/lib/levels');
+const reporters = require('../../Common/sources/reporters');
 const reporter = require('../../Common/sources/reporters/sentry');
 
 const logEvent = (level, ...data) => ({level: levels.getLevel(level), categoryName: 'nodeJS', data});
@@ -24,8 +25,9 @@ describe('sentry reporter', () => {
   let options;
 
   beforeAll(() => {
+    expect(reporters.appenders()).toEqual({});
     process.env.SENTRY_DSN = 'http://key@localhost/1';
-    reporter.init();
+    reporters.init('docservice');
     options = Sentry.init.mock.calls[0][0];
     appender = reporter.configure({}, null, null, levels);
   });
@@ -36,10 +38,11 @@ describe('sentry reporter', () => {
 
   test('init uses release default and drops the SDK crash handlers', () => {
     expect(options.sendDefaultPii).toBe(false);
+    expect(options.initialScope).toEqual({tags: {service: 'docservice'}});
     expect(options.release).toMatch(/^documentserver@/);
     const names = options.integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}]).map(i => i.name);
     expect(names).toEqual(['Http']);
-    expect(reporter.isEnabled()).toBe(true);
+    expect(reporters.appenders()).toEqual({sentry: {type: reporter}});
   });
 
   test('ignores events below error', () => {

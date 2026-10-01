@@ -16,8 +16,9 @@ let Sentry = null;
 
 /**
  * Initializes the Sentry SDK when SENTRY_DSN is set. Must run before any other require so the SDK can instrument modules.
+ * @param {string} service - process name, reported as the `service` tag
  */
-function init() {
+function init(service) {
   if (!process.env.SENTRY_DSN || Sentry) {
     return;
   }
@@ -27,6 +28,7 @@ function init() {
     dsn: process.env.SENTRY_DSN,
     release: process.env.SENTRY_RELEASE || `documentserver@${buildVersion}`,
     sendDefaultPii: false,
+    initialScope: {tags: {service}},
     // Crashes are reported through the existing uncaughtException handlers, which log the error and flush via logger.shutdown
     integrations: defaults => defaults.filter(i => i.name !== 'OnUncaughtException' && i.name !== 'OnUnhandledRejection'),
     beforeSend: scrub
@@ -71,4 +73,4 @@ function configure(config, layouts, findAppender, levels) {
   return appender;
 }
 
-module.exports = {init, isEnabled, scrub, configure};
+module.exports = {name: 'sentry', init, isEnabled, scrub, configure};
