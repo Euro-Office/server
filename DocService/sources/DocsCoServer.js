@@ -486,7 +486,7 @@ function addPresence(ctx, conn, updateCunters) {
 }
 async function updatePresence(ctx, conn) {
   if (editorData.updatePresence) {
-    return await editorData.updatePresence(ctx, conn.docId, conn.user.id);
+    return await editorData.updatePresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
   } else {
     //todo remove if after 7.6. code for backward compatibility, because redis in separate repo
     return await editorData.addPresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
@@ -494,7 +494,7 @@ async function updatePresence(ctx, conn) {
 }
 function removePresence(ctx, conn) {
   return co(function* () {
-    yield editorData.removePresence(ctx, conn.docId, conn.user.id);
+    yield editorData.removePresence(ctx, conn.docId, conn.user.id, conn.id);
     yield updatePresenceCounters(ctx, conn, -1);
   });
 }

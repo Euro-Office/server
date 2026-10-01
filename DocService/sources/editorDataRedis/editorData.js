@@ -34,7 +34,7 @@ const {
   GET_PRESENCE_SCRIPT,
   REMOVE_PRESENCE_SCRIPT,
   PREPARE_PRESENCE_REMOVAL_SCRIPT,
-  REMOVE_DOCUMENT_INDEX_SCRIPT,
+  SYNC_DOCUMENT_PRESENCE_INDEX_SCRIPT,
   POP_EXPIRED_SCRIPT,
   ACK_EXPIRED_SCRIPT,
   ADD_LOCKS_SCRIPT,
@@ -94,6 +94,14 @@ EditorData.prototype._docKeys = function (ctx, docId) {
   };
 };
 
+EditorData.prototype._syncPresenceIndex = function (ctx, docId, expected, desired) {
+  return this._eval(
+    SYNC_DOCUMENT_PRESENCE_INDEX_SCRIPT,
+    [this._indexKeys(ctx, docId).documents],
+    [documentMember(ctx, docId), expected || '', desired || '', String(Date.now())]
+  );
+};
+
 EditorData.prototype.addPresence = async function (ctx, docId, userId, userInfo) {
   const keys = this._docKeys(ctx, docId);
   const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.presence', cfgExpPresence);
@@ -106,33 +114,42 @@ EditorData.prototype.addPresence = async function (ctx, docId, userId, userInfo)
   // The document index is intentionally updated separately: document presence
   // keys are hash-tagged per document, while this sharded index has its own
   // hash tag. Redis Cluster cannot execute both key groups in one Lua script.
-  // The expiry score and cleanup paths tolerate a briefly stale index entry.
-  await this._command(['ZADD', this._indexKeys(ctx, docId).documents, String(expireAt), documentMember(ctx, docId)]);
+  // Only move the index forward when concurrent replicas finish out of order.
+  await this._syncPresenceIndex(ctx, docId, String(expireAt), String(expireAt));
 };
 
-EditorData.prototype.updatePresence = async function (ctx, docId, userId) {
+EditorData.prototype.updatePresence = async function (ctx, docId, userId, ...presenceArgs) {
+  const userInfo = presenceArgs[0];
   const keys = this._docKeys(ctx, docId);
   const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.presence', cfgExpPresence);
   const expireAt = Date.now() + ttl * 1000;
   const updated = await this._eval(
     UPDATE_PRESENCE_SCRIPT,
     [keys.presenceSet, keys.presenceHash, keys.presenceVersion],
-    [String(userId), String(expireAt), String(ttl)]
+    [String(userId), String(expireAt), String(ttl), userInfo === undefined ? '' : String(userInfo)]
   );
   if (Number(updated) === 1) {
-    await this._command(['ZADD', this._indexKeys(ctx, docId).documents, String(expireAt), documentMember(ctx, docId)]);
+    await this._syncPresenceIndex(ctx, docId, String(expireAt), String(expireAt));
   }
 };
 
-EditorData.prototype.removePresence = async function (ctx, docId, userId) {
+EditorData.prototype.removePresence = async function (ctx, docId, userId, ...presenceArgs) {
+  const connectionId = presenceArgs[0];
   const keys = this._docKeys(ctx, docId);
-  await this._eval(REMOVE_PRESENCE_SCRIPT, [keys.presenceSet, keys.presenceHash], [String(userId)]);
+  const result = await this._eval(
+    REMOVE_PRESENCE_SCRIPT,
+    [keys.presenceSet, keys.presenceHash, keys.presenceVersion],
+    [String(userId), connectionId === undefined ? '' : String(connectionId), String(Date.now())]
+  );
+  await this._syncPresenceIndex(ctx, docId, toRedisString(result?.[2] || ''), toRedisString(result?.[3] || ''));
 };
 
 EditorData.prototype.getPresence = async function (ctx, docId, _connections) {
   const keys = this._docKeys(ctx, docId);
-  const result = await this._eval(GET_PRESENCE_SCRIPT, [keys.presenceSet, keys.presenceHash], [String(Date.now())]);
-  return (result || []).map(toRedisString);
+  const result = await this._eval(GET_PRESENCE_SCRIPT, [keys.presenceSet, keys.presenceHash, keys.presenceVersion], [String(Date.now())]);
+  const values = Array.isArray(result?.[0]) ? result[0] : result || [];
+  await this._syncPresenceIndex(ctx, docId, toRedisString(result?.[2] || ''), toRedisString(result?.[1] || ''));
+  return values.map(toRedisString);
 };
 
 EditorData.prototype.lockSave = async function (ctx, docId, userId, ttl) {
@@ -214,13 +231,11 @@ EditorData.prototype.getDocumentPresenceExpired = function (now) {
 
 EditorData.prototype.removePresenceDocument = async function (ctx, docId) {
   const keys = this._docKeys(ctx, docId);
-  const result = await this._eval(PREPARE_PRESENCE_REMOVAL_SCRIPT, [keys.presenceSet, keys.presenceHash, keys.presenceVersion], []);
+  const result = await this._eval(PREPARE_PRESENCE_REMOVAL_SCRIPT, [keys.presenceSet, keys.presenceHash, keys.presenceVersion], [String(Date.now())]);
   if (result && Number(result[0]) === 1) {
-    await this._eval(
-      REMOVE_DOCUMENT_INDEX_SCRIPT,
-      [this._indexKeys(ctx, docId).documents],
-      [documentMember(ctx, docId), toRedisString(result[1] || ''), String(Date.now())]
-    );
+    await this._syncPresenceIndex(ctx, docId, toRedisString(result[1] || ''), '');
+  } else if (result) {
+    await this._syncPresenceIndex(ctx, docId, toRedisString(result[2] || ''), toRedisString(result[1] || ''));
   }
 };
 
@@ -421,10 +436,10 @@ EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClai
     [String(Date.now()), savedClaimId === undefined || savedClaimId === null ? '' : String(savedClaimId)]
   );
   if (result && Number(result[0]) === 1) {
-    const member = documentMember(ctx, docId);
-    const indexKeys = this._indexKeys(ctx, docId);
-    await this._eval(REMOVE_DOCUMENT_INDEX_SCRIPT, [indexKeys.documents], [member, toRedisString(result[1] || ''), String(Date.now())]);
-    await this._command(['ZREM', indexKeys.forceSaveTimer, member]);
+    await this._syncPresenceIndex(ctx, docId, toRedisString(result[1] || ''), '');
+    await this._command(['ZREM', this._indexKeys(ctx, docId).forceSaveTimer, documentMember(ctx, docId)]);
+  } else if (result) {
+    await this._syncPresenceIndex(ctx, docId, toRedisString(result[2] || ''), toRedisString(result[1] || ''));
   }
 };
 
