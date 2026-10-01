@@ -25,8 +25,10 @@
 
 'use strict';
 
+require('../../../Common/sources/reporters').init('adminpanel');
 const moduleReloader = require('../../../Common/sources/moduleReloader');
 const config = moduleReloader.requireConfigWithRuntime();
+const logger = require('../../../Common/sources/logger');
 const operationContext = require('../../../Common/sources/operationContext');
 const tenantManager = require('../../../Common/sources/tenantManager');
 const license = require('../../../Common/sources/license');
@@ -176,6 +178,13 @@ app.use((err, req, res, _next) => {
   ctx.initFromRequest(req);
   ctx.logger.error('default error handler:%s', err.stack);
   res.sendStatus(err.status || err.statusCode || 500);
+});
+
+process.on('uncaughtException', err => {
+  operationContext.global.logger.error('uncaughtException:%s', err.stack);
+  logger.shutdown(() => {
+    process.exit(1);
+  });
 });
 
 server.listen(port, () => {
