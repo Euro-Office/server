@@ -25,7 +25,6 @@
 
 (function(window, undefined) {
 	const maxTokens = 16000;
-	let apiKey = '';
 	let interval = null;
 	let tokenTimeot = null;
 	let errTimeout = null;
