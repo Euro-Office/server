@@ -159,6 +159,7 @@ if (process.env.REDIS_SERVER_DB_KEYS_NUM) {
 }
 const clientStatsD = statsDClient.getClient();
 let connections = []; // Active connections
+let io;
 const lockDocumentsTimerId = {}; //to drop connection that can't unlockDocument
 let pubsub;
 let queue;
@@ -1828,7 +1829,7 @@ async function encryptPasswordParams(ctx, data) {
 exports.encryptPasswordParams = encryptPasswordParams;
 exports.getOpenFormatByEditor = getOpenFormatByEditor;
 exports.install = function (server, app, callbackFunction) {
-  const io = new Server(server, cfgSocketIoConnection);
+  io = new Server(server, cfgSocketIoConnection);
 
   io.use((socket, next) => {
     co(function* () {
@@ -4661,6 +4662,10 @@ exports.commandFromServer = function (req, res) {
       ctx.logger.info('commandFromServer end : %s', outputBuffer);
     }
   });
+};
+
+exports.close = function () {
+  return io?.close?.();
 };
 
 exports.shutdown = function (req, res) {
