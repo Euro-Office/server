@@ -425,15 +425,21 @@ async function runCrossProcessRedisScenarios(harness) {
   // These scenarios intentionally remain Redis-only: they cover persistence, expiry,
   // concurrent removal, and document cleanup across independent processes.
   const ctx = contextArgs('cross-process-tenant');
-  const info = JSON.stringify({id: 'presence-user', replica: 'replica-a'});
+  const info = JSON.stringify({id: 'presence-user', connectionId: 'replica-a-connection', replica: 'replica-a'});
   await harness.request('replica-a', 'data', 'addPresence', [ctx, 'presence-document', 'presence-user', info], 'presence write from replica-a');
   assertObservableEqual(
     await harness.request('replica-b', 'data', 'getPresence', [ctx, 'presence-document'], 'presence read from replica-b'),
     [info],
     'presence written by replica-a must be visible to replica-b'
   );
-  await harness.request('replica-b', 'data', 'updatePresence', [ctx, 'presence-document', 'presence-user'], 'presence refresh from replica-b');
-  await harness.request('replica-b', 'data', 'removePresence', [ctx, 'presence-document', 'presence-user'], 'presence removal from replica-b');
+  await harness.request('replica-b', 'data', 'updatePresence', [ctx, 'presence-document', 'presence-user', info], 'presence refresh from replica-b');
+  await harness.request(
+    'replica-b',
+    'data',
+    'removePresence',
+    [ctx, 'presence-document', 'presence-user', 'replica-a-connection'],
+    'presence removal from replica-b'
+  );
   assertObservableEqual(
     await harness.request('replica-a', 'data', 'getPresence', [ctx, 'presence-document'], 'presence read after removal'),
     [],
@@ -447,6 +453,57 @@ async function runCrossProcessRedisScenarios(harness) {
     () => harness.request('replica-b', 'data', 'getPresence', [expiringContext, 'expiring-document'], 'presence expiration read'),
     value => value.length === 0
   );
+
+  const recoveryDoc = 'cross-process-presence-recovery';
+  await harness.request('replica-a', 'data', 'addPresence', [ctx, recoveryDoc, 'presence-user', info], 'presence recovery write');
+  const recoveryKeys = await harness.request('replica-a', 'data', '_docKeys', [ctx, recoveryDoc], 'presence recovery keys');
+  await harness.request(
+    'replica-b',
+    'data',
+    '_command',
+    [['DEL', recoveryKeys.presenceSet, recoveryKeys.presenceHash, recoveryKeys.presenceVersion]],
+    'presence recovery data loss'
+  );
+  await harness.request('replica-b', 'data', 'updatePresence', [ctx, recoveryDoc, 'presence-user', info], 'presence recovery refresh');
+  assertObservableEqual(
+    await harness.request('replica-a', 'data', 'getPresence', [ctx, recoveryDoc], 'presence recovery read'),
+    [info],
+    'a refresh must rebuild missing presence on another replica'
+  );
+  await harness.request(
+    'replica-b',
+    'data',
+    'removePresence',
+    [ctx, recoveryDoc, 'presence-user', 'replica-a-connection'],
+    'presence recovery removal'
+  );
+  await harness.request('replica-a', 'data', 'cleanDocumentOnExit', [ctx, recoveryDoc], 'presence recovery cleanup');
+
+  const reconnectDoc = 'cross-process-presence-reconnect';
+  const oldInfo = JSON.stringify({id: 'reconnect-user', connectionId: 'old-connection'});
+  const newInfo = JSON.stringify({id: 'reconnect-user', connectionId: 'new-connection'});
+  await harness.request('replica-a', 'data', 'addPresence', [ctx, reconnectDoc, 'reconnect-user', oldInfo], 'old connection presence write');
+  await harness.request('replica-b', 'data', 'addPresence', [ctx, reconnectDoc, 'reconnect-user', newInfo], 'new connection presence write');
+  await harness.request(
+    'replica-a',
+    'data',
+    'removePresence',
+    [ctx, reconnectDoc, 'reconnect-user', 'old-connection'],
+    'old connection presence removal'
+  );
+  assertObservableEqual(
+    await harness.request('replica-b', 'data', 'getPresence', [ctx, reconnectDoc], 'new connection presence remains'),
+    [newInfo],
+    'an old connection must not remove a newer connection presence'
+  );
+  await harness.request(
+    'replica-b',
+    'data',
+    'removePresence',
+    [ctx, reconnectDoc, 'reconnect-user', 'new-connection'],
+    'new connection presence removal'
+  );
+  await harness.request('replica-a', 'data', 'cleanDocumentOnExit', [ctx, reconnectDoc], 'reconnect presence cleanup');
 
   const lockDoc = 'cross-process-lock';
   const lockResults = await Promise.all([
@@ -609,7 +666,31 @@ async function runCrossProcessRedisScenarios(harness) {
   await harness.request('replica-a', 'data', 'addPresence', [ctx, activeDoc, 'active', info], 'active presence write');
   await harness.request('replica-b', 'data', 'removePresenceDocument', [ctx, activeDoc], 'active presence document removal');
   assertObservableEqual(await harness.request('replica-a', 'data', 'getPresence', [ctx, activeDoc], 'active presence remains'), [info]);
-  await harness.request('replica-b', 'data', 'removePresence', [ctx, activeDoc, 'active'], 'active presence removal');
+  const activeIndexKeys = await harness.request('replica-a', 'data', '_indexKeys', [ctx, activeDoc], 'active presence index keys');
+  await harness.request(
+    'replica-a',
+    'data',
+    '_command',
+    [['ZADD', activeIndexKeys.documents, '0', JSON.stringify(['cross-process-tenant', activeDoc])]],
+    'active presence GC claim setup'
+  );
+  const activeExpired = await harness.request('replica-b', 'data', 'getDocumentPresenceExpired', [Date.now()], 'active presence GC claim');
+  assertObservableEqual(activeExpired, [['cross-process-tenant', activeDoc]]);
+  await harness.request('replica-b', 'data', 'cleanDocumentOnExit', [ctx, activeDoc], 'active presence GC cleanup');
+  await harness.request('replica-b', 'data', '_ackDocumentPresenceExpired', [activeExpired[0]], 'active presence GC acknowledgement');
+  assertObservableEqual(await harness.request('replica-a', 'data', 'getPresence', [ctx, activeDoc], 'active presence survives GC'), [info]);
+  assert.ok(
+    Number(
+      await harness.request(
+        'replica-a',
+        'data',
+        '_command',
+        [['ZSCORE', activeIndexKeys.documents, JSON.stringify(['cross-process-tenant', activeDoc])]],
+        'active presence index recovery'
+      )
+    ) > Date.now()
+  );
+  await harness.request('replica-b', 'data', 'removePresence', [ctx, activeDoc, 'active', 'replica-a-connection'], 'active presence removal');
   await harness.request('replica-a', 'data', 'removePresenceDocument', [ctx, activeDoc], 'empty presence document removal');
   assertObservableEqual(await harness.request('replica-b', 'data', 'getPresence', [ctx, activeDoc], 'empty presence read'), []);
 }
