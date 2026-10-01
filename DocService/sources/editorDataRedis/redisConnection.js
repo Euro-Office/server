@@ -62,6 +62,34 @@ class RedisUnavailableError extends Error {
   }
 }
 
+function createSentinelClient(options) {
+  const client = redis.createSentinel(options);
+  const rejectBeforeReady = () => {
+    if (!client.isReady) {
+      throw new RedisUnavailableError(new Error('Redis Sentinel client is not ready'));
+    }
+  };
+
+  // node-redis exposes a proxy whose generated commands dispatch through the
+  // underlying target's _self._execute, while raw sendCommand uses the proxy
+  // directly. Guard both objects so every command path fails before initial
+  // Sentinel discovery can queue it.
+  const clients = [client, client._self].filter((value, index, values) => value && values.indexOf(value) === index);
+  for (const commandClient of clients) {
+    const execute = commandClient._execute.bind(commandClient);
+    const executeMulti = commandClient._executeMulti.bind(commandClient);
+    commandClient._execute = (...args) => {
+      rejectBeforeReady();
+      return execute(...args);
+    };
+    commandClient._executeMulti = (...args) => {
+      rejectBeforeReady();
+      return executeMulti(...args);
+    };
+  }
+  return client;
+}
+
 function withTimeout(promise, timeoutMs, description) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -138,7 +166,7 @@ class RedisConnection {
       throw new Error('Redis Cluster and Redis Sentinel options cannot be enabled together');
     }
     if (this.sentinel) {
-      this.client = redis.createSentinel(normalizeSentinelOptions(cfgRedisOptionsSentinel, this.database));
+      this.client = createSentinelClient(normalizeSentinelOptions(cfgRedisOptionsSentinel, this.database));
     } else if (this.cluster) {
       if (this.database !== undefined && this.database !== null && Number(this.database) !== 0) {
         log('error', 'Redis Cluster cannot use logical database %s; configure database 0', this.database);
@@ -402,6 +430,7 @@ class RedisConnection {
 
 module.exports = {
   RedisConnection,
+  createSentinelClient,
   normalizeNodeOptions,
   normalizeClusterOptions,
   normalizeSentinelOptions,
