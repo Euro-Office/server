@@ -85,6 +85,22 @@ describe('pkg.scripts guard', () => {
     expect(failures[0]).toMatchObject({entry: '!./sources/*.tmp.js', kind: KIND.GLOB_UNSUPPORTED});
   });
 
+  test('refuses a positive entry that resolves to a directory', () => {
+    // pkg expands a directory to its files; we do not model that, so refuse rather than report
+    // it as a missing file.
+    const failures = checkComponent(FIXTURES, 'dirPositive');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({entry: './sources', kind: KIND.DIRECTORY_UNSUPPORTED});
+  });
+
+  test('refuses a negation that resolves to a directory', () => {
+    // pkg would exclude the whole subtree, which our exact-path exclusion set cannot model, so
+    // refuse instead of silently passing (the dangerous false-PASS direction).
+    const failures = checkComponent(FIXTURES, 'dirNegation');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({entry: '!./sources', kind: KIND.DIRECTORY_UNSUPPORTED});
+  });
+
   test('flags a checkout path that itself contains glob metacharacters', () => {
     // pkg globs the whole resolved path, so a repo under e.g. "a (b)/" bundles nothing even
     // though the entry is a valid literal. The control (clean path) must pass.

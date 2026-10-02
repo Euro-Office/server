@@ -14,12 +14,13 @@
  * module is simply absent from the binary and the service crashes at runtime with
  * MODULE_NOT_FOUND. This script turns that silent omission into a build failure.
  *
- * The current entries are all literal paths. For a literal pattern,
+ * The current entries are all literal file paths. For a literal file,
  * `fs.statSync(resolved).isFile()` is equivalent to pkg's own
- * `tinyglobby.globSync([resolved], {absolute, dot})` followed by an isFile check,
- * so resolution here is faithful without pulling in a glob dependency. An entry (or the
- * checkout path) that contains actual glob syntax is reported rather than guessed at (see
- * below), so the guard does not silently diverge from pkg by mis-resolving a pattern.
+ * `tinyglobby.globSync([resolved], {absolute, dot})` followed by an isFile check, so resolution
+ * here is faithful without pulling in a glob dependency. An entry that is a glob, resolves to a
+ * directory (pkg would expand both), or sits under a checkout path containing glob metacharacters
+ * is refused rather than guessed at, so the guard does not silently diverge from pkg. tinyglobby
+ * (pkg's matcher) is the documented upgrade path if entry shapes ever need full resolution.
  *
  * Verified against pkg's matcher, tinyglobby ^0.2.11, which every pkg version in use here
  * depends on (6.14.x on Node 20 through 6.23.x on Node 22). Re-check this guard if pkg
@@ -64,12 +65,21 @@ const GLOB_REASON =
   "today. Extend the guard with pkg's matcher (tinyglobby) before adding a glob here so " +
   'resolution stays faithful to pkg.';
 
+// Shared message for an entry (positive or negation) that resolves to a directory. pkg expands a
+// directory to its files recursively; this guard does not model that, so it refuses rather than
+// guess (a positive would otherwise look "missing", a negation would silently cancel a subtree).
+const DIRECTORY_REASON =
+  'entry resolves to a directory; this guard validates literal file paths and does not model ' +
+  "pkg's directory expansion. List the files explicitly, or adopt pkg's matcher (tinyglobby) to " +
+  'resolve directory entries.';
+
 // Stable machine-readable failure codes. Tests and any consumer should branch on `kind`, never
 // on the human-readable `reason` text, so messages can be reworded without breaking anything.
 const KIND = {
   MISSING_FILE: 'missing-file',
   NEGATION_CANCELLED: 'negation-cancelled',
   GLOB_UNSUPPORTED: 'glob-unsupported',
+  DIRECTORY_UNSUPPORTED: 'directory-unsupported',
   PATH_GLOB: 'path-glob',
   NON_STRING: 'non-string',
   UNREADABLE_MANIFEST: 'unreadable-manifest'
@@ -183,8 +193,20 @@ function checkComponent(repoRoot, component) {
     const pattern = entry.slice(1);
     if (GLOB_SYNTAX.test(pattern)) {
       failures.push({component, entry, reason: GLOB_REASON, kind: KIND.GLOB_UNSUPPORTED});
+      continue;
+    }
+    const negated = path.join(componentDir, pattern);
+    let negatesDir = false;
+    try {
+      negatesDir = fs.statSync(negated).isDirectory();
+    } catch {
+      negatesDir = false;
+    }
+    if (negatesDir) {
+      // pkg would exclude the whole subtree; we only track exact-path exclusions, so refuse.
+      failures.push({component, entry, reason: DIRECTORY_REASON, kind: KIND.DIRECTORY_UNSUPPORTED});
     } else {
-      excluded.add(path.join(componentDir, pattern));
+      excluded.add(negated);
     }
   }
 
@@ -208,13 +230,16 @@ function checkComponent(repoRoot, component) {
     }
     // pkg resolves each entry as path.join(base, entry), then bundles it iff isFile.
     const resolved = path.join(componentDir, entry);
-    let isFile = false;
+    let stat = null;
     try {
-      isFile = fs.statSync(resolved).isFile();
+      stat = fs.statSync(resolved);
     } catch {
-      isFile = false;
+      stat = null;
     }
-    if (!isFile) {
+    if (stat && stat.isDirectory()) {
+      // pkg would expand the directory to its files; we do not model that, so refuse.
+      failures.push({component, entry, reason: DIRECTORY_REASON, kind: KIND.DIRECTORY_UNSUPPORTED});
+    } else if (!stat || !stat.isFile()) {
       failures.push({
         component,
         entry,
