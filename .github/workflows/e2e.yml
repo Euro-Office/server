@@ -95,9 +95,9 @@ jobs:
             ( cd "$d" && npm install )
           done
           mkdir -p "$BUILD_ROOT"
-          ( cd DocService    && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/docservice" )
-          ( cd FileConverter && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/fileconverter" )
-          ( cd Metrics       && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/metrics" )
+          ( cd DocService    && pkg . -t linux-x64 --options="max_old_space_size=4096" -o "$BUILD_ROOT/docservice" )
+          ( cd FileConverter && pkg . -t linux-x64 --options="max_old_space_size=4096" -o "$BUILD_ROOT/fileconverter" )
+          ( cd Metrics       && pkg . -t linux-x64 --options="max_old_space_size=4096" -o "$BUILD_ROOT/metrics" )
 
       - name: Build overlay image with fresh server binaries
         run: |
