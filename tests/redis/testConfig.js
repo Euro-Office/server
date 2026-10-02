@@ -135,8 +135,23 @@ function parseOptionalPassword(value, name) {
   return value;
 }
 
-function applyOptionalPassword(options, password) {
+function parseOptionalUsername(value, name) {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string' || value.length === 0 || hasControlCharacters(value)) {
+    invalid(name, 'expected a non-empty username without control characters');
+  }
+  return value;
+}
+
+function applyOptionalCredentials(options, username, password) {
   const result = {...options};
+  if (username === null) {
+    delete result.username;
+  } else {
+    result.username = username;
+  }
   if (password === null) {
     delete result.password;
   } else {
@@ -162,9 +177,18 @@ function parseTestRedisConfig(env, standaloneConfig) {
     clusterNodes: [],
     sentinelName: null,
     sentinelNodes: [],
+    nodeUsername: parseOptionalUsername(env.TEST_REDIS_NODE_USERNAME, 'TEST_REDIS_NODE_USERNAME'),
+    sentinelUsername: parseOptionalUsername(env.TEST_REDIS_SENTINEL_USERNAME, 'TEST_REDIS_SENTINEL_USERNAME'),
     nodePassword: parseOptionalPassword(env.TEST_REDIS_NODE_PASSWORD, 'TEST_REDIS_NODE_PASSWORD'),
     sentinelPassword: parseOptionalPassword(env.TEST_REDIS_SENTINEL_PASSWORD, 'TEST_REDIS_SENTINEL_PASSWORD')
   };
+
+  if (result.nodeUsername !== null && result.nodePassword === null) {
+    invalid('TEST_REDIS_NODE_USERNAME', 'requires TEST_REDIS_NODE_PASSWORD');
+  }
+  if (result.sentinelUsername !== null && result.sentinelPassword === null) {
+    invalid('TEST_REDIS_SENTINEL_USERNAME', 'requires TEST_REDIS_SENTINEL_PASSWORD');
+  }
 
   if (cluster) {
     result.clusterNodes = parseEndpointList(env.TEST_REDIS_CLUSTER_NODES, 'TEST_REDIS_CLUSTER_NODES', 'cluster');
@@ -186,15 +210,15 @@ function applyTestRedisConfig(config, testRedisConfig) {
 
   redisConfig.prefix = testRedisConfig.prefix;
   serverConfig.editorDataStorage = 'editorDataRedis';
-  redisConfig.options = applyOptionalPassword(existingNodeOptions, testRedisConfig.nodePassword);
+  redisConfig.options = applyOptionalCredentials(existingNodeOptions, testRedisConfig.nodeUsername, testRedisConfig.nodePassword);
   redisConfig.optionsCluster =
     testRedisConfig.topology === 'cluster'
       ? {
           ...existingClusterOptions,
           rootNodes: testRedisConfig.clusterNodes,
-          ...(existingClusterOptions.defaults || testRedisConfig.nodePassword !== null
+          ...(existingClusterOptions.defaults || testRedisConfig.nodeUsername !== null || testRedisConfig.nodePassword !== null
             ? {
-                defaults: applyOptionalPassword(existingClusterOptions.defaults || {}, testRedisConfig.nodePassword)
+                defaults: applyOptionalCredentials(existingClusterOptions.defaults || {}, testRedisConfig.nodeUsername, testRedisConfig.nodePassword)
               }
             : {})
         }
@@ -205,8 +229,16 @@ function applyTestRedisConfig(config, testRedisConfig) {
           ...existingSentinelOptions,
           name: testRedisConfig.sentinelName,
           sentinelRootNodes: testRedisConfig.sentinelNodes,
-          nodeClientOptions: applyOptionalPassword(existingSentinelOptions.nodeClientOptions || {}, testRedisConfig.nodePassword),
-          sentinelClientOptions: applyOptionalPassword(existingSentinelOptions.sentinelClientOptions || {}, testRedisConfig.sentinelPassword)
+          nodeClientOptions: applyOptionalCredentials(
+            existingSentinelOptions.nodeClientOptions || {},
+            testRedisConfig.nodeUsername,
+            testRedisConfig.nodePassword
+          ),
+          sentinelClientOptions: applyOptionalCredentials(
+            existingSentinelOptions.sentinelClientOptions || {},
+            testRedisConfig.sentinelUsername,
+            testRedisConfig.sentinelPassword
+          )
         }
       : {};
 }

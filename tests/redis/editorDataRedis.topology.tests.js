@@ -32,17 +32,25 @@ function configuredPassword(options) {
   return options.password || undefined;
 }
 
-function createDirectClient(port, password, host = '127.0.0.1') {
+function configuredCredentials(options) {
+  return {
+    ...(options.username ? {username: options.username} : {}),
+    ...(options.password ? {password: options.password} : {})
+  };
+}
+
+function createDirectClient(port, credentials, host = '127.0.0.1') {
+  const auth = typeof credentials === 'string' ? {password: credentials} : credentials || {};
   const client = redis.createClient({
     socket: {host, port},
-    ...(password === undefined ? {} : {password})
+    ...auth
   });
   client.on('error', () => {});
   return client;
 }
 
-async function withDirectClient(port, password, operation, host) {
-  const client = createDirectClient(port, password, host);
+async function withDirectClient(port, credentials, operation, host) {
+  const client = createDirectClient(port, credentials, host);
   try {
     await client.connect();
     return await operation(client);
@@ -197,23 +205,25 @@ async function promoteClusterReplica(replicaHost, replicaPort, password) {
   await withDirectClient(replicaPort, password, client => client.sendCommand(['CLUSTER', 'FAILOVER']), replicaHost);
 }
 
-async function waitForSentinelMaster(sentinelHost, sentinelPort, sentinelPassword, masterName, expectedHost, expectedPort) {
+async function waitForSentinelMaster(sentinelHost, sentinelPort, sentinelCredentials, masterName, expectedHost, expectedPort) {
   return withDirectClient(
     sentinelPort,
-    sentinelPassword,
+    sentinelCredentials,
     client =>
       waitFor(
         `Sentinel promotion to ${expectedPort}`,
         () => client.sendCommand(['SENTINEL', 'GET-MASTER-ADDR-BY-NAME', masterName]),
         reply =>
-          Array.isArray(reply) && (expectedHost === undefined || String(reply[0]) === expectedHost) && String(reply[1]) === String(expectedPort)
+          Array.isArray(reply) &&
+          (expectedHost === undefined || String(reply[0]) === expectedHost) &&
+          (expectedPort === undefined || String(reply[1]) === String(expectedPort))
       ),
     sentinelHost
   );
 }
 
-async function triggerSentinelFailover(sentinelHost, sentinelPort, sentinelPassword, masterName) {
-  await withDirectClient(sentinelPort, sentinelPassword, client => client.sendCommand(['SENTINEL', 'FAILOVER', masterName]), sentinelHost);
+async function triggerSentinelFailover(sentinelHost, sentinelPort, sentinelCredentials, masterName) {
+  await withDirectClient(sentinelPort, sentinelCredentials, client => client.sendCommand(['SENTINEL', 'FAILOVER', masterName]), sentinelHost);
 }
 
 async function createHeldSocketServer() {
@@ -229,6 +239,70 @@ async function createHeldSocketServer() {
   });
   return {
     port: server.address().port,
+    close: async () => {
+      sockets.forEach(socket => socket.destroy());
+      await new Promise(resolve => server.close(resolve));
+    }
+  };
+}
+
+async function createDelayedRedisProxy(targetHost, targetPort, responseDelayMs) {
+  const sockets = new Set();
+  const pingTimes = [];
+  const pingFrame = Buffer.from('*1\r\n$4\r\nPING\r\n');
+  let delayResponses = false;
+  const server = net.createServer(clientSocket => {
+    sockets.add(clientSocket);
+    let delayedRequestBuffer = Buffer.alloc(0);
+    const upstream = net.createConnection({host: targetHost, port: targetPort});
+    sockets.add(upstream);
+    const removeSockets = () => {
+      sockets.delete(clientSocket);
+      sockets.delete(upstream);
+    };
+    clientSocket.on('close', removeSockets);
+    upstream.on('close', removeSockets);
+    clientSocket.on('error', () => upstream.destroy());
+    upstream.on('error', () => clientSocket.destroy());
+    clientSocket.on('data', data => {
+      if (delayResponses) {
+        delayedRequestBuffer = Buffer.concat([delayedRequestBuffer, data]);
+        let frameOffset;
+        while ((frameOffset = delayedRequestBuffer.indexOf(pingFrame)) !== -1) {
+          pingTimes.push(Date.now());
+          delayedRequestBuffer = delayedRequestBuffer.subarray(frameOffset + pingFrame.length);
+        }
+        if (delayedRequestBuffer.length > pingFrame.length) {
+          delayedRequestBuffer = delayedRequestBuffer.subarray(-pingFrame.length + 1);
+        }
+      }
+      upstream.write(data);
+    });
+    upstream.on('data', data => {
+      if (!delayResponses) {
+        clientSocket.write(data);
+        return;
+      }
+      setTimeout(() => {
+        if (!clientSocket.destroyed) {
+          clientSocket.write(data);
+        }
+      }, responseDelayMs);
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return {
+    port: server.address().port,
+    pingTimes,
+    setDelayResponses(value) {
+      delayResponses = value;
+      if (value) {
+        pingTimes.length = 0;
+      }
+    },
     close: async () => {
       sockets.forEach(socket => socket.destroy());
       await new Promise(resolve => server.close(resolve));
@@ -342,7 +416,10 @@ if (process.env.TEST_REDIS_TOPOLOGY_REQUIRED === 'true' && !failoverConfigured) 
   throw new Error('Topology integration tests require a configured Cluster or Sentinel topology and its failover target; refusing to skip tests');
 }
 const describeClusterFailover = failoverConfigured && topology === 'cluster' ? describe : describe.skip;
+const describeSentinel = topology === 'sentinel' ? describe : describe.skip;
 const describeSentinelFailover = failoverConfigured && topology === 'sentinel' ? describe : describe.skip;
+const transientDiscoveryConfigured = topology === 'sentinel' && Boolean(process.env.TEST_REDIS_SENTINEL_TRANSIENT_CONTAINER);
+const describeSentinelTransientDiscovery = transientDiscoveryConfigured ? describe : describe.skip;
 
 test('rejects commands issued before initial readiness for every configured topology', async () => {
   const configured = redisConfig();
@@ -413,6 +490,85 @@ test('uses independent editor-data and editor-stat clients on the configured top
   }
 }, 30000);
 
+describeSentinel('editorDataRedis native Sentinel concurrency', () => {
+  test('keeps multiple commands in flight through reserveClient under transport latency', async () => {
+    const configured = redisConfig();
+    const options = redisTopologyConfig.normalizeSentinelOptions(configured.get('optionsSentinel') || {}, undefined);
+    const sentinelHost = options.sentinelRootNodes[0].host;
+    const sentinelPort = Number(options.sentinelRootNodes[0].port);
+    const sentinelCredentials = configuredCredentials(options.sentinelClientOptions);
+    const master = await waitForSentinelMaster(sentinelHost, sentinelPort, sentinelCredentials, options.name);
+    const proxy = await createDelayedRedisProxy(String(master[0]), Number(master[1]), 250);
+    assert.equal(options.reserveClient, true);
+    const client = createSentinelClient({
+      ...options,
+      nodeAddressMap: address => (address === `${String(master[0])}:${Number(master[1])}` ? {host: '127.0.0.1', port: proxy.port} : undefined)
+    });
+    let commands = [];
+
+    try {
+      await client.connect();
+      proxy.setDelayResponses(true);
+      commands = [client.sendCommand(false, ['PING']), client.sendCommand(false, ['PING'])];
+      await waitFor(
+        'native Sentinel concurrent command writes',
+        () => proxy.pingTimes.length,
+        count => count >= 2,
+        5000
+      );
+      assert.ok(
+        proxy.pingTimes[1] - proxy.pingTimes[0] < 125,
+        `Sentinel commands were serialized before reaching the delayed transport: ${proxy.pingTimes.join(', ')}`
+      );
+      assert.deepEqual(await Promise.all(commands), ['PONG', 'PONG']);
+    } finally {
+      proxy.setDelayResponses(false);
+      await Promise.allSettled(commands);
+      try {
+        await client.close();
+      } finally {
+        await proxy.close();
+      }
+    }
+  }, 30000);
+});
+
+describeSentinelTransientDiscovery('editorDataRedis Sentinel initial discovery recovery', () => {
+  test('recovers when the only configured Sentinel root is briefly unavailable', async () => {
+    const configured = redisConfig();
+    const sentinelOptions = configured.get('optionsSentinel');
+    const originalRootNodes = sentinelOptions.sentinelRootNodes;
+    const rootNode = originalRootNodes[0];
+    const data = new EditorData();
+    const container = process.env.TEST_REDIS_SENTINEL_TRANSIENT_CONTAINER;
+    let startPromise;
+
+    sentinelOptions.sentinelRootNodes = [rootNode];
+    try {
+      stopContainer(container);
+      startPromise = new Promise((resolve, reject) => {
+        setTimeout(() => {
+          try {
+            startContainer(container);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        }, 250);
+      });
+      await data.connect();
+      await startPromise;
+      assert.equal(await data.ping(), 'PONG');
+    } finally {
+      if (startPromise) {
+        await startPromise;
+      }
+      sentinelOptions.sentinelRootNodes = originalRootNodes;
+      await data.close();
+    }
+  }, 30000);
+});
+
 describeClusterFailover('editorDataRedis Cluster failover integration', () => {
   test('promotes a Cluster replica and reconnects the existing editorData client', async () => {
     const options = redisTopologyConfig.normalizeClusterOptions(redisConfig().get('optionsCluster') || {});
@@ -470,12 +626,12 @@ describeClusterFailover('editorDataRedis Cluster failover integration', () => {
 });
 
 describeSentinelFailover('editorDataRedis Sentinel failover integration', () => {
-  test('promotes the Sentinel replica, rejects a disconnected command, and reconnects the existing editorData client', async () => {
+  test('promotes the Sentinel replica, handles concurrent commands, and reconnects the existing clients', async () => {
     const options = redisTopologyConfig.normalizeSentinelOptions(redisConfig().get('optionsSentinel') || {}, undefined);
     const sentinelHost = options.sentinelRootNodes[0].host;
     const sentinelPort = Number(options.sentinelRootNodes[0].port);
-    const sentinelPassword = configuredPassword(options.sentinelClientOptions);
-    const nodePassword = configuredPassword(options.nodeClientOptions);
+    const sentinelCredentials = configuredCredentials(options.sentinelClientOptions);
+    const nodeCredentials = configuredCredentials(options.nodeClientOptions);
     const data = new EditorData();
     const stat = new EditorStat();
     const key = `${process.env.TEST_REDIS_PREFIX}sentinel-failover:${randomUUID()}`;
@@ -492,18 +648,19 @@ describeSentinelFailover('editorDataRedis Sentinel failover integration', () => 
       pauseContainer(process.env.TEST_REDIS_SENTINEL_PRIMARY_CONTAINER);
       primaryStopped = true;
       const promotedPort = Number(process.env.TEST_REDIS_SENTINEL_REPLICA_PORT);
-      await triggerSentinelFailover(sentinelHost, sentinelPort, sentinelPassword, options.name);
-      await waitForSentinelMaster(sentinelHost, sentinelPort, sentinelPassword, options.name, undefined, promotedPort);
+      await triggerSentinelFailover(sentinelHost, sentinelPort, sentinelCredentials, options.name);
+      const promotedMaster = await waitForSentinelMaster(sentinelHost, sentinelPort, sentinelCredentials, options.name, undefined, promotedPort);
+      const promotedHost = String(promotedMaster[0]);
       await withDirectClient(
         promotedPort,
-        nodePassword,
+        nodeCredentials,
         client =>
           waitFor(
             'Sentinel promoted master readiness',
             () => client.sendCommand(['ROLE']),
             reply => Array.isArray(reply) && reply[0] === 'master'
           ),
-        'redis-replica'
+        promotedHost
       );
       data.redis.commandTimeoutMs = 1000;
       stat.redis.commandTimeoutMs = 1000;
@@ -512,28 +669,22 @@ describeSentinelFailover('editorDataRedis Sentinel failover integration', () => 
         new Promise(resolve => setTimeout(() => resolve('timeout'), 5000))
       ]);
       assert.notEqual(duringFailover, 'timeout', 'Sentinel commands remained queued during failover');
-      assert.notEqual(duringFailover[0].status, 'fulfilled', 'Sentinel write unexpectedly succeeded during failover');
-      // maxCommandRediscovers is intentionally zero in production, so a
-      // command that observed the old master fails fast. Abort those stale
-      // clients, then verify that fresh adapters discover the promoted master.
-      data.redis._abortClient();
-      stat.redis._abortClient();
-      const recoveredData = new EditorData();
-      const recoveredStat = new EditorStat();
-      try {
-        await Promise.all([recoveredData.connect(), recoveredStat.connect()]);
-        await waitForEditorDataCommand(recoveredData, ['SET', key, 'after-failover'], 'OK');
-        assert.equal(await waitForEditorDataCommand(recoveredData, ['GET', key]), 'after-failover');
-        assert.equal(await recoveredStat.ping(), 'PONG');
-      } finally {
-        await Promise.all([recoveredData.close(), recoveredStat.close()]);
-      }
+      // Keep using the original adapters. Their RedisConnection instances may
+      // replace a failed physical client internally, but no new editor-data
+      // or statistics adapters are allowed to hide recovery failures.
+      await waitForEditorDataCommand(data, ['SET', key, 'after-failover'], 'OK');
+      assert.equal(await waitForEditorDataCommand(data, ['GET', key]), 'after-failover');
+      await waitFor(
+        'existing statistics client after Sentinel failover',
+        () => stat.ping(),
+        result => result === 'PONG'
+      );
       assert.equal(
         await withDirectClient(
           Number(process.env.TEST_REDIS_SENTINEL_REPLICA_PORT),
-          nodePassword,
+          nodeCredentials,
           client => client.sendCommand(['GET', key]),
-          'redis-replica'
+          promotedHost
         ),
         'after-failover'
       );
