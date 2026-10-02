@@ -59,7 +59,17 @@ function connectionScope(database, group = connectionGroups.default) {
 }
 
 class RedisConnectionManager {
-  constructor(createConnection = database => new RedisConnection(database)) {
+  constructor(
+    createConnection = (database, group) =>
+      new RedisConnection(database, {
+        // node-redis cannot safely remove a command that has already been
+        // written after its timeout. Keep editor-data operations on one
+        // serialized lane so aborting that lane only rejects the operation
+        // that was using the failed physical client; queued operations use a
+        // fresh client generation. Other groups retain normal multiplexing.
+        serializeOperations: group === connectionGroups.editorData
+      })
+  ) {
     this.connections = new Map();
     this.createConnection = createConnection;
     this.terminal = false;
@@ -72,7 +82,7 @@ class RedisConnectionManager {
     const scope = connectionScope(database, group);
     let entry = this.connections.get(scope);
     if (!entry) {
-      entry = {connection: this.createConnection(connectionDatabaseKey(database)), references: 0};
+      entry = {connection: this.createConnection(connectionDatabaseKey(database), group), references: 0};
       this.connections.set(scope, entry);
     }
     entry.references++;

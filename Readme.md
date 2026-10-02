@@ -53,6 +53,29 @@ adapter timeout and fail before readiness rather than entering an unbounded
 offline queue. A deliberate store or process shutdown remains terminal until
 the store is recreated.
 
+### Redis command timeout isolation
+
+Node-Redis multiplexes commands on one physical client, but a command that has
+already been written cannot be safely removed from its reply queue. The
+editor-data connection group therefore serializes application operations on its
+physical client. This is deliberately conservative: a timed-out operation
+still aborts its physical client, and operations queued behind it reconnect on
+the next client generation instead of sharing the half-open socket. The tradeoff
+is that editor-data operations sharing this group are not fully parallel: a
+slow operation can impose head-of-line blocking on later operations, potentially
+until the 30-second command timeout, and Cluster batches do not retain their
+usual per-command parallelism on this group. This protects reply ordering and
+fail-closed behavior, but is connection-group isolation rather than unrestricted
+per-command isolation. Editor-stat, notification, and other Redis-backed groups
+remain separate connection groups.
+
+A true per-command isolation design would require multiple physical clients or
+a client pool, with routing and cleanup coordinated across standalone, Cluster,
+and Sentinel topologies. It would also need explicit handling for transactions,
+stale client generations, reconnects, and coordination-sensitive operations.
+That is a substantially larger change with more failure modes; the serialized
+editor-data lane is therefore retained as the safer correctness boundary.
+
 ### Memory and eviction policy
 
 Set the following on every primary and replica:

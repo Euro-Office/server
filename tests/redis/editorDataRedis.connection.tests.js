@@ -145,6 +145,8 @@ describe('editorDataRedis connection contract', () => {
       assert.equal(connectionScope(), connectionScope(0));
       assert.notEqual(connectionScope(0, connectionGroups.editorData), connectionScope(0, connectionGroups.editorStat));
       assert.notEqual(data.redis, stat.redis);
+      assert.equal(data.redis.serializeOperations, true);
+      assert.equal(stat.redis.serializeOperations, false);
       assert.equal(redisConnectionManager.size(), 2);
     } finally {
       await Promise.all([infoRouter.close(), notificationService.close(), data.close(), stat.close()]);
@@ -194,7 +196,7 @@ describe('editorDataRedis connection contract', () => {
     pending.forEach(resolve => resolve('late PONG'));
   });
 
-  test('keeps a normal timeout local while concurrent commands fail and later commands reconnect', async () => {
+  test('keeps a timed-out editor-data operation isolated while queued commands reconnect', async () => {
     const pending = [];
     let destroyCalls = 0;
     const firstClient = fakeClient({
@@ -207,7 +209,7 @@ describe('editorDataRedis connection contract', () => {
       }
     });
     const replacementClient = fakeClient({sendCommand: async () => 'PONG'});
-    const connection = new RedisConnection();
+    const connection = new RedisConnection(undefined, {serializeOperations: true});
     connection.client = firstClient;
     connection.connector = 'redis';
     connection.commandTimeoutMs = 10;
@@ -225,7 +227,8 @@ describe('editorDataRedis connection contract', () => {
     try {
       const commands = [connection.command(['PING']), connection.command(['PING'])];
       await assert.rejects(commands[0], error => error.code === 'ETIMEDOUT');
-      await assert.rejects(commands[1], error => error.code === 'ETIMEDOUT');
+      assert.equal(destroyCalls, 1);
+      assert.equal(await commands[1], 'PONG');
       assert.equal(destroyCalls, 1);
       assert.equal(await connection.command(['PING']), 'PONG');
       assert.equal(connection.client, replacementClient);

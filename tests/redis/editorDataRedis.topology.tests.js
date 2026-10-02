@@ -481,8 +481,11 @@ test('uses independent editor-data and editor-stat clients on the configured top
     assert.equal(statPing, 'PONG');
 
     data.redis.commandTimeoutMs = 100;
-    await assert.rejects(data.redis.command(['BLPOP', timeoutKey, '5']), error => error.code === 'ETIMEDOUT');
-    const [dataAfterTimeout, statAfterTimeout] = await Promise.all([data.ping(), stat.ping()]);
+    const slowCommand = data.redis.command(['BLPOP', timeoutKey, '5']);
+    const concurrentDataCommand = data.ping();
+    const concurrentStatCommand = stat.ping();
+    await assert.rejects(slowCommand, error => error.code === 'ETIMEDOUT');
+    const [dataAfterTimeout, statAfterTimeout] = await Promise.all([concurrentDataCommand, concurrentStatCommand]);
     assert.equal(dataAfterTimeout, 'PONG');
     assert.equal(statAfterTimeout, 'PONG');
   } finally {
