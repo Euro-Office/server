@@ -4,7 +4,7 @@ const path = require('path');
 const {spawnSync} = require('child_process');
 const {describe, test, expect, afterEach} = require('@jest/globals');
 
-const {checkComponent, checkAll, discoverComponents} = require('../../tools/check-pkg-scripts');
+const {checkComponent, checkAll, discoverComponents, KIND} = require('../../tools/check-pkg-scripts');
 
 const FIXTURES = path.join(__dirname, '../fixtures/pkgScripts');
 const GUARD = path.join(__dirname, '../../tools/check-pkg-scripts.js');
@@ -37,6 +37,8 @@ afterEach(() => {
   }
 });
 
+// Failure type is asserted via the stable `kind` code, never the human `reason` text, so
+// rewording a message cannot silently break (or falsely pass) a test.
 describe('pkg.scripts guard', () => {
   test('passes when every entry resolves to a file', () => {
     const failures = checkComponent(FIXTURES, 'valid');
@@ -46,8 +48,7 @@ describe('pkg.scripts guard', () => {
   test('fails on an entry that matches no file, naming the entry and component', () => {
     const failures = checkComponent(FIXTURES, 'zeroMatch');
     expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({component: 'zeroMatch', entry: './sources/missing.js'});
-    expect(failures[0].reason).toMatch(/matches no file/);
+    expect(failures[0]).toMatchObject({component: 'zeroMatch', entry: './sources/missing.js', kind: KIND.MISSING_FILE});
     // The entry that does resolve must not be reported.
     expect(failures.some(f => f.entry === './sources/existing.js')).toBe(false);
   });
@@ -62,10 +63,7 @@ describe('pkg.scripts guard', () => {
   test('refuses a glob entry rather than guessing (stays faithful to pkg)', () => {
     const failures = checkComponent(FIXTURES, 'globEntry');
     expect(failures).toHaveLength(1);
-    expect(failures[0].entry).toBe('./sources/*.js');
-    // Assert the refusal reason specifically: `/glob/i` would also match the fixture folder
-    // name "globEntry" in a "matches no file" message, so it couldn't detect the branch being lost.
-    expect(failures[0].reason).toMatch(/not supported by this guard/);
+    expect(failures[0]).toMatchObject({entry: './sources/*.js', kind: KIND.GLOB_UNSUPPORTED});
   });
 
   test('treats a leading "!" entry as an exclusion, not a file requirement', () => {
@@ -75,18 +73,16 @@ describe('pkg.scripts guard', () => {
 
   test('fails a positive entry cancelled by a literal negation of the same file', () => {
     // pkg passes all entries to one glob call, so "!./sources/x.js" removes "./sources/x.js"
-    // and the binary ships without it. The file exists, so this is not "matches no file".
+    // and the binary ships without it. The file exists, so this is not MISSING_FILE.
     const failures = checkComponent(FIXTURES, 'negationCancel');
     expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({component: 'negationCancel', entry: './sources/x.js'});
-    expect(failures[0].reason).toMatch(/cancelled by a negation/);
+    expect(failures[0]).toMatchObject({component: 'negationCancel', entry: './sources/x.js', kind: KIND.NEGATION_CANCELLED});
   });
 
   test('refuses a negation that contains glob syntax', () => {
     const failures = checkComponent(FIXTURES, 'negationGlob');
     expect(failures).toHaveLength(1);
-    expect(failures[0].entry).toBe('!./sources/*.tmp.js');
-    expect(failures[0].reason).toMatch(/not supported by this guard/);
+    expect(failures[0]).toMatchObject({entry: '!./sources/*.tmp.js', kind: KIND.GLOB_UNSUPPORTED});
   });
 
   test('flags a checkout path that itself contains glob metacharacters', () => {
@@ -96,7 +92,7 @@ describe('pkg.scripts guard', () => {
     writeComponent(globRoot, 'comp', ['./sources/f.js'], ['sources/f.js']);
     const globFailures = checkComponent(globRoot, 'comp');
     expect(globFailures).toHaveLength(1);
-    expect(globFailures[0].reason).toMatch(/checkout path contains glob metacharacters/);
+    expect(globFailures[0].kind).toBe(KIND.PATH_GLOB);
 
     const cleanRoot = makeTempRepo('clean-');
     writeComponent(cleanRoot, 'comp', ['./sources/f.js'], ['sources/f.js']);
@@ -106,7 +102,7 @@ describe('pkg.scripts guard', () => {
   test('flags a non-string entry', () => {
     const failures = checkComponent(FIXTURES, 'nonString');
     expect(failures).toHaveLength(1);
-    expect(failures[0].reason).toMatch(/not a string/);
+    expect(failures[0].kind).toBe(KIND.NON_STRING);
   });
 
   test('handles a string-form scripts (pkg wraps a non-array) as one entry', () => {
@@ -114,8 +110,7 @@ describe('pkg.scripts guard', () => {
     // and the component must still be discovered.
     const failures = checkComponent(FIXTURES, 'stringForm');
     expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({component: 'stringForm', entry: './sources/missing.js'});
-    expect(failures[0].reason).toMatch(/matches no file/);
+    expect(failures[0]).toMatchObject({component: 'stringForm', entry: './sources/missing.js', kind: KIND.MISSING_FILE});
   });
 
   test('ignores a pkg block that has no scripts', () => {
@@ -126,7 +121,7 @@ describe('pkg.scripts guard', () => {
   test('reports a missing package.json instead of throwing', () => {
     const failures = checkComponent(FIXTURES, 'does-not-exist');
     expect(failures).toHaveLength(1);
-    expect(failures[0].reason).toMatch(/cannot read package.json/);
+    expect(failures[0].kind).toBe(KIND.UNREADABLE_MANIFEST);
   });
 
   test('checkAll aggregates failures across components', () => {
@@ -135,15 +130,12 @@ describe('pkg.scripts guard', () => {
     expect(failures[0].component).toBe('zeroMatch');
   });
 
-  test('CLI exits non-zero and uses a neutral header when a glob entry is refused', () => {
-    // A glob entry is a real failure, but pkg would bundle it fine, so the output must not
-    // claim it "matches no file" or would be "dropped silently".
+  test('CLI exits non-zero and does not mislabel a glob refusal as a missing file', () => {
     const root = makeTempRepo('cli-glob-');
     writeComponent(root, 'comp', ['./sources/*.js'], ['sources/a.js']);
     const res = runGuard(root);
     expect(res.status).toBe(1);
-    expect(res.stderr).toMatch(/found 1 problem/);
-    expect(res.stderr).toMatch(/not supported by this guard/);
+    expect(res.stderr).toMatch(/found 1 problem/); // neutral header, not "matches no file"
     expect(res.stderr).not.toMatch(/match no file|dropped.*silently/i);
   });
 
@@ -152,7 +144,6 @@ describe('pkg.scripts guard', () => {
     writeComponent(root, 'comp', ['./sources/a.js'], ['sources/a.js']);
     const res = runGuard(root);
     expect(res.status).toBe(0);
-    expect(res.stdout).toMatch(/every entry resolves/);
   });
 
   test('discovery prunes node_modules, tests and .git (decoys there are not found)', () => {

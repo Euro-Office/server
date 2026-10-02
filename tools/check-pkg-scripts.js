@@ -53,6 +53,17 @@ const GLOB_REASON =
   "today. Extend the guard with pkg's matcher (tinyglobby) before adding a glob here so " +
   'resolution stays faithful to pkg.';
 
+// Stable machine-readable failure codes. Tests and any consumer should branch on `kind`, never
+// on the human-readable `reason` text, so messages can be reworded without breaking anything.
+const KIND = {
+  MISSING_FILE: 'missing-file',
+  NEGATION_CANCELLED: 'negation-cancelled',
+  GLOB_UNSUPPORTED: 'glob-unsupported',
+  PATH_GLOB: 'path-glob',
+  NON_STRING: 'non-string',
+  UNREADABLE_MANIFEST: 'unreadable-manifest'
+};
+
 // pkg accepts `scripts` as either an array or a single string (it wraps a non-array in an
 // array before globbing), so normalise the same way before inspecting the entries.
 function normalizeScripts(scripts) {
@@ -111,7 +122,7 @@ function discoverComponents(repoRoot) {
 
 /**
  * Check one component's pkg.scripts entries.
- * @returns {Array<{component: string, entry: string, reason: string}>} failures
+ * @returns {Array<{component: string, entry: string, reason: string, kind: string}>} failures
  */
 function checkComponent(repoRoot, component) {
   const componentDir = path.join(repoRoot, component);
@@ -122,7 +133,7 @@ function checkComponent(repoRoot, component) {
   try {
     manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   } catch (err) {
-    return [{component, entry: 'package.json', reason: `cannot read package.json: ${err.message}`}];
+    return [{component, entry: 'package.json', reason: `cannot read package.json: ${err.message}`, kind: KIND.UNREADABLE_MANIFEST}];
   }
 
   const scripts = normalizeScripts(manifest.pkg && manifest.pkg.scripts);
@@ -138,7 +149,8 @@ function checkComponent(repoRoot, component) {
       {
         component,
         entry: component,
-        reason: 'checkout path contains glob metacharacters, so pkg would bundle nothing for this component'
+        reason: 'checkout path contains glob metacharacters, so pkg would bundle nothing for this component',
+        kind: KIND.PATH_GLOB
       }
     ];
   }
@@ -153,7 +165,7 @@ function checkComponent(repoRoot, component) {
     }
     const pattern = entry.slice(1);
     if (GLOB_SYNTAX.test(pattern)) {
-      failures.push({component, entry, reason: GLOB_REASON});
+      failures.push({component, entry, reason: GLOB_REASON, kind: KIND.GLOB_UNSUPPORTED});
     } else {
       excluded.add(path.join(componentDir, pattern));
     }
@@ -162,14 +174,19 @@ function checkComponent(repoRoot, component) {
   // Second pass: check each positive entry.
   for (const entry of scripts) {
     if (typeof entry !== 'string') {
-      failures.push({component, entry: String(entry), reason: 'entry is not a string (pkg would reject it with "Config items must be strings")'});
+      failures.push({
+        component,
+        entry: String(entry),
+        reason: 'entry is not a string (pkg would reject it with "Config items must be strings")',
+        kind: KIND.NON_STRING
+      });
       continue;
     }
     if (entry.startsWith('!')) {
       continue; // handled in the first pass
     }
     if (GLOB_SYNTAX.test(entry)) {
-      failures.push({component, entry, reason: GLOB_REASON});
+      failures.push({component, entry, reason: GLOB_REASON, kind: KIND.GLOB_UNSUPPORTED});
       continue;
     }
     // pkg resolves each entry as path.join(base, entry), then bundles it iff isFile.
@@ -184,13 +201,15 @@ function checkComponent(repoRoot, component) {
       failures.push({
         component,
         entry,
-        reason: `matches no file, so pkg drops it silently (MODULE_NOT_FOUND at runtime): ${path.relative(repoRoot, resolved)}`
+        reason: `matches no file, so pkg drops it silently (MODULE_NOT_FOUND at runtime): ${path.relative(repoRoot, resolved)}`,
+        kind: KIND.MISSING_FILE
       });
     } else if (excluded.has(resolved)) {
       failures.push({
         component,
         entry,
-        reason: `cancelled by a negation entry, so pkg bundles nothing for it (${path.relative(repoRoot, resolved)})`
+        reason: `cancelled by a negation entry, so pkg bundles nothing for it (${path.relative(repoRoot, resolved)})`,
+        kind: KIND.NEGATION_CANCELLED
       });
     }
   }
@@ -201,14 +220,14 @@ function checkComponent(repoRoot, component) {
 /**
  * Check every component's pkg.scripts entries. Components are discovered from the
  * repo unless an explicit list is passed (used by the tests against fixtures).
- * @returns {Array<{component: string, entry: string, reason: string}>} failures
+ * @returns {Array<{component: string, entry: string, reason: string, kind: string}>} failures
  */
 function checkAll(repoRoot, components) {
   const list = components || discoverComponents(repoRoot);
   return list.flatMap(component => checkComponent(repoRoot, component));
 }
 
-module.exports = {checkComponent, checkAll, discoverComponents};
+module.exports = {checkComponent, checkAll, discoverComponents, KIND};
 
 if (require.main === module) {
   // Optional repo root argument lets the tests run the CLI against a fixture tree; defaults
