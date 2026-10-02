@@ -41,6 +41,14 @@ const DISCOVERY_SKIP_DIRS = new Set(['node_modules', 'tests', '.git']);
 // mistaken for a pattern.
 const GLOB_SYNTAX = /[*?[\]{}()]/;
 
+// Shared message for an entry (positive or negation) that contains glob syntax. The guard
+// resolves literal paths only; a real glob is refused rather than resolved with a lookalike
+// matcher, so it can never diverge from pkg by mis-resolving a pattern.
+const GLOB_REASON =
+  'glob pattern in pkg.scripts is not supported by this guard; all entries are literal paths ' +
+  "today. Extend the guard with pkg's matcher (tinyglobby) before adding a glob here so " +
+  'resolution stays faithful to pkg.';
+
 // pkg accepts `scripts` as either an array or a single string (it wraps a non-array in an
 // array before globbing), so normalise the same way before inspecting the entries.
 function normalizeScripts(scripts) {
@@ -118,24 +126,33 @@ function checkComponent(repoRoot, component) {
     return failures;
   }
 
+  // pkg passes all entries to one glob call, so a negation (`!x`) removes any positive entry it
+  // matches. First pass: record the paths literal negations exclude (and refuse glob negations,
+  // which we cannot resolve faithfully, just like positive globs).
+  const excluded = new Set();
+  for (const entry of scripts) {
+    if (typeof entry !== 'string' || !entry.startsWith('!')) {
+      continue;
+    }
+    const pattern = entry.slice(1);
+    if (GLOB_SYNTAX.test(pattern)) {
+      failures.push({component, entry, reason: GLOB_REASON});
+    } else {
+      excluded.add(path.join(componentDir, pattern));
+    }
+  }
+
+  // Second pass: check each positive entry.
   for (const entry of scripts) {
     if (typeof entry !== 'string') {
       failures.push({component, entry: String(entry), reason: 'entry is not a string'});
       continue;
     }
-    // A leading '!' is a pkg exclusion (negation), not a file requirement.
     if (entry.startsWith('!')) {
-      continue;
+      continue; // handled in the first pass
     }
     if (GLOB_SYNTAX.test(entry)) {
-      failures.push({
-        component,
-        entry,
-        reason:
-          'glob pattern in pkg.scripts is not supported by this guard; all entries are ' +
-          "literal paths today. Extend the guard with pkg's matcher (tinyglobby) before " +
-          'adding a glob here so resolution stays faithful to pkg.'
-      });
+      failures.push({component, entry, reason: GLOB_REASON});
       continue;
     }
     // pkg resolves each entry as path.join(base, entry), then bundles it iff isFile.
@@ -148,6 +165,12 @@ function checkComponent(repoRoot, component) {
     }
     if (!isFile) {
       failures.push({component, entry, reason: `matches no file (${path.relative(repoRoot, resolved)})`});
+    } else if (excluded.has(resolved)) {
+      failures.push({
+        component,
+        entry,
+        reason: `cancelled by a negation entry, so pkg bundles nothing for it (${path.relative(repoRoot, resolved)})`
+      });
     }
   }
 

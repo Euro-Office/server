@@ -39,6 +39,22 @@ describe('pkg.scripts guard', () => {
     expect(failures).toEqual([]);
   });
 
+  test('fails a positive entry cancelled by a literal negation of the same file', () => {
+    // pkg passes all entries to one glob call, so "!./sources/x.js" removes "./sources/x.js"
+    // and the binary ships without it. The file exists, so this is not "matches no file".
+    const failures = checkComponent(FIXTURES, 'negationCancel');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({component: 'negationCancel', entry: './sources/x.js'});
+    expect(failures[0].reason).toMatch(/cancelled by a negation/);
+  });
+
+  test('refuses a negation that contains glob syntax', () => {
+    const failures = checkComponent(FIXTURES, 'negationGlob');
+    expect(failures).toHaveLength(1);
+    expect(failures[0].entry).toBe('!./sources/*.tmp.js');
+    expect(failures[0].reason).toMatch(/not supported by this guard/);
+  });
+
   test('flags a non-string entry', () => {
     const failures = checkComponent(FIXTURES, 'nonString');
     expect(failures).toHaveLength(1);
