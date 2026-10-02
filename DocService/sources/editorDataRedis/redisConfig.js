@@ -13,6 +13,10 @@ const REDIS_SENTINEL_RECONNECT_MAX_RETRIES = 5;
 const REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS = 250;
 const REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS = 2000;
 const REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH = 256;
+const REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES = 3;
+// Keep command rediscovery disabled because the command may have committed
+// before its response was lost. Initial discovery retries are handled by the
+// Redis connection wrapper with a fresh Sentinel client instead.
 const REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS = 0;
 
 const cfgRedis = config.get('services.CoAuthoring.redis');
@@ -38,6 +42,34 @@ function normalizeCommandOptions(source) {
   return options;
 }
 
+function hasControlCharacters(value) {
+  return [...value].some(character => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+}
+
+function normalizeSentinelName(value) {
+  if (typeof value !== 'string' || value.trim() === '' || /\s/.test(value) || hasControlCharacters(value)) {
+    throw new Error('Redis Sentinel requires optionsSentinel.name to be a non-empty name without whitespace or control characters');
+  }
+  return value;
+}
+
+function normalizeSentinelRootNode(node, index) {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    throw new Error(`Redis Sentinel optionsSentinel.sentinelRootNodes[${index}] must be an object`);
+  }
+  if (typeof node.host !== 'string' || node.host.trim() === '' || /\s/.test(node.host) || hasControlCharacters(node.host)) {
+    throw new Error(`Redis Sentinel optionsSentinel.sentinelRootNodes[${index}].host must be a non-empty host name`);
+  }
+  const port = Number(node.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Redis Sentinel optionsSentinel.sentinelRootNodes[${index}].port must be an integer between 1 and 65535`);
+  }
+  return {host: node.host.trim(), port};
+}
+
 function sentinelReconnectStrategy(retries) {
   if (retries >= REDIS_SENTINEL_RECONNECT_MAX_RETRIES) {
     return false;
@@ -59,6 +91,17 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
   }
   delete options.user;
   delete options.db;
+  if (options.password === '') {
+    delete options.password;
+    // Older entrypoints emitted the implicit default ACL username together
+    // with an empty password. Treat that combination as unauthenticated.
+    if (options.username === 'default') {
+      delete options.username;
+    }
+  }
+  if (options.username !== undefined && (options.password === undefined || options.password === null)) {
+    throw new Error('Redis authentication requires a password when a username is configured');
+  }
   if (options.database !== undefined && options.database !== null && options.database !== '') {
     options.database = Number(options.database);
   }
@@ -102,13 +145,15 @@ function normalizeClusterOptions(source) {
 function normalizeSentinelOptions(source, database) {
   const options = cloneConfig(source) || {};
   options.RESP = REDIS_RESP_VERSION;
-  if (!options.name) {
-    throw new Error('Redis Sentinel requires optionsSentinel.name');
-  }
+  options.name = normalizeSentinelName(options.name);
   if (!Array.isArray(options.sentinelRootNodes) || options.sentinelRootNodes.length === 0) {
     throw new Error('Redis Sentinel requires optionsSentinel.sentinelRootNodes');
   }
-  options.sentinelRootNodes = options.sentinelRootNodes.map(node => ({...node, port: Number(node.port)}));
+  options.sentinelRootNodes = options.sentinelRootNodes.map(normalizeSentinelRootNode);
+  const sentinelNodes = new Set(options.sentinelRootNodes.map(node => `${node.host}:${node.port}`));
+  if (sentinelNodes.size !== options.sentinelRootNodes.length) {
+    throw new Error('Redis Sentinel optionsSentinel.sentinelRootNodes must not contain duplicate nodes');
+  }
   const nodeDatabase = database ?? options.database;
   delete options.database;
   options.nodeClientOptions = normalizeNodeOptions(
@@ -134,9 +179,14 @@ function normalizeSentinelOptions(source, database) {
   // Native Sentinel intentionally uses one-shot clients for Sentinel discovery;
   // its topology loop reconnects through the configured root-node list instead.
   options.sentinelClientOptions.socket.reconnectStrategy = false;
+  // Keep one master client reserved for the Sentinel object. Without this,
+  // node-redis leases the default one-client pool for every command, which
+  // serializes unrelated editor-data, statistics, and notification work.
+  options.reserveClient = true;
   options.commandOptions = normalizeCommandOptions(options.commandOptions);
-  // A command that lost its reply may already have committed. Do not let the
-  // native Sentinel client replay it while rediscovering the master.
+  // Do not let the native Sentinel client replay commands after a lost reply.
+  // Initial discovery retries are handled by RedisConnection with a fresh
+  // client and one overall connection budget.
   options.maxCommandRediscovers = REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS;
   options.passthroughClientErrorEvents = true;
   return options;
@@ -160,6 +210,7 @@ module.exports = {
   REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS,
   REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS,
   REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
+  REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES,
   REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS,
   cfgRedisName,
   cfgRedisHost,
