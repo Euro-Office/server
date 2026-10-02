@@ -27,7 +27,6 @@
 
 const config = require('config');
 const co = require('co');
-const cron = require('cron');
 const ms = require('ms');
 const taskResult = require('./taskresult');
 const docsCoServer = require('./DocsCoServer');
@@ -37,24 +36,83 @@ const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const pubsubService = require('./pubsubRabbitMQ');
 const sqlBase = require('./databaseConnectors/baseConnector');
+const {getCronStep, validateDocumentExpiryConfig} = require('./expirationConfig');
 
 const cfgExpFilesCron = config.get('services.CoAuthoring.expire.filesCron');
 const cfgExpDocumentsCron = config.get('services.CoAuthoring.expire.documentsCron');
+const cfgExpPresence = config.get('services.CoAuthoring.expire.presence');
+const cfgExpShard = config.get('services.CoAuthoring.expire.shard');
 const cfgExpFiles = config.get('services.CoAuthoring.expire.files');
 const cfgExpFilesRemovedAtOnce = config.get('services.CoAuthoring.expire.filesremovedatonce');
 const cfgForceSaveStep = config.get('services.CoAuthoring.autoAssembly.step');
 
-function getCronStep(cronTime) {
-  const cronJob = new cron.CronJob(cronTime, () => {});
-  const dates = cronJob.nextDates(2);
-  return dates[1] - dates[0];
+const baseDocumentExpiryConfig = validateDocumentExpiryConfig({
+  documentsCron: cfgExpDocumentsCron,
+  presence: cfgExpPresence,
+  shard: cfgExpShard
+});
+if (!baseDocumentExpiryConfig.valid) {
+  throw new Error(baseDocumentExpiryConfig.message);
 }
 const expFilesStep = getCronStep(cfgExpFilesCron);
-const expDocumentsStep = getCronStep(cfgExpDocumentsCron);
+const expDocumentsStep = baseDocumentExpiryConfig.documentsCronStepMs;
 
 function acknowledgeExpired(editorData, method, item) {
   const acknowledge = editorData[method];
   return typeof acknowledge === 'function' ? acknowledge.call(editorData, item) : undefined;
+}
+
+async function processDocumentExpireItem(ctx, expiredKey, state, queue) {
+  const tenant = expiredKey[0];
+  const docId = expiredKey[1];
+  let startSaveCount = 0;
+  let removedCount = 0;
+
+  if (docId) {
+    if (state.currentTenant !== tenant) {
+      ctx.init(tenant, docId, ctx.userId);
+      await ctx.initTenantCache();
+      state.currentTenant = tenant;
+    } else {
+      ctx.setDocId(docId);
+    }
+
+    const hasChanges = await docsCoServer.hasChanges(ctx, docId);
+    if (hasChanges) {
+      //todo opt_initShardKey from getDocumentPresenceExpired data or from db
+      await docsCoServer.createSaveTimer(ctx, docId, null, null, null, queue, true, true);
+      startSaveCount++;
+    } else {
+      await docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId);
+      removedCount++;
+    }
+  }
+
+  const acknowledged = await acknowledgeExpired(docsCoServer.editorData, '_ackDocumentPresenceExpired', expiredKey);
+  return {acknowledged, startSaveCount, removedCount};
+}
+
+async function processDocumentExpireItems(ctx, expiredKeys, state, queue) {
+  let removedCount = 0;
+  let startSaveCount = 0;
+
+  for (const expiredKey of expiredKeys) {
+    const tenant = expiredKey[0];
+    const docId = expiredKey[1];
+    try {
+      const result = await processDocumentExpireItem(ctx, expiredKey, state, queue);
+      startSaveCount += result.startSaveCount;
+      removedCount += result.removedCount;
+      if (result.acknowledged === false) {
+        ctx.logger.warn('checkDocumentExpire item was not acknowledged: tenant=%s docId=%s', tenant, docId);
+      }
+    } catch (error) {
+      // Leave failed claims unacknowledged so Redis can reclaim them after the existing lease.
+      ctx.logger.error('checkDocumentExpire document error: tenant=%s docId=%s: %s', tenant, docId, error && error.stack ? error.stack : error);
+    }
+  }
+
+  return {startSaveCount, removedCount};
 }
 
 const checkFileExpire = function (expireSeconds) {
@@ -131,9 +189,18 @@ const checkDocumentExpire = function () {
     const ctx = new operationContext.Context();
     try {
       ctx.logger.info('checkDocumentExpire start');
-      yield ctx.initTenantCache();
       const currentDocumentsCron = ctx.getCfg('services.CoAuthoring.expire.documentsCron', cfgExpDocumentsCron);
-      currentExpDocumentsStep = getCronStep(currentDocumentsCron);
+      const currentDocumentExpiryConfig = validateDocumentExpiryConfig({
+        documentsCron: currentDocumentsCron,
+        presence: ctx.getCfg('services.CoAuthoring.expire.presence', cfgExpPresence),
+        shard: ctx.getCfg('services.CoAuthoring.expire.shard', cfgExpShard)
+      });
+      if (!currentDocumentExpiryConfig.valid) {
+        ctx.logger.error('checkDocumentExpire configuration error: %s', currentDocumentExpiryConfig.message);
+        return;
+      }
+      currentExpDocumentsStep = currentDocumentExpiryConfig.documentsCronStepMs;
+      yield ctx.initTenantCache();
       const now = new Date().getTime();
       const expiredKeys = yield docsCoServer.editorData.getDocumentPresenceExpired(now);
       if (expiredKeys.length > 0) {
@@ -141,32 +208,10 @@ const checkDocumentExpire = function () {
         yield queue.initPromise(true, false, false, false, false, false);
 
         expiredKeys.sort((a, b) => a[0].localeCompare(b[0]));
-        let currentTenant = null;
-
-        for (let i = 0; i < expiredKeys.length; ++i) {
-          const tenant = expiredKeys[i][0];
-          const docId = expiredKeys[i][1];
-          if (docId) {
-            if (currentTenant !== tenant) {
-              ctx.init(tenant, docId, ctx.userId);
-              yield ctx.initTenantCache();
-              currentTenant = tenant;
-            } else {
-              ctx.setDocId(docId);
-            }
-
-            const hasChanges = yield docsCoServer.hasChanges(ctx, docId);
-            if (hasChanges) {
-              //todo opt_initShardKey from getDocumentPresenceExpired data or from db
-              yield docsCoServer.createSaveTimer(ctx, docId, null, null, null, queue, true, true);
-              startSaveCount++;
-            } else {
-              yield docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId);
-              removedCount++;
-            }
-          }
-          yield acknowledgeExpired(docsCoServer.editorData, '_ackDocumentPresenceExpired', expiredKeys[i]);
-        }
+        const state = {currentTenant: null};
+        const result = yield processDocumentExpireItems(ctx, expiredKeys, state, queue);
+        startSaveCount += result.startSaveCount;
+        removedCount += result.removedCount;
       }
       ctx.initDefault();
       ctx.logger.info('checkDocumentExpire end: startSaveCount = %d, removedCount = %d', startSaveCount, removedCount);
@@ -279,3 +324,4 @@ exports.startGC = function () {
 };
 exports.getCronStep = getCronStep;
 exports.checkFileExpire = checkFileExpire;
+exports.checkDocumentExpire = checkDocumentExpire;
