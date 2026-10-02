@@ -63,7 +63,9 @@ describe('pkg.scripts guard', () => {
     const failures = checkComponent(FIXTURES, 'globEntry');
     expect(failures).toHaveLength(1);
     expect(failures[0].entry).toBe('./sources/*.js');
-    expect(failures[0].reason).toMatch(/glob/i);
+    // Assert the refusal reason specifically: `/glob/i` would also match the fixture folder
+    // name "globEntry" in a "matches no file" message, so it couldn't detect the branch being lost.
+    expect(failures[0].reason).toMatch(/not supported by this guard/);
   });
 
   test('treats a leading "!" entry as an exclusion, not a file requirement', () => {
@@ -151,6 +153,32 @@ describe('pkg.scripts guard', () => {
     const res = runGuard(root);
     expect(res.status).toBe(0);
     expect(res.stdout).toMatch(/every entry resolves/);
+  });
+
+  test('discovery prunes node_modules, tests and .git (decoys there are not found)', () => {
+    const root = makeTempRepo('prune-');
+    writeComponent(root, 'realComp', ['./sources/a.js'], ['sources/a.js']);
+    // Decoys that declare pkg.scripts but live in pruned dirs; must not be discovered.
+    writeComponent(root, 'node_modules/dep', ['./x.js']);
+    writeComponent(root, 'tests/fixtureComp', ['./x.js']);
+    writeComponent(root, '.git/hookComp', ['./x.js']);
+    const found = discoverComponents(root);
+    expect(found).toContain('realComp');
+    expect(found).not.toContain(path.join('node_modules', 'dep'));
+    expect(found).not.toContain(path.join('tests', 'fixtureComp'));
+    expect(found.some(c => c.startsWith('.git'))).toBe(false);
+  });
+
+  test('discovery does not follow symlinked directories', () => {
+    const root = makeTempRepo('symlink-');
+    writeComponent(root, 'realComp', ['./sources/a.js'], ['sources/a.js']);
+    // A component reachable only through a symlink; if the walk followed it, it would appear.
+    const external = makeTempRepo('symlink-target-');
+    writeComponent(external, 'externalComp', ['./x.js']);
+    fs.symlinkSync(path.join(external, 'externalComp'), path.join(root, 'linkComp'), 'dir');
+    const found = discoverComponents(root);
+    expect(found).toContain('realComp');
+    expect(found).not.toContain('linkComp');
   });
 
   test('discovers only components that declare pkg.scripts, at any depth', () => {
