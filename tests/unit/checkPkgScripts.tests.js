@@ -1,11 +1,17 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const {spawnSync} = require('child_process');
 const {describe, test, expect, afterEach} = require('@jest/globals');
 
 const {checkComponent, checkAll, discoverComponents} = require('../../tools/check-pkg-scripts');
 
 const FIXTURES = path.join(__dirname, '../fixtures/pkgScripts');
+const GUARD = path.join(__dirname, '../../tools/check-pkg-scripts.js');
+
+function runGuard(repoRoot) {
+  return spawnSync(process.execPath, [GUARD, repoRoot], {encoding: 'utf8'});
+}
 
 // Some cases can't be committed fixtures (a glob-char dir name, a node_modules folder, a
 // symlink), so build them in a temp dir and clean up after each test.
@@ -125,6 +131,26 @@ describe('pkg.scripts guard', () => {
     const failures = checkAll(FIXTURES, ['valid', 'zeroMatch']);
     expect(failures).toHaveLength(1);
     expect(failures[0].component).toBe('zeroMatch');
+  });
+
+  test('CLI exits non-zero and uses a neutral header when a glob entry is refused', () => {
+    // A glob entry is a real failure, but pkg would bundle it fine, so the output must not
+    // claim it "matches no file" or would be "dropped silently".
+    const root = makeTempRepo('cli-glob-');
+    writeComponent(root, 'comp', ['./sources/*.js'], ['sources/a.js']);
+    const res = runGuard(root);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toMatch(/found 1 problem/);
+    expect(res.stderr).toMatch(/not supported by this guard/);
+    expect(res.stderr).not.toMatch(/match no file|dropped.*silently/i);
+  });
+
+  test('CLI exits zero when every entry resolves', () => {
+    const root = makeTempRepo('cli-ok-');
+    writeComponent(root, 'comp', ['./sources/a.js'], ['sources/a.js']);
+    const res = runGuard(root);
+    expect(res.status).toBe(0);
+    expect(res.stdout).toMatch(/every entry resolves/);
   });
 
   test('discovers only components that declare pkg.scripts, at any depth', () => {

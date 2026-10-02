@@ -158,7 +158,7 @@ function checkComponent(repoRoot, component) {
   // Second pass: check each positive entry.
   for (const entry of scripts) {
     if (typeof entry !== 'string') {
-      failures.push({component, entry: String(entry), reason: 'entry is not a string'});
+      failures.push({component, entry: String(entry), reason: 'entry is not a string (pkg would reject it with "Config items must be strings")'});
       continue;
     }
     if (entry.startsWith('!')) {
@@ -177,7 +177,11 @@ function checkComponent(repoRoot, component) {
       isFile = false;
     }
     if (!isFile) {
-      failures.push({component, entry, reason: `matches no file (${path.relative(repoRoot, resolved)})`});
+      failures.push({
+        component,
+        entry,
+        reason: `matches no file, so pkg drops it silently (MODULE_NOT_FOUND at runtime): ${path.relative(repoRoot, resolved)}`
+      });
     } else if (excluded.has(resolved)) {
       failures.push({
         component,
@@ -203,21 +207,22 @@ function checkAll(repoRoot, components) {
 module.exports = {checkComponent, checkAll, discoverComponents};
 
 if (require.main === module) {
-  const repoRoot = path.resolve(__dirname, '..');
+  // Optional repo root argument lets the tests run the CLI against a fixture tree; defaults
+  // to the repo this script lives in.
+  const repoRoot = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(__dirname, '..');
   const components = discoverComponents(repoRoot);
   console.log(`pkg.scripts guard: checking ${components.length} component(s): ${components.join(', ')}`);
   const failures = checkAll(repoRoot, components);
 
   if (failures.length > 0) {
-    console.error('pkg.scripts guard: the following entries match no file:\n');
+    // Each failure carries its own reason (missing file, cancelled by negation, glob, bad path,
+    // non-string). Keep the header neutral so it is not wrong for the non-"missing file" cases.
+    console.error(`\npkg.scripts guard: found ${failures.length} problem(s) in pkg.scripts:\n`);
     for (const failure of failures) {
       console.error(`  [${failure.component}] ${failure.entry}`);
       console.error(`      ${failure.reason}`);
     }
-    console.error(
-      '\n@yao-pkg/pkg would drop these entries from the packaged binary silently, ' +
-        'causing MODULE_NOT_FOUND at runtime. Fix the path or remove the entry.'
-    );
+    console.error('\nFix or remove the entries above.');
     process.exit(1);
   }
 
