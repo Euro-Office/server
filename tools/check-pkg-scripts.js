@@ -17,9 +17,9 @@
  * The current entries are all literal paths. For a literal pattern,
  * `fs.statSync(resolved).isFile()` is equivalent to pkg's own
  * `tinyglobby.globSync([resolved], {absolute, dot})` followed by an isFile check,
- * so resolution here is faithful without pulling in a glob dependency. An entry
- * that contains actual glob syntax is refused rather than guessed at (see below),
- * so the guard can never diverge from pkg by mis-resolving a pattern.
+ * so resolution here is faithful without pulling in a glob dependency. An entry (or the
+ * checkout path) that contains actual glob syntax is reported rather than guessed at (see
+ * below), so the guard does not silently diverge from pkg by mis-resolving a pattern.
  *
  * Components are discovered, not hardcoded: any package.json (outside node_modules)
  * carrying a `pkg.scripts` block is checked, so a newly added component is covered
@@ -43,7 +43,7 @@ const GLOB_SYNTAX = /[*?[\]{}()]/;
 
 // Shared message for an entry (positive or negation) that contains glob syntax. The guard
 // resolves literal paths only; a real glob is refused rather than resolved with a lookalike
-// matcher, so it can never diverge from pkg by mis-resolving a pattern.
+// matcher, so it does not diverge from pkg by mis-resolving a pattern.
 const GLOB_REASON =
   'glob pattern in pkg.scripts is not supported by this guard; all entries are literal paths ' +
   "today. Extend the guard with pkg's matcher (tinyglobby) before adding a glob here so " +
@@ -124,6 +124,19 @@ function checkComponent(repoRoot, component) {
   const scripts = normalizeScripts(manifest.pkg && manifest.pkg.scripts);
   if (scripts.length === 0) {
     return failures;
+  }
+
+  // pkg globs path.join(componentDir, entry), i.e. the whole absolute path, so glob
+  // metacharacters in the checkout path itself make every entry resolve to nothing. Report
+  // that once instead of mislabelling each entry.
+  if (GLOB_SYNTAX.test(componentDir)) {
+    return [
+      {
+        component,
+        entry: component,
+        reason: 'checkout path contains glob metacharacters, so pkg would bundle nothing for this component'
+      }
+    ];
   }
 
   // pkg passes all entries to one glob call, so a negation (`!x`) removes any positive entry it

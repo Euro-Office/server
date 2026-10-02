@@ -1,9 +1,35 @@
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const {describe, test, expect} = require('@jest/globals');
+const {describe, test, expect, afterEach} = require('@jest/globals');
 
 const {checkComponent, checkAll, discoverComponents} = require('../../tools/check-pkg-scripts');
 
 const FIXTURES = path.join(__dirname, '../fixtures/pkgScripts');
+
+// Some cases can't be committed fixtures (a glob-char dir name, a node_modules folder, a
+// symlink), so build them in a temp dir and clean up after each test.
+const tempDirs = [];
+function makeTempRepo(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+function writeComponent(root, relDir, scripts, realFiles = []) {
+  const dir = path.join(root, relDir);
+  fs.mkdirSync(dir, {recursive: true});
+  for (const f of realFiles) {
+    fs.mkdirSync(path.join(dir, path.dirname(f)), {recursive: true});
+    fs.writeFileSync(path.join(dir, f), 'module.exports = {};\n');
+  }
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({name: 'c', version: '1.0.0', pkg: {scripts}}));
+  return dir;
+}
+afterEach(() => {
+  while (tempDirs.length) {
+    fs.rmSync(tempDirs.pop(), {recursive: true, force: true});
+  }
+});
 
 describe('pkg.scripts guard', () => {
   test('passes when every entry resolves to a file', () => {
@@ -53,6 +79,20 @@ describe('pkg.scripts guard', () => {
     expect(failures).toHaveLength(1);
     expect(failures[0].entry).toBe('!./sources/*.tmp.js');
     expect(failures[0].reason).toMatch(/not supported by this guard/);
+  });
+
+  test('flags a checkout path that itself contains glob metacharacters', () => {
+    // pkg globs the whole resolved path, so a repo under e.g. "a (b)/" bundles nothing even
+    // though the entry is a valid literal. The control (clean path) must pass.
+    const globRoot = makeTempRepo('g (x)-');
+    writeComponent(globRoot, 'comp', ['./sources/f.js'], ['sources/f.js']);
+    const globFailures = checkComponent(globRoot, 'comp');
+    expect(globFailures).toHaveLength(1);
+    expect(globFailures[0].reason).toMatch(/checkout path contains glob metacharacters/);
+
+    const cleanRoot = makeTempRepo('clean-');
+    writeComponent(cleanRoot, 'comp', ['./sources/f.js'], ['sources/f.js']);
+    expect(checkComponent(cleanRoot, 'comp')).toEqual([]);
   });
 
   test('flags a non-string entry', () => {
