@@ -29,8 +29,19 @@
  * carrying a `pkg.scripts` block is checked, so a newly added component is covered
  * automatically instead of silently escaping the guard.
  *
- * Run after `npm install`: some entries point into `node_modules` (axios, statsd)
- * and only exist post-install, exactly as pkg requires.
+ * Run after `npm install`: some entries point into `node_modules` (axios in Common, statsd in
+ * Metrics) and only exist post-install, exactly as pkg requires. The two build contexts install
+ * different sets: the production Dockerfile installs all components, while server e2e installs
+ * Common/DocService/FileConverter/Metrics but NOT AdminPanel/server. The guard checks every
+ * discovered component regardless, so e2e also checks AdminPanel/server. That is harmless today
+ * (its entries are DocService source paths, independent of its own install) but would false-FAIL
+ * in e2e if AdminPanel/server ever listed one of its own `node_modules` files.
+ *
+ * Scope of assurance: the guard verifies that each discovered component's `pkg.scripts` entries
+ * resolve to a file. It does NOT model the actual `pkg` invocation list (it cannot catch a
+ * component that resolves but is never packaged), and it does NOT check `pkg.assets` (e.g.
+ * SpellChecker bundles only via assets and is uncovered). "Guard green" means "no listed script
+ * entry is missing", not "the shipped binary is complete".
  */
 
 const fs = require('fs');
@@ -64,10 +75,11 @@ const KIND = {
   UNREADABLE_MANIFEST: 'unreadable-manifest'
 };
 
-// pkg accepts `scripts` as either an array or a single string (it wraps a non-array in an
-// array before globbing), so normalise the same way before inspecting the entries.
+// pkg accepts `scripts` as an array or a single string. Match that: a string becomes one entry,
+// a falsy value (empty string / undefined) means "no scripts". Any other shape (number, object)
+// is ignored here and left to pkg, which rejects it loudly ("Config items must be strings"), so
+// it cannot ship silently.
 function normalizeScripts(scripts) {
-  // pkg only processes a truthy `scripts`, so an empty string / undefined means "no scripts".
   if (!scripts) {
     return [];
   }
@@ -93,6 +105,11 @@ function hasPkgScripts(dir) {
  * Find every component that carries a `pkg.scripts` block. Recurses the whole repo,
  * pruning node_modules/.git/tests and not following symlinks, so the walk stays in
  * the source tree and cannot cycle (a real directory tree is acyclic).
+ *
+ * Fails open: a directory that cannot be read, or whose name is a dotfile, is skipped
+ * silently rather than aborting the walk. Because this scans the entire repo, failing closed
+ * would break the build on any unrelated unreadable directory; in the build contexts the tree
+ * is fully readable, so nothing is skipped in practice.
  * @returns {string[]} component paths relative to repoRoot, sorted
  */
 function discoverComponents(repoRoot) {
@@ -149,7 +166,7 @@ function checkComponent(repoRoot, component) {
       {
         component,
         entry: component,
-        reason: 'checkout path contains glob metacharacters, so pkg would bundle nothing for this component',
+        reason: 'checkout path contains glob metacharacters; pkg bundles nothing for this component',
         kind: KIND.PATH_GLOB
       }
     ];
@@ -177,7 +194,7 @@ function checkComponent(repoRoot, component) {
       failures.push({
         component,
         entry: String(entry),
-        reason: 'entry is not a string (pkg would reject it with "Config items must be strings")',
+        reason: 'entry is not a string; pkg rejects it ("Config items must be strings")',
         kind: KIND.NON_STRING
       });
       continue;
@@ -201,14 +218,14 @@ function checkComponent(repoRoot, component) {
       failures.push({
         component,
         entry,
-        reason: `matches no file, so pkg drops it silently (MODULE_NOT_FOUND at runtime): ${path.relative(repoRoot, resolved)}`,
+        reason: `matches no file; pkg drops it silently, so the module is MODULE_NOT_FOUND at runtime (${path.relative(repoRoot, resolved)})`,
         kind: KIND.MISSING_FILE
       });
     } else if (excluded.has(resolved)) {
       failures.push({
         component,
         entry,
-        reason: `cancelled by a negation entry, so pkg bundles nothing for it (${path.relative(repoRoot, resolved)})`,
+        reason: `cancelled by a negation entry; pkg bundles nothing for it (${path.relative(repoRoot, resolved)})`,
         kind: KIND.NEGATION_CANCELLED
       });
     }
