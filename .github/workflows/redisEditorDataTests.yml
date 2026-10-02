@@ -34,11 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      sentinel_matrix: ${{ steps.matrix.outputs.sentinel_matrix }}
 
     steps:
       - id: matrix
         run: |
           echo 'matrix={"include":[{"name":"redis-7.0.15","image":"redis:7.0.15-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-7.2","image":"redis:7.2-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-8","image":"redis:8-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"valkey-7.2","image":"valkey/valkey:7.2-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-8","image":"valkey/valkey:8-alpine","server_command":"valkey-server","cli_command":"valkey-cli"}]}' >> "$GITHUB_OUTPUT"
+          base_matrix='[{"name":"redis-7.0.15","image":"redis:7.0.15-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-7.2","image":"redis:7.2-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-8","image":"redis:8-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"valkey-7.2","image":"valkey/valkey:7.2-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-8","image":"valkey/valkey:8-alpine","server_command":"valkey-server","cli_command":"valkey-cli"}]'
+          echo "sentinel_matrix=$(jq -c '{include: [ .[] as \$item | [\"password\", \"unauthenticated\", \"acl\"][] | \$item + {auth: .} ]}' <<< \"$base_matrix\")" >> "$GITHUB_OUTPUT"
 
   redis-editor-data-tests:
     name: ${{ matrix.name }} standalone editor data tests
@@ -265,44 +268,95 @@ jobs:
     env:
       REDIS_TEST_PASSWORD: 'redis-editor-data-password'
       REDIS_TEST_SENTINEL_PASSWORD: 'sentinel-editor-data-password'
-      TEST_REDIS_NODE_PASSWORD: 'redis-editor-data-password'
-      TEST_REDIS_SENTINEL_PASSWORD: 'sentinel-editor-data-password'
+      REDIS_TEST_NODE_USERNAME: 'redis-editor-user'
+      REDIS_TEST_SENTINEL_USERNAME: 'sentinel-editor-user'
 
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare_editor_data_matrix.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.prepare_editor_data_matrix.outputs.sentinel_matrix) }}
 
     steps:
       - name: Start ${{ matrix.name }} Sentinel topology
         run: |
           set -euo pipefail
-          container_prefix="${{ matrix.name }}-sentinel"
-          docker run --name "${container_prefix}-primary" --network host -d "${{ matrix.image }}" \
-            "${{ matrix.server_command }}" --port 6380 --bind 127.0.0.1 --protected-mode no \
-            --appendonly no --requirepass "$REDIS_TEST_PASSWORD"
-          docker run --name "${container_prefix}-replica" --network host -d "${{ matrix.image }}" \
-            "${{ matrix.server_command }}" --port 6381 --bind 127.0.0.1 --protected-mode no \
-            --appendonly no --requirepass "$REDIS_TEST_PASSWORD" \
-            --masterauth "$REDIS_TEST_PASSWORD" --replicaof 127.0.0.1 6380
+          container_prefix="${{ matrix.name }}-sentinel-${{ matrix.auth }}"
+          case "${{ matrix.auth }}" in
+            password)
+              docker run --name "${container_prefix}-primary" --network host -d "${{ matrix.image }}" \
+                "${{ matrix.server_command }}" --port 6380 --bind 127.0.0.1 --protected-mode no \
+                --appendonly no --requirepass "$REDIS_TEST_PASSWORD"
+              docker run --name "${container_prefix}-replica" --network host -d "${{ matrix.image }}" \
+                "${{ matrix.server_command }}" --port 6381 --bind 127.0.0.1 --protected-mode no \
+                --appendonly no --requirepass "$REDIS_TEST_PASSWORD" \
+                --masterauth "$REDIS_TEST_PASSWORD" --replicaof 127.0.0.1 6380
+              ;;
+            unauthenticated)
+              docker run --name "${container_prefix}-primary" --network host -d "${{ matrix.image }}" \
+                "${{ matrix.server_command }}" --port 6380 --bind 127.0.0.1 --protected-mode no --appendonly no
+              docker run --name "${container_prefix}-replica" --network host -d "${{ matrix.image }}" \
+                "${{ matrix.server_command }}" --port 6381 --bind 127.0.0.1 --protected-mode no --appendonly no \
+                --replicaof 127.0.0.1 6380
+              ;;
+            acl)
+              for role in primary replica; do
+                port=6380
+                replica_args=''
+                [ "$role" = replica ] && port=6381 && replica_args="--masteruser $REDIS_TEST_NODE_USERNAME --masterauth $REDIS_TEST_PASSWORD --replicaof 127.0.0.1 6380"
+                docker run --name "${container_prefix}-${role}" --network host -d "${{ matrix.image }}" sh -c \
+                  "printf '%s\\n' 'user default off' 'user ${REDIS_TEST_NODE_USERNAME} on >${REDIS_TEST_PASSWORD} ~* &* +@all' > /tmp/users.acl && exec ${{ matrix.server_command }} --port $port --bind 127.0.0.1 --protected-mode no --appendonly no --aclfile /tmp/users.acl $replica_args"
+              done
+              ;;
+            *) exit 1 ;;
+          esac
           for sentinel_port in 26379 26380 26381; do
+            if [ "${{ matrix.auth }}" = password ]; then
+              sentinel_acl=''
+              sentinel_server_args=''
+              sentinel_auth="requirepass ${REDIS_TEST_SENTINEL_PASSWORD}\\nsentinel auth-pass mymaster ${REDIS_TEST_PASSWORD}"
+            elif [ "${{ matrix.auth }}" = unauthenticated ]; then
+              sentinel_acl=''
+              sentinel_server_args=''
+              sentinel_auth=''
+            else
+              sentinel_acl="printf '%s\\n' 'user default off' 'user ${REDIS_TEST_SENTINEL_USERNAME} on >${REDIS_TEST_SENTINEL_PASSWORD} ~* &* +@all' > /tmp/users.acl && "
+              sentinel_server_args='--aclfile /tmp/users.acl'
+              sentinel_auth="sentinel auth-user mymaster ${REDIS_TEST_NODE_USERNAME}\\nsentinel auth-pass mymaster ${REDIS_TEST_PASSWORD}"
+            fi
             docker run --name "${container_prefix}-${sentinel_port}" --network host -d "${{ matrix.image }}" \
-              sh -c "printf '%s\\n' \
-                'port ${sentinel_port}' \
-                'bind 127.0.0.1' \
-                'protected-mode no' \
-                'requirepass ${REDIS_TEST_SENTINEL_PASSWORD}' \
+              sh -c "${sentinel_acl}printf '%b\\n' \
+                'port ${sentinel_port}' 'bind 127.0.0.1' 'protected-mode no' \
                 'sentinel monitor mymaster 127.0.0.1 6380 2' \
-                'sentinel auth-pass mymaster ${REDIS_TEST_PASSWORD}' \
+                \"${sentinel_auth}\" \
                 'sentinel down-after-milliseconds mymaster 1000' \
                 'sentinel failover-timeout mymaster 5000' \
                 'sentinel parallel-syncs mymaster 1' \
-                > /tmp/sentinel.conf && \
-                exec ${{ matrix.server_command }} /tmp/sentinel.conf --sentinel"
+                > /tmp/sentinel.conf && exec ${{ matrix.server_command }} /tmp/sentinel.conf --sentinel $sentinel_server_args"
           done
 
+          if [ "${{ matrix.auth }}" = password ]; then
+            redis_cli_auth=(-a "$REDIS_TEST_PASSWORD")
+            sentinel_cli_auth=(-a "$REDIS_TEST_SENTINEL_PASSWORD")
+            {
+              echo "TEST_REDIS_NODE_PASSWORD=$REDIS_TEST_PASSWORD"
+              echo "TEST_REDIS_SENTINEL_PASSWORD=$REDIS_TEST_SENTINEL_PASSWORD"
+            } >> "$GITHUB_ENV"
+          elif [ "${{ matrix.auth }}" = acl ]; then
+            redis_cli_auth=(--user "$REDIS_TEST_NODE_USERNAME" -a "$REDIS_TEST_PASSWORD")
+            sentinel_cli_auth=(--user "$REDIS_TEST_SENTINEL_USERNAME" -a "$REDIS_TEST_SENTINEL_PASSWORD")
+            {
+              echo "TEST_REDIS_NODE_USERNAME=$REDIS_TEST_NODE_USERNAME"
+              echo "TEST_REDIS_NODE_PASSWORD=$REDIS_TEST_PASSWORD"
+              echo "TEST_REDIS_SENTINEL_USERNAME=$REDIS_TEST_SENTINEL_USERNAME"
+              echo "TEST_REDIS_SENTINEL_PASSWORD=$REDIS_TEST_SENTINEL_PASSWORD"
+            } >> "$GITHUB_ENV"
+          else
+            redis_cli_auth=()
+            sentinel_cli_auth=()
+          fi
+
           for attempt in $(seq 1 30); do
-            if docker exec "${container_prefix}-primary" "${{ matrix.cli_command }}" -a "$REDIS_TEST_PASSWORD" -p 6380 ping | grep -qx PONG \
-              && docker exec "${container_prefix}-replica" "${{ matrix.cli_command }}" -a "$REDIS_TEST_PASSWORD" -p 6381 ping | grep -qx PONG; then
+            if docker exec "${container_prefix}-primary" "${{ matrix.cli_command }}" "${redis_cli_auth[@]}" -p 6380 ping | grep -qx PONG \
+              && docker exec "${container_prefix}-replica" "${{ matrix.cli_command }}" "${redis_cli_auth[@]}" -p 6381 ping | grep -qx PONG; then
               break
             fi
             test "$attempt" -lt 30 || exit 1
@@ -312,7 +366,7 @@ jobs:
           for sentinel_port in 26379 26380 26381; do
             for attempt in $(seq 1 30); do
               if docker exec "${container_prefix}-${sentinel_port}" "${{ matrix.cli_command }}" \
-                -a "$REDIS_TEST_SENTINEL_PASSWORD" -p "$sentinel_port" ping | grep -qx PONG; then
+                "${sentinel_cli_auth[@]}" -p "$sentinel_port" ping | grep -qx PONG; then
                 break
               fi
               test "$attempt" -lt 30 || exit 1
@@ -321,11 +375,11 @@ jobs:
           done
 
           for attempt in $(seq 1 30); do
-            master_host=$(docker exec "${container_prefix}-26379" "${{ matrix.cli_command }}" -a "$REDIS_TEST_SENTINEL_PASSWORD" -p 26379 \
+            master_host=$(docker exec "${container_prefix}-26379" "${{ matrix.cli_command }}" "${sentinel_cli_auth[@]}" -p 26379 \
               sentinel get-master-addr-by-name mymaster | sed -n '1p' || true)
-            master_port=$(docker exec "${container_prefix}-26379" "${{ matrix.cli_command }}" -a "$REDIS_TEST_SENTINEL_PASSWORD" -p 26379 \
+            master_port=$(docker exec "${container_prefix}-26379" "${{ matrix.cli_command }}" "${sentinel_cli_auth[@]}" -p 26379 \
               sentinel get-master-addr-by-name mymaster | sed -n '2p' || true)
-            replica_role=$(docker exec "${container_prefix}-replica" "${{ matrix.cli_command }}" -a "$REDIS_TEST_PASSWORD" -p 6381 \
+            replica_role=$(docker exec "${container_prefix}-replica" "${{ matrix.cli_command }}" "${redis_cli_auth[@]}" -p 6381 \
               info replication | sed -n 's/^role://p' | tr -d '\r' || true)
             if [ "$master_host" = '127.0.0.1' ] \
               && [ "$master_port" = '6380' ] \
@@ -363,8 +417,7 @@ jobs:
           TEST_REDIS_SENTINEL: 'true'
           TEST_REDIS_SENTINEL_NAME: 'mymaster'
           TEST_REDIS_SENTINEL_NODES: '127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381'
-          TEST_REDIS_NODE_PASSWORD: ${{ env.TEST_REDIS_NODE_PASSWORD }}
-          TEST_REDIS_SENTINEL_PASSWORD: ${{ env.TEST_REDIS_SENTINEL_PASSWORD }}
+          TEST_REDIS_SENTINEL_TRANSIENT_CONTAINER: '${{ matrix.name }}-sentinel-${{ matrix.auth }}-26379'
           TEST_REDIS_PREFIX: 'ci:editor-data-sentinel:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
         run: |
           echo "Running ${{ matrix.name }} Sentinel editor-data tests"
@@ -375,10 +428,8 @@ jobs:
           TEST_REDIS_SENTINEL: 'true'
           TEST_REDIS_SENTINEL_NAME: 'mymaster'
           TEST_REDIS_SENTINEL_NODES: '127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381'
-          TEST_REDIS_NODE_PASSWORD: ${{ env.TEST_REDIS_NODE_PASSWORD }}
-          TEST_REDIS_SENTINEL_PASSWORD: ${{ env.TEST_REDIS_SENTINEL_PASSWORD }}
           TEST_REDIS_TOPOLOGY_REQUIRED: 'true'
-          TEST_REDIS_SENTINEL_PRIMARY_CONTAINER: '${{ matrix.name }}-sentinel-primary'
+          TEST_REDIS_SENTINEL_PRIMARY_CONTAINER: '${{ matrix.name }}-sentinel-${{ matrix.auth }}-primary'
           TEST_REDIS_SENTINEL_REPLICA_PORT: '6381'
           TEST_REDIS_PREFIX: 'ci:editor-data-sentinel-failover:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
         run: npm run tests -- --runInBand ../tests/redis/editorDataRedis.topology.tests.js
@@ -387,8 +438,8 @@ jobs:
         if: always()
         run: |
           docker rm -f \
-            "${{ matrix.name }}-sentinel-primary" \
-            "${{ matrix.name }}-sentinel-replica" \
-            "${{ matrix.name }}-sentinel-26379" \
-            "${{ matrix.name }}-sentinel-26380" \
-            "${{ matrix.name }}-sentinel-26381" || true
+            "${{ matrix.name }}-sentinel-${{ matrix.auth }}-primary" \
+            "${{ matrix.name }}-sentinel-${{ matrix.auth }}-replica" \
+            "${{ matrix.name }}-sentinel-${{ matrix.auth }}-26379" \
+            "${{ matrix.name }}-sentinel-${{ matrix.auth }}-26380" \
+            "${{ matrix.name }}-sentinel-${{ matrix.auth }}-26381" || true

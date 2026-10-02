@@ -18,6 +18,7 @@ const {
   REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS,
   REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS,
   REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
+  REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES,
   REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS,
   cfgRedisName,
   cfgRedisHost,
@@ -63,31 +64,7 @@ class RedisUnavailableError extends Error {
 }
 
 function createSentinelClient(options) {
-  const client = redis.createSentinel(options);
-  const rejectBeforeReady = () => {
-    if (!client.isReady) {
-      throw new RedisUnavailableError(new Error('Redis Sentinel client is not ready'));
-    }
-  };
-
-  // node-redis exposes a proxy whose generated commands dispatch through the
-  // underlying target's _self._execute, while raw sendCommand uses the proxy
-  // directly. Guard both objects so every command path fails before initial
-  // Sentinel discovery can queue it.
-  const clients = [client, client._self].filter((value, index, values) => value && values.indexOf(value) === index);
-  for (const commandClient of clients) {
-    const execute = commandClient._execute.bind(commandClient);
-    const executeMulti = commandClient._executeMulti.bind(commandClient);
-    commandClient._execute = (...args) => {
-      rejectBeforeReady();
-      return execute(...args);
-    };
-    commandClient._executeMulti = (...args) => {
-      rejectBeforeReady();
-      return executeMulti(...args);
-    };
-  }
-  return client;
+  return redis.createSentinel(options);
 }
 
 function withTimeout(promise, timeoutMs, description) {
@@ -131,6 +108,16 @@ function waitForReady(client, connector, timeoutMs) {
     client.once('end', onEnd);
     client.once('error', onError);
   });
+}
+
+function createConnectTimeoutError() {
+  const error = new Error(`Redis connect timed out after ${REDIS_CONNECT_TIMEOUT_MS}ms`);
+  error.code = 'ETIMEDOUT';
+  return error;
+}
+
+function wait(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
 class RedisConnection {
@@ -232,18 +219,11 @@ class RedisConnection {
       currentClient.isReady ?? 'n/a'
     );
     this.connectionAttempted = true;
-    this.connectPromise = (async () => {
-      if (!currentClient.isOpen) {
-        await withTimeout(currentClient.connect(), REDIS_CONNECT_TIMEOUT_MS, 'Redis connect');
-      }
-      if (!currentClient.isReady) {
-        await waitForReady(currentClient, this.connector, REDIS_CONNECT_TIMEOUT_MS);
-      }
-    })();
+    this.connectPromise = this._connectWithRetries(startedAt);
     try {
-      await this.connectPromise;
+      const connectedClient = await this.connectPromise;
       log('debug', 'connect ready after %dms (connector=%s)', Date.now() - startedAt, this.connector);
-      return this.client;
+      return connectedClient;
     } catch (error) {
       log(
         'error',
@@ -259,6 +239,58 @@ class RedisConnection {
       throw error;
     } finally {
       this.connectPromise = null;
+    }
+  }
+
+  async _connectWithRetries(startedAt) {
+    let retries = 0;
+    while (true) {
+      if (this.closing || this.closed) {
+        throw new RedisUnavailableError(new Error('Redis connection is closing'));
+      }
+      if (!this.client) {
+        this._createClient();
+      }
+      const currentClient = this.client;
+      this.connectionAttempted = true;
+      const remaining = REDIS_CONNECT_TIMEOUT_MS - (Date.now() - startedAt);
+      if (remaining <= 0) {
+        throw createConnectTimeoutError();
+      }
+      try {
+        if (!currentClient.isOpen) {
+          await withTimeout(currentClient.connect(), remaining, 'Redis connect');
+        }
+        if (!currentClient.isReady) {
+          const readyTimeout = REDIS_CONNECT_TIMEOUT_MS - (Date.now() - startedAt);
+          if (readyTimeout <= 0) {
+            throw createConnectTimeoutError();
+          }
+          await waitForReady(currentClient, this.connector, readyTimeout);
+        }
+        return currentClient;
+      } catch (error) {
+        await this._closeClient(currentClient);
+        const canRetry =
+          this.sentinel &&
+          !this.closing &&
+          !this.closed &&
+          retries < REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES &&
+          Date.now() - startedAt < REDIS_CONNECT_TIMEOUT_MS;
+        if (!canRetry) {
+          throw error;
+        }
+        const retryDelay = Math.min(
+          REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS * 2 ** retries,
+          REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS,
+          REDIS_CONNECT_TIMEOUT_MS - (Date.now() - startedAt)
+        );
+        retries++;
+        if (retryDelay <= 0) {
+          throw createConnectTimeoutError();
+        }
+        await wait(retryDelay);
+      }
     }
   }
 
@@ -440,6 +472,7 @@ module.exports = {
   REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS,
   REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS,
   REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
+  REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES,
   REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS,
   REDIS_UNAVAILABLE_CODE
 };
