@@ -41,13 +41,26 @@ const DISCOVERY_SKIP_DIRS = new Set(['node_modules', 'tests', '.git']);
 // mistaken for a pattern.
 const GLOB_SYNTAX = /[*?[\]{}()]/;
 
-// A dir counts as a component only if its package.json parses and declares pkg.scripts.
-// Validating that the manifest is well-formed JSON is not this guard's job: it runs after
-// `npm install`, which parses every package.json and fails first on a malformed one.
+// pkg accepts `scripts` as either an array or a single string (it wraps a non-array in an
+// array before globbing), so normalise the same way before inspecting the entries.
+function normalizeScripts(scripts) {
+  // pkg only processes a truthy `scripts`, so an empty string / undefined means "no scripts".
+  if (!scripts) {
+    return [];
+  }
+  if (typeof scripts === 'string') {
+    return [scripts];
+  }
+  return Array.isArray(scripts) ? scripts : [];
+}
+
+// A dir counts as a component only if its package.json parses and declares a non-empty
+// pkg.scripts (array or string). Validating that the manifest is well-formed JSON is not this
+// guard's job: the build parses each component's own package.json and fails first on a malformed one.
 function hasPkgScripts(dir) {
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
-    return Array.isArray(manifest.pkg && manifest.pkg.scripts);
+    return normalizeScripts(manifest.pkg && manifest.pkg.scripts).length > 0;
   } catch {
     return false;
   }
@@ -100,8 +113,8 @@ function checkComponent(repoRoot, component) {
     return [{component, entry: 'package.json', reason: `cannot read package.json: ${err.message}`}];
   }
 
-  const scripts = manifest.pkg && manifest.pkg.scripts;
-  if (!scripts) {
+  const scripts = normalizeScripts(manifest.pkg && manifest.pkg.scripts);
+  if (scripts.length === 0) {
     return failures;
   }
 

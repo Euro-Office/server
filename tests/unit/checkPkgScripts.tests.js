@@ -45,6 +45,15 @@ describe('pkg.scripts guard', () => {
     expect(failures[0].reason).toMatch(/not a string/);
   });
 
+  test('handles a string-form scripts (pkg wraps a non-array) as one entry', () => {
+    // Regression: a string must be treated as a single entry, not iterated per character,
+    // and the component must still be discovered.
+    const failures = checkComponent(FIXTURES, 'stringForm');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({component: 'stringForm', entry: './sources/missing.js'});
+    expect(failures[0].reason).toMatch(/matches no file/);
+  });
+
   test('ignores a pkg block that has no scripts', () => {
     const failures = checkComponent(FIXTURES, 'noScripts');
     expect(failures).toEqual([]);
@@ -65,7 +74,7 @@ describe('pkg.scripts guard', () => {
   test('discovers only components that declare pkg.scripts, at any depth', () => {
     const components = discoverComponents(FIXTURES);
     // Every fixture with a pkg.scripts block is found...
-    expect(components).toEqual(expect.arrayContaining(['valid', 'zeroMatch', 'scopedLiteral', 'globEntry', 'negation', 'nonString']));
+    expect(components).toEqual(expect.arrayContaining(['valid', 'zeroMatch', 'scopedLiteral', 'globEntry', 'negation', 'nonString', 'stringForm']));
     // ...including one nested deeper than two levels (discovery is unbounded)...
     expect(components).toContain(path.join('nested', 'inner', 'deepComponent'));
     // ...and the pkg-block-without-scripts fixture is not.
