@@ -33,6 +33,7 @@ DOCSERVICE_PID=
 REDIS_PID=
 SERVER_PORT=
 REDIS_PORT=
+REDIS_SMOKE_KEY=
 
 find_free_port() {
   port=$1
@@ -51,14 +52,15 @@ find_free_port() {
 stop_process() {
   pid=$1
   [ -n "$pid" ] || return 0
-  kill -0 "$pid" 2>/dev/null || return 0
-  kill "$pid" 2>/dev/null || true
-  attempts=0
-  while kill -0 "$pid" 2>/dev/null && [ "$attempts" -lt 50 ]; do
-    sleep 0.1
-    attempts=$((attempts + 1))
-  done
-  kill -KILL "$pid" 2>/dev/null || true
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    attempts=0
+    while kill -0 "$pid" 2>/dev/null && [ "$attempts" -lt 50 ]; do
+      sleep 0.1
+      attempts=$((attempts + 1))
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
   wait "$pid" 2>/dev/null || true
 }
 
@@ -77,6 +79,9 @@ cleanup() {
   trap - EXIT HUP INT TERM
   stop_process "$DOCSERVICE_PID"
   if [ -n "$REDIS_PORT" ]; then
+    if [ -n "$REDIS_SMOKE_KEY" ]; then
+      redis-cli -h 127.0.0.1 -p "$REDIS_PORT" DEL "$REDIS_SMOKE_KEY" >/dev/null 2>&1 || true
+    fi
     redis-cli -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
   fi
   stop_process "$REDIS_PID"
@@ -89,6 +94,7 @@ trap 'exit 143' HUP INT TERM
 
 SERVER_PORT=$(find_free_port 18000 18999)
 REDIS_PORT=$(find_free_port 16379 17378)
+REDIS_SMOKE_KEY="pkg-smoke:${$}:health"
 
 # The image has already proved that its normal DocService can become ready.
 # Stop that supervisor-managed instance so this check has one isolated
@@ -118,12 +124,19 @@ for _ in $(seq 1 50); do
 done
 [ "$redis_ready" = true ] || fail_with_log "Standalone Redis did not become ready on port $REDIS_PORT"
 
+# Exercise the disposable Redis instance directly as well as through the
+# DocService health endpoint below. This catches a broken Redis runtime or
+# cleanup path independently of the packaged process.
+redis-cli -h 127.0.0.1 -p "$REDIS_PORT" SET "$REDIS_SMOKE_KEY" ready >/dev/null
+[ "$(redis-cli -h 127.0.0.1 -p "$REDIS_PORT" GET "$REDIS_SMOKE_KEY")" = ready ] || \
+  fail_with_log 'Standalone Redis did not complete a SET/GET smoke check'
+
 export NODE_ENV=production-linux
 export NODE_CONFIG_DIR="$CONFIG_DIR"
 export HOME="${HOME:-/home/ds}"
 export APPLICATION_NAME="${APPLICATION_NAME:-euro-office}"
 node_config=$(printf \
-  '{"log":{"options":{"categories":{"default":{"level":"DEBUG"}}}},"services":{"CoAuthoring":{"server":{"port":%s,"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"host":"127.0.0.1","port":%s,"prefix":"pkg-smoke:%s:","optionsCluster":{},"optionsSentinel":{}}}}}' \
+  '{"log":{"options":{"categories":{"default":{"level":"DEBUG"}}}},"services":{"CoAuthoring":{"server":{"port":%s,"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"host":"127.0.0.1","port":%s,"prefix":"pkg-smoke:%s:","optionsCluster":{},"optionsSentinel":{}},"expire":{"shard":300,"savedClaim":86400}}}}' \
   "$SERVER_PORT" "$REDIS_PORT" "$$")
 export NODE_CONFIG="$node_config"
 
@@ -153,8 +166,8 @@ fi
 # The Redis adapter logs through the packaged process. Together with the
 # Redis-backed healthcheck above, this makes the selected implementation
 # observable rather than merely checking that the executable stayed alive.
-grep -q '\[editorDataRedis\]' "$DOCSERVICE_LOG" || \
-  fail_with_log 'Packaged DocService did not load the editorDataRedis module'
+grep -Eq '\[editorDataRedis\].*client' "$DOCSERVICE_LOG" || \
+  fail_with_log 'Packaged DocService did not create an editorDataRedis client'
 
 # Keep the process healthy for a short interval, catching delayed startup or
 # reconnect failures that a single readiness request would miss.
