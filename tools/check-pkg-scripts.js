@@ -21,6 +21,10 @@
  * checkout path) that contains actual glob syntax is reported rather than guessed at (see
  * below), so the guard does not silently diverge from pkg by mis-resolving a pattern.
  *
+ * Verified against pkg's matcher, tinyglobby ^0.2.11, which every pkg version in use here
+ * depends on (6.14.x on Node 20 through 6.23.x on Node 22). Re-check this guard if pkg
+ * switches its glob engine.
+ *
  * Components are discovered, not hardcoded: any package.json (outside node_modules)
  * carrying a `pkg.scripts` block is checked, so a newly added component is covered
  * automatically instead of silently escaping the guard.
