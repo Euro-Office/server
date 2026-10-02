@@ -121,8 +121,15 @@ function wait(milliseconds) {
 }
 
 class RedisConnection {
-  constructor(database) {
+  constructor(database, {serializeOperations = false} = {}) {
     this.database = database;
+    // A node-redis client multiplexes commands, but its queue cannot safely
+    // remove a command that has already been written. If that command times
+    // out, its physical connection must be aborted to avoid matching a late
+    // reply with a different operation. Editor-data enables this lane from
+    // the connection manager so queued operations can continue on a fresh
+    // client generation without sharing a half-open socket.
+    this.serializeOperations = serializeOperations;
     this.client = null;
     this.connectPromise = null;
     this.connector = null;
@@ -136,6 +143,8 @@ class RedisConnection {
     this.closePromise = null;
     this.activeOperations = 0;
     this.idleWaiters = [];
+    this.operationTail = Promise.resolve();
+    this.clientGeneration = 0;
   }
 
   _createClient() {
@@ -152,17 +161,20 @@ class RedisConnection {
     if (this.cluster && this.sentinel) {
       throw new Error('Redis Cluster and Redis Sentinel options cannot be enabled together');
     }
+    let client;
     if (this.sentinel) {
-      this.client = createSentinelClient(normalizeSentinelOptions(cfgRedisOptionsSentinel, this.database));
+      client = createSentinelClient(normalizeSentinelOptions(cfgRedisOptionsSentinel, this.database));
     } else if (this.cluster) {
       if (this.database !== undefined && this.database !== null && Number(this.database) !== 0) {
         log('error', 'Redis Cluster cannot use logical database %s; configure database 0', this.database);
         throw new Error('Redis Cluster does not support a non-zero logical database');
       }
-      this.client = redis.createCluster(normalizeClusterOptions(cfgRedisOptionsCluster));
+      client = redis.createCluster(normalizeClusterOptions(cfgRedisOptionsCluster));
     } else {
-      this.client = redis.createClient(normalizeNodeOptions(cfgRedisOptions, this.database));
+      client = redis.createClient(normalizeNodeOptions(cfgRedisOptions, this.database));
     }
+    this.client = client;
+    this.clientGeneration++;
     this.closed = false;
     log(
       'debug',
@@ -194,10 +206,10 @@ class RedisConnection {
   async _connect() {
     if (this.connectPromise) {
       await this.connectPromise;
-      return this.client;
+      return this._getClientSnapshot();
     }
     if (this.isConnected()) {
-      return this.client;
+      return this._getClientSnapshot();
     }
     if (this.client && this.connectionAttempted && !this.client.isOpen) {
       this._abortClient();
@@ -219,11 +231,12 @@ class RedisConnection {
       currentClient.isReady ?? 'n/a'
     );
     this.connectionAttempted = true;
-    this.connectPromise = this._connectWithRetries(startedAt);
+    const connectPromise = this._connectWithRetries(startedAt);
+    this.connectPromise = connectPromise;
     try {
-      const connectedClient = await this.connectPromise;
+      const connectedClient = await connectPromise;
       log('debug', 'connect ready after %dms (connector=%s)', Date.now() - startedAt, this.connector);
-      return connectedClient;
+      return this._getClientSnapshot(connectedClient);
     } catch (error) {
       log(
         'error',
@@ -238,7 +251,9 @@ class RedisConnection {
       await this._closeClient(currentClient);
       throw error;
     } finally {
-      this.connectPromise = null;
+      if (this.connectPromise === connectPromise) {
+        this.connectPromise = null;
+      }
     }
   }
 
@@ -270,7 +285,7 @@ class RedisConnection {
         }
         return currentClient;
       } catch (error) {
-        await this._closeClient(currentClient);
+        await this._closeClient(currentClient, {preserveConnectPromise: true});
         const canRetry =
           this.sentinel &&
           !this.closing &&
@@ -301,54 +316,67 @@ class RedisConnection {
     return Boolean(this.client.isReady ?? this.client.isOpen);
   }
 
-  _getClient(client) {
-    if (!client || client !== this.client) {
+  _getClientSnapshot(client = this.client, generation = this.clientGeneration) {
+    return {client, generation};
+  }
+
+  _getClient({client, generation}) {
+    if (!client || client !== this.client || generation !== this.clientGeneration) {
       throw new RedisUnavailableError(new Error('Redis client is unavailable'));
     }
     return client;
   }
 
   async command(args) {
-    return this._withOperation(async () => {
-      const client = this._getClient(await this._connect());
-      const normalized = args.map(toRedisString);
-      const commandName = normalized[0] ? normalized[0].toUpperCase() : 'UNKNOWN';
-      const startedAt = Date.now();
-      log('debug', 'command start %s (keys=%d)', commandName, Math.max(0, normalized.length - 1));
-      try {
-        let result;
-        if (this.cluster) {
-          const command = normalized[0].toUpperCase();
-          const firstKey = command === 'EVAL' ? normalized[3] : command === 'PING' ? undefined : normalized[1];
-          result = client.sendCommand(firstKey, false, normalized);
-        } else if (this.sentinel) {
-          result = client.sendCommand(false, normalized);
-        } else {
-          result = client.sendCommand(normalized);
-        }
-        result = await this._withCommandTimeout(result, `Redis command ${commandName}`, client);
-        log('debug', 'command end %s after %dms', commandName, Date.now() - startedAt);
-        return result;
-      } catch (error) {
-        log('error', 'command failed %s after %dms (connector=%s): %s', commandName, Date.now() - startedAt, this.connector, errorDetails(error));
-        throw error;
-      }
-    });
+    return this._withOperation(() => this._command(args));
   }
 
   async commands(commands) {
-    return this._withOperation(async () => {
+    if (this.cluster) {
+      // Cluster batches are independent commands. Route them through the
+      // operation boundary individually so a timed-out command cannot abort
+      // another batch member that has not reached the wire yet.
+      return Promise.all(commands.map(command => this.command(command)));
+    }
+    return this._withOperation(() => this._commands(commands));
+  }
+
+  async _command(args) {
+    const clientSnapshot = await this._connect();
+    const client = this._getClient(clientSnapshot);
+    const normalized = args.map(toRedisString);
+    const commandName = normalized[0] ? normalized[0].toUpperCase() : 'UNKNOWN';
+    const startedAt = Date.now();
+    log('debug', 'command start %s (keys=%d)', commandName, Math.max(0, normalized.length - 1));
+    try {
+      let result;
       if (this.cluster) {
-        return Promise.all(commands.map(command => this.command(command)));
+        const command = normalized[0].toUpperCase();
+        const firstKey = command === 'EVAL' ? normalized[3] : command === 'PING' ? undefined : normalized[1];
+        result = client.sendCommand(firstKey, false, normalized);
+      } else if (this.sentinel) {
+        result = client.sendCommand(false, normalized);
+      } else {
+        result = client.sendCommand(normalized);
       }
-      const client = this._getClient(await this._connect());
-      const multi = client.multi();
-      for (const args of commands) {
-        const normalized = args.map(toRedisString);
-        multi.addCommand(...(this.sentinel ? [false, normalized] : [normalized]));
-      }
-      return this._withCommandTimeout(multi.exec(), `Redis transaction with ${commands.length} commands`, client);
-    });
+      result = await this._withCommandTimeout(result, `Redis command ${commandName}`, clientSnapshot);
+      log('debug', 'command end %s after %dms', commandName, Date.now() - startedAt);
+      return result;
+    } catch (error) {
+      log('error', 'command failed %s after %dms (connector=%s): %s', commandName, Date.now() - startedAt, this.connector, errorDetails(error));
+      throw error;
+    }
+  }
+
+  async _commands(commands) {
+    const clientSnapshot = await this._connect();
+    const client = this._getClient(clientSnapshot);
+    const multi = client.multi();
+    for (const args of commands) {
+      const normalized = args.map(toRedisString);
+      multi.addCommand(...(this.sentinel ? [false, normalized] : [normalized]));
+    }
+    return this._withCommandTimeout(multi.exec(), `Redis transaction with ${commands.length} commands`, clientSnapshot);
   }
 
   async eval(script, keys, args) {
@@ -376,20 +404,28 @@ class RedisConnection {
     }
   }
 
-  _detachClient(expectedClient = this.client) {
+  _detachClient(expectedClient = this.client, expectedGeneration, {preserveConnectPromise = false} = {}) {
     if (expectedClient && expectedClient !== this.client) {
+      return null;
+    }
+    if (expectedGeneration !== undefined && expectedGeneration !== this.clientGeneration) {
       return null;
     }
     const client = this.client;
     this.client = null;
-    this.connectPromise = null;
+    if (client) {
+      this.clientGeneration++;
+    }
+    if (!preserveConnectPromise) {
+      this.connectPromise = null;
+    }
     this.connectionAttempted = false;
     this.lastError = null;
     return client;
   }
 
-  async _closeClient(expectedClient = this.client) {
-    const client = this._detachClient(expectedClient);
+  async _closeClient(expectedClient = this.client, {preserveConnectPromise = false} = {}) {
+    const client = this._detachClient(expectedClient, undefined, {preserveConnectPromise});
     if (!client || !client.isOpen) {
       return;
     }
@@ -417,16 +453,20 @@ class RedisConnection {
       return Promise.reject(new RedisUnavailableError(new Error('Redis connection is closed')));
     }
     this.activeOperations++;
-    return Promise.resolve()
-      .then(operation)
-      .finally(() => {
-        this.activeOperations--;
-        if (this.activeOperations === 0) {
-          const waiters = this.idleWaiters;
-          this.idleWaiters = [];
-          waiters.forEach(resolve => resolve());
-        }
-      });
+    const previous = this.serializeOperations ? this.operationTail : Promise.resolve();
+    const execution = previous.then(() => Promise.resolve().then(operation));
+    const result = execution.finally(() => {
+      this.activeOperations--;
+      if (this.activeOperations === 0) {
+        const waiters = this.idleWaiters;
+        this.idleWaiters = [];
+        waiters.forEach(resolve => resolve());
+      }
+    });
+    if (this.serializeOperations) {
+      this.operationTail = result.catch(() => undefined);
+    }
+    return result;
   }
 
   _waitForIdle() {
@@ -436,8 +476,8 @@ class RedisConnection {
     return new Promise(resolve => this.idleWaiters.push(resolve));
   }
 
-  _abortClient(expectedClient = this.client) {
-    const client = this._detachClient(expectedClient);
+  _abortClient(clientSnapshot = this._getClientSnapshot()) {
+    const client = this._detachClient(clientSnapshot.client, clientSnapshot.generation);
     if (!client || !client.isOpen) {
       return;
     }
@@ -448,12 +488,12 @@ class RedisConnection {
     }
   }
 
-  async _withCommandTimeout(promise, description, client = this.client) {
+  async _withCommandTimeout(promise, description, clientSnapshot = this._getClientSnapshot()) {
     try {
       return await withTimeout(promise, this.commandTimeoutMs, description);
     } catch (error) {
-      if (error.code === 'ETIMEDOUT') {
-        this._abortClient(client);
+      if (error.code === 'ETIMEDOUT' || error.constructor?.name === 'TimeoutError') {
+        this._abortClient(clientSnapshot);
       }
       throw error;
     }
