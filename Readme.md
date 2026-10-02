@@ -30,6 +30,29 @@ For Cluster deployments, configure all nodes with the same command and data
 semantics. For Sentinel deployments, configure one primary, its replicas, and
 the Sentinel quorum through `optionsSentinel`.
 
+Sentinel configuration uses the node-redis shape below. Redis-node credentials
+belong in `nodeClientOptions`; Sentinel credentials belong in
+`sentinelClientOptions`. Omit both credential objects when the corresponding
+deployment is unauthenticated. For compatibility with older entrypoints, an
+empty password with no username or with the legacy `default` username is
+treated as omitted authentication; any other configured username requires a
+non-empty password.
+
+```json
+{
+  "name": "mymaster",
+  "sentinelRootNodes": [{"host": "sentinel-1", "port": 26379}],
+  "nodeClientOptions": {"username": "default", "password": "redis-secret", "database": 0},
+  "sentinelClientOptions": {"username": "default", "password": "sentinel-secret"}
+}
+```
+
+Initial Sentinel discovery retries transient topology errors three times. The
+outer connection attempt is bounded by 15 seconds; commands have a 30-second
+adapter timeout and fail before readiness rather than entering an unbounded
+offline queue. A deliberate store or process shutdown remains terminal until
+the store is recreated.
+
 ### Memory and eviction policy
 
 Set the following on every primary and replica:

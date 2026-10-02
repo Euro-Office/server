@@ -140,27 +140,31 @@ describe('editorDataRedis saved-state claims', () => {
       'services.CoAuthoring.expire.savedClaim': 1
     });
     const docId = 'document';
-
-    await stores[0].addPresence(ctx, docId, 'user-a', JSON.stringify({id: 'user-a'}));
-    await stores[0].setSaved(ctx, docId, '1');
-    assert.equal(await stores[0].getdelSaved(ctx, docId, 'operation-a'), '1');
-    await stores[0].removePresence(ctx, docId, 'user-a');
-    await stores[0].addForceSaveTimerNX(ctx, docId, 12345);
-    await wait(1200);
-
-    await stores[1].setSaved(ctx, docId, '0');
-    assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
-
     const indexKeys = stores[0]._indexKeys(ctx, docId);
     const member = documentMember(ctx, docId);
-    assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), null);
 
-    await stores[0].cleanDocumentOnExit(ctx, docId, 'operation-a');
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-a', JSON.stringify({id: 'user-a'}));
+      await stores[0].setSaved(ctx, docId, '1');
+      assert.equal(await stores[0].getdelSaved(ctx, docId, 'operation-a'), '1');
+      await stores[0].removePresence(ctx, docId, 'user-a');
+      await stores[0].addForceSaveTimerNX(ctx, docId, 12345);
+      await wait(1200);
 
-    assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), null);
-    assert.equal(await stores[0]._command(['ZSCORE', indexKeys.forceSaveTimer, member]), '12345');
-    assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
-    await stores[1].ackSaved(ctx, docId, 'operation-b');
+      await stores[1].setSaved(ctx, docId, '0');
+      assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
+
+      assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), null);
+
+      await stores[0].cleanDocumentOnExit(ctx, docId, 'operation-a');
+
+      assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), null);
+      assert.equal(await stores[0]._command(['ZSCORE', indexKeys.forceSaveTimer, member]), '12345');
+      assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
+      await stores[1].ackSaved(ctx, docId, 'operation-b');
+    } finally {
+      await stores[0]._command(['ZREM', indexKeys.forceSaveTimer, member]);
+    }
   });
 
   test('keeps an outstanding claim while another replica still has presence', async () => {
