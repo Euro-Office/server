@@ -526,8 +526,6 @@ function closeLocalResources() {
   if (watcher) {
     closeResource('plugins watcher', () => watcher.close());
   }
-
-  closeResource('runtime configuration watcher', () => runtimeConfigManager.closeRuntimeConfigWatcher());
 }
 
 function waitForHttpServerClose() {
