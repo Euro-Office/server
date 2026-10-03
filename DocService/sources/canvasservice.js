@@ -39,6 +39,7 @@ const taskResult = require('./taskresult');
 const wopiUtils = require('./wopiUtils');
 const wopiClient = require('./wopiClient');
 const utils = require('./../../Common/sources/utils');
+const {consumeSavedState} = require('./savedState');
 const constants = require('./../../Common/sources/constants');
 const commonDefines = require('./../../Common/sources/commondefines');
 const storage = require('./../../Common/sources/storage/storage-base');
@@ -1018,6 +1019,16 @@ function checkAndFixAuthorizationLength(authorization, data) {
   }
   return res;
 }
+function getSavedClaimId(cmd) {
+  const saveKey = cmd.getSaveKey();
+  if (saveKey !== undefined && saveKey !== null && saveKey !== '') {
+    return String(saveKey);
+  }
+  // SFC tasks normally always have a random saveKey.  Keep an explicit,
+  // deterministic fallback for older or manually-created tasks so a retry
+  // still addresses the same saved-state claim.
+  return `fallback:${cmd.getOutputPath() || ''}:${cmd.getStatusInfoIn() || ''}:${cmd.getUserActionId() || cmd.getUserId() || ''}`;
+}
 const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
@@ -1061,6 +1072,8 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       lastOpenDate = row.last_open_date;
     }
     let storeForgotten = false;
+    let savedClaimed = false;
+    let savedClaimId;
     let statusOk;
     let statusErr;
     if (isSfcm) {
@@ -1254,8 +1267,10 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
             const replyData = docsCoServer.parseReplyData(ctx, replyStr);
             if (replyData && commonDefines.c_oAscServerCommandErrors.NoError == replyData.error) {
               //in the case of a community server, a request will come to the Command Service, check the result
-              const savedVal = yield docsCoServer.editorData.getdelSaved(ctx, docId);
-              requestRes = null == savedVal || '1' === savedVal;
+              savedClaimId = getSavedClaimId(cmd);
+              const savedState = yield consumeSavedState(docsCoServer.editorData, ctx, docId, savedClaimId);
+              requestRes = savedState.success;
+              savedClaimed = savedState.claimed;
             }
             if (replyData && commonDefines.c_oAscServerCommandErrors.NoError != replyData.error) {
               ctx.logger.warn('sendServerRequest returned an error: data = %s', replyStr);
@@ -1263,7 +1278,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
             if (requestRes) {
               isSfcSuccess = true;
               updateIfTask = undefined;
-              yield docsCoServer.cleanDocumentOnExitPromise(ctx, docId, true, callbackUserIndex);
+              yield docsCoServer.cleanDocumentOnExitPromise(ctx, docId, true, callbackUserIndex, savedClaimed ? savedClaimId : undefined);
               if (isOpenFromForgotten) {
                 //remove forgotten file in cache
                 yield cleanupCache(ctx, docId);
@@ -1314,7 +1329,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       if (!isSfcm) {
         //todo simultaneous opening
         //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-        yield docsCoServer.editorData.cleanDocumentOnExit(ctx, docId);
+        yield docsCoServer.editorData.cleanDocumentOnExit(ctx, docId, savedClaimed ? savedClaimId : undefined);
         if (docsCoServer.getIsPreStop() && docsCoServer?.editorStatProxy?.deleteKey) {
           yield docsCoServer.editorStatProxy.deleteKey(docId);
         }
@@ -1337,6 +1352,13 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       const timeout = retry.createTimeout(attempt, tenCallbackBackoffOptions.timeout);
       ctx.logger.debug('commandSfcCallback backoff timeout = %d', timeout);
       yield* docsCoServer.addDelayed(queueData, timeout);
+    }
+    // A claim is retained through document cleanup so a worker crash can
+    // replay the same task.  Resolve it after saved-state work and retry
+    // scheduling for this callback are complete; version publication and
+    // shutdown bookkeeping below are outside this claim lifecycle.
+    if (savedClaimed && !needRetry) {
+      yield docsCoServer.editorData.ackSaved(ctx, docId, savedClaimId);
     }
   } else {
     ctx.logger.debug('commandSfcCallback cleanDocumentOnExitNoChangesPromise');
@@ -2089,6 +2111,9 @@ exports.receiveTask = function (data, ack) {
       ctx.logger.error('receiveTask error: %s', err.stack);
     } finally {
       ctx.logger.info('receiveTask end');
+      // Queue delivery is acknowledged even when processing fails.  Saved-state
+      // recovery is provided by callback retries and the Redis claim lease;
+      // broker redelivery is not used for these failures.
       ack();
     }
   });

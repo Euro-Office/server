@@ -320,6 +320,15 @@ function createInfoRouter(getConnections = null) {
   return router;
 }
 
+async function close() {
+  if (editorStat?.close) {
+    await editorStat.close();
+  }
+}
+
 module.exports = createInfoRouter;
 // Export handler for reuse
 module.exports.licenseInfo = licenseInfo;
+// The server owns the process lifecycle and releases this store before the
+// shared Redis connection manager performs terminal cleanup.
+module.exports.close = close;

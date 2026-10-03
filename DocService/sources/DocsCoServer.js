@@ -159,6 +159,7 @@ if (process.env.REDIS_SERVER_DB_KEYS_NUM) {
 }
 const clientStatsD = statsDClient.getClient();
 let connections = []; // Active connections
+let io;
 const lockDocumentsTimerId = {}; //to drop connection that can't unlockDocument
 let pubsub;
 let queue;
@@ -485,7 +486,7 @@ function addPresence(ctx, conn, updateCunters) {
 }
 async function updatePresence(ctx, conn) {
   if (editorData.updatePresence) {
-    return await editorData.updatePresence(ctx, conn.docId, conn.user.id);
+    return await editorData.updatePresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
   } else {
     //todo remove if after 7.6. code for backward compatibility, because redis in separate repo
     return await editorData.addPresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
@@ -493,7 +494,7 @@ async function updatePresence(ctx, conn) {
 }
 function removePresence(ctx, conn) {
   return co(function* () {
-    yield editorData.removePresence(ctx, conn.docId, conn.user.id);
+    yield editorData.removePresence(ctx, conn.docId, conn.user.id, conn.id);
     yield updatePresenceCounters(ctx, conn, -1);
   });
 }
@@ -931,6 +932,20 @@ async function getForceSaveUrl(ctx, baseUrl, convertInfo) {
   return null;
 }
 
+// checkAndStartForceSave returns undefined both when there is no winner and
+// when the force-save is already active. Form/Internal callers can report the
+// latter, so reread the authoritative state; backend errors must propagate.
+async function markForceSaveInProgress(ctx, docId, type, res) {
+  if (res.startedForceSave || (commonDefines.c_oAscForceSaveTypes.Form !== type && commonDefines.c_oAscForceSaveTypes.Internal !== type)) {
+    return;
+  }
+  const forceSave = await editorData.getForceSave(ctx, docId);
+  if (forceSave?.started && !forceSave.ended) {
+    res.ok = true;
+    res.inProgress = true;
+  }
+}
+
 async function applyForceSaveCache(
   ctx,
   docId,
@@ -980,6 +995,7 @@ async function applyForceSaveCache(
         await editorData.checkAndSetForceSave(ctx, docId, forceSave.time, forceSave.index, false, false, null);
         res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
         res.ok = !!res.startedForceSave;
+        await markForceSaveInProgress(ctx, docId, type, res);
       }
     } else {
       res.notModified = true;
@@ -1000,6 +1016,7 @@ async function applyForceSaveCache(
     }
     res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
     res.ok = !!res.startedForceSave;
+    await markForceSaveInProgress(ctx, docId, type, res);
     return res;
   } else if (commonDefines.c_oAscForceSaveTypes.Form === type || commonDefines.c_oAscForceSaveTypes.Internal === type) {
     res.ok = true;
@@ -1522,11 +1539,11 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
     }
   }
 });
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  yield editorData.cleanDocumentOnExit(ctx, docId);
+  yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
   if (preStopFlag && editorStatProxy?.deleteKey) {
     yield editorStatProxy.deleteKey(docId);
   }
@@ -1815,7 +1832,7 @@ async function encryptPasswordParams(ctx, data) {
 exports.encryptPasswordParams = encryptPasswordParams;
 exports.getOpenFormatByEditor = getOpenFormatByEditor;
 exports.install = function (server, app, callbackFunction) {
-  const io = new Server(server, cfgSocketIoConnection);
+  io = new Server(server, cfgSocketIoConnection);
 
   io.use((socket, next) => {
     co(function* () {
@@ -4647,6 +4664,10 @@ exports.commandFromServer = function (req, res) {
       ctx.logger.info('commandFromServer end : %s', outputBuffer);
     }
   });
+};
+
+exports.close = function () {
+  return io?.close?.();
 };
 
 exports.shutdown = function (req, res) {

@@ -12,6 +12,17 @@ jobs:
     name: Service unit tests
     runs-on: ubuntu-latest
 
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -36,3 +47,8 @@ jobs:
 
       - name: Run Jest
         run: npm run "unit tests"
+
+      - name: Run Redis editor-data tests
+        env:
+          TEST_REDIS_PREFIX: 'ci:unit-editor-data:${{ github.run_id }}:${{ github.run_attempt }}:'
+        run: npm run tests -- --runInBand ../tests/redis

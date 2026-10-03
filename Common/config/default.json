@@ -410,13 +410,7 @@
         "port": 6379,
         "options": {},
         "optionsCluster": {},
-        "iooptions": {
-          "lazyConnect": true
-        },
-        "iooptionsClusterNodes": [],
-        "iooptionsClusterOptions": {
-          "lazyConnect": true
-        }
+        "optionsSentinel": {}
       },
       "pubsub": {
         "maxChanges": 1000
@@ -424,6 +418,7 @@
       "expire": {
         "saveLock": 60,
         "presence": 300,
+        "shard": 300,
         "locks": 604800,
         "changeindex": 86400,
         "lockDoc": 30,
@@ -432,6 +427,7 @@
         "forcesave": 604800,
         "forcesaveLock": 5000,
         "saved": 3600,
+        "savedClaim": 86400,
         "documentsCron": "0 */2 * * * *",
         "files": 86400,
         "filesCron": "00 00 */1 * * *",
