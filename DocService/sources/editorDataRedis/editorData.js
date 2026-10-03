@@ -100,19 +100,19 @@ EditorData.prototype._syncPresenceIndex = function (ctx, docId, expected, desire
   return this._eval(
     SYNC_DOCUMENT_PRESENCE_INDEX_SCRIPT,
     [this._indexKeys(ctx, docId).documents],
-    [documentMember(ctx, docId), expected || '', desired || '', String(Date.now())]
+    [documentMember(ctx, docId), expected || '', desired || '']
   );
 };
 
 EditorData.prototype.addPresence = async function (ctx, docId, userId, userInfo) {
   const keys = this._docKeys(ctx, docId);
   const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.presence', cfgExpPresence);
-  const expireAt = Date.now() + ttl * 1000;
-  await this._eval(
+  const result = await this._eval(
     ADD_PRESENCE_SCRIPT,
     [keys.presenceSet, keys.presenceHash, keys.presenceVersion],
-    [String(userId), String(userInfo), String(expireAt), String(ttl)]
+    [String(userId), String(userInfo), String(ttl)]
   );
+  const expireAt = toRedisString(result?.[1] || '');
   // The document index is intentionally updated separately: document presence
   // keys are hash-tagged per document, while this sharded index has its own
   // hash tag. Redis Cluster cannot execute both key groups in one Lua script.
@@ -124,13 +124,13 @@ EditorData.prototype.updatePresence = async function (ctx, docId, userId, ...pre
   const userInfo = presenceArgs[0];
   const keys = this._docKeys(ctx, docId);
   const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.presence', cfgExpPresence);
-  const expireAt = Date.now() + ttl * 1000;
   const updated = await this._eval(
     UPDATE_PRESENCE_SCRIPT,
     [keys.presenceSet, keys.presenceHash, keys.presenceVersion],
-    [String(userId), String(expireAt), String(ttl), userInfo === undefined ? '' : String(userInfo)]
+    [String(userId), String(ttl), userInfo === undefined ? '' : String(userInfo)]
   );
-  if (Number(updated) === 1) {
+  if (Number(updated?.[0]) === 1) {
+    const expireAt = toRedisString(updated[1] || '');
     await this._syncPresenceIndex(ctx, docId, String(expireAt), String(expireAt));
   }
 };
@@ -141,14 +141,14 @@ EditorData.prototype.removePresence = async function (ctx, docId, userId, ...pre
   const result = await this._eval(
     REMOVE_PRESENCE_SCRIPT,
     [keys.presenceSet, keys.presenceHash, keys.presenceVersion],
-    [String(userId), connectionId === undefined ? '' : String(connectionId), String(Date.now())]
+    [String(userId), connectionId === undefined ? '' : String(connectionId)]
   );
   await this._syncPresenceIndex(ctx, docId, toRedisString(result?.[2] || ''), toRedisString(result?.[3] || ''));
 };
 
 EditorData.prototype.getPresence = async function (ctx, docId, _connections) {
   const keys = this._docKeys(ctx, docId);
-  const result = await this._eval(GET_PRESENCE_SCRIPT, [keys.presenceSet, keys.presenceHash, keys.presenceVersion], [String(Date.now())]);
+  const result = await this._eval(GET_PRESENCE_SCRIPT, [keys.presenceSet, keys.presenceHash, keys.presenceVersion], []);
   const values = Array.isArray(result?.[0]) ? result[0] : result || [];
   await this._syncPresenceIndex(ctx, docId, toRedisString(result?.[2] || ''), toRedisString(result?.[1] || ''));
   return values.map(toRedisString);
@@ -184,13 +184,12 @@ function addExpiredBatchMetadata(batch, hasMore, hasShardFailure = false, shardF
   return batch;
 }
 
-EditorData.prototype._popExpired = async function (indexKey, leaseKey, claimsKey, now) {
+EditorData.prototype._popExpired = async function (indexKey, leaseKey, claimsKey, now, useRedisTime) {
   const claimId = this._nextExpiredClaim();
-  const values = await this._eval(
-    POP_EXPIRED_SCRIPT,
-    [indexKey, leaseKey, claimsKey],
-    [strictMax(now), String(Date.now() + this.expiredClaimLeaseMs), String(POP_EXPIRED_BATCH_SIZE), claimId]
-  );
+  const args = useRedisTime
+    ? ['', String(this.expiredClaimLeaseMs), String(POP_EXPIRED_BATCH_SIZE), claimId, 'redis-time']
+    : [strictMax(now), String(Date.now() + this.expiredClaimLeaseMs), String(POP_EXPIRED_BATCH_SIZE), claimId, ''];
+  const values = await this._eval(POP_EXPIRED_SCRIPT, [indexKey, leaseKey, claimsKey], args);
   const result = [];
   for (const value of values || []) {
     const item = decodeDocumentMember(value);
@@ -230,7 +229,7 @@ EditorData.prototype._popExpiredAcrossShards = async function (queueName, now) {
   const results = await Promise.allSettled(
     Array.from({length: EDITOR_INDEX_SHARD_COUNT}, (_, shard) => {
       const keys = this._indexKeysForShard(shard);
-      return this._popExpired(keys[queue.index], keys[queue.lease], keys[queue.claims], now);
+      return this._popExpired(keys[queue.index], keys[queue.lease], keys[queue.claims], now, queueName === 'documents');
     })
   );
   const batches = results.filter(result => result.status === 'fulfilled').map(result => result.value);
@@ -252,13 +251,13 @@ EditorData.prototype._popExpiredAcrossShards = async function (queueName, now) {
   return addExpiredBatchMetadata(batches.flat(), hasShardFailure || batches.some(batch => batch.hasMore === true), hasShardFailure, shardFailures);
 };
 
-EditorData.prototype.getDocumentPresenceExpired = function (now) {
-  return this._popExpiredAcrossShards('documents', now);
+EditorData.prototype.getDocumentPresenceExpired = function (_now) {
+  return this._popExpiredAcrossShards('documents');
 };
 
 EditorData.prototype.removePresenceDocument = async function (ctx, docId) {
   const keys = this._docKeys(ctx, docId);
-  const result = await this._eval(PREPARE_PRESENCE_REMOVAL_SCRIPT, [keys.presenceSet, keys.presenceHash, keys.presenceVersion], [String(Date.now())]);
+  const result = await this._eval(PREPARE_PRESENCE_REMOVAL_SCRIPT, [keys.presenceSet, keys.presenceHash, keys.presenceVersion], []);
   if (result && Number(result[0]) === 1) {
     await this._syncPresenceIndex(ctx, docId, toRedisString(result[1] || ''), '');
   } else if (result) {
@@ -462,7 +461,7 @@ EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClai
       keys.savedClaim,
       keys.forceSave
     ],
-    [String(Date.now()), savedClaimId === undefined || savedClaimId === null ? '' : String(savedClaimId)]
+    ['', savedClaimId === undefined || savedClaimId === null ? '' : String(savedClaimId)]
   );
   if (result && Number(result[0]) === 2) {
     return;

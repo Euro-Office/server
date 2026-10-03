@@ -26,33 +26,46 @@ end
 return tonumber(ARGV[4])
 `;
 
+const REDIS_TIME_MILLIS = `
+local function redisTimeMillis()
+  local time = redis.call('TIME')
+  return tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+end
+`;
+
 const ADD_PRESENCE_SCRIPT = `
-redis.call('ZADD', KEYS[1], ARGV[3], ARGV[1])
+${REDIS_TIME_MILLIS}
+local expireAt = redisTimeMillis() + tonumber(ARGV[3]) * 1000
+redis.call('ZADD', KEYS[1], expireAt, ARGV[1])
 redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
-redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4])
-redis.call('EXPIRE', KEYS[1], ARGV[4])
-redis.call('EXPIRE', KEYS[2], ARGV[4])
-return 1
+redis.call('SET', KEYS[3], tostring(expireAt), 'EX', ARGV[3])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+redis.call('EXPIRE', KEYS[2], ARGV[3])
+return {1, tostring(expireAt)}
 `;
 
 const UPDATE_PRESENCE_SCRIPT = `
+${REDIS_TIME_MILLIS}
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 0 then
-  if ARGV[4] == '' then
+  if ARGV[3] == '' then
     return 0
   end
-  redis.call('HSET', KEYS[2], ARGV[1], ARGV[4])
+  redis.call('HSET', KEYS[2], ARGV[1], ARGV[3])
 end
-redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
-redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[3])
-redis.call('EXPIRE', KEYS[1], ARGV[3])
-redis.call('EXPIRE', KEYS[2], ARGV[3])
-return 1
+local expireAt = redisTimeMillis() + tonumber(ARGV[2]) * 1000
+redis.call('ZADD', KEYS[1], expireAt, ARGV[1])
+redis.call('SET', KEYS[3], tostring(expireAt), 'EX', ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+return {1, tostring(expireAt)}
 `;
 
 const GET_PRESENCE_SCRIPT = `
-local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+${REDIS_TIME_MILLIS}
+local now = redisTimeMillis()
+local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now)
 if #expired > 0 then
-  redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+  redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
   for _, userId in ipairs(expired) do
     redis.call('HDEL', KEYS[2], userId)
   end
@@ -66,7 +79,7 @@ if #values > 0 then
   if score == '' then
     local ttl = redis.call('PTTL', KEYS[2])
     if ttl > 0 then
-      score = tostring(tonumber(ARGV[1]) + ttl)
+      score = tostring(now + ttl)
     end
   end
 end
@@ -74,6 +87,8 @@ return {values, score, version}
 `;
 
 const REMOVE_PRESENCE_SCRIPT = `
+${REDIS_TIME_MILLIS}
+local now = redisTimeMillis()
 local current = redis.call('HGET', KEYS[2], ARGV[1])
 local removed = 0
 if current then
@@ -100,7 +115,7 @@ if count > 0 then
   if score == '' then
     local ttl = redis.call('PTTL', KEYS[2])
     if ttl > 0 then
-      score = tostring(tonumber(ARGV[3]) + ttl)
+      score = tostring(now + ttl)
     end
   end
 end
@@ -108,9 +123,11 @@ return {removed, count, version, score}
 `;
 
 const PREPARE_PRESENCE_REMOVAL_SCRIPT = `
-local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+${REDIS_TIME_MILLIS}
+local now = redisTimeMillis()
+local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now)
 if #expired > 0 then
-  redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+  redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
   for _, userId in ipairs(expired) do
     redis.call('HDEL', KEYS[2], userId)
   end
@@ -122,7 +139,7 @@ if redis.call('HLEN', KEYS[2]) > 0 then
   if score == '' then
     local ttl = redis.call('PTTL', KEYS[2])
     if ttl > 0 then
-      score = tostring(tonumber(ARGV[1]) + ttl)
+      score = tostring(now + ttl)
     end
   end
   return {0, score, version}
@@ -133,6 +150,7 @@ return {1, version}
 `;
 
 const SYNC_DOCUMENT_PRESENCE_INDEX_SCRIPT = `
+${REDIS_TIME_MILLIS}
 local current = redis.call('ZSCORE', KEYS[1], ARGV[1])
 local expected = ARGV[2]
 local desired = ARGV[3]
@@ -154,21 +172,26 @@ end
 if expected ~= '' and tonumber(current) == tonumber(expected) then
   return redis.call('ZREM', KEYS[1], ARGV[1])
 end
-if expected == '' and tonumber(current) <= tonumber(ARGV[4]) then
+if expected == '' and tonumber(current) <= redisTimeMillis() then
   return redis.call('ZREM', KEYS[1], ARGV[1])
 end
 return 0
 `;
 
 const POP_EXPIRED_SCRIPT = `
+${REDIS_TIME_MILLIS}
 -- POP_EXPIRED is a bounded, at-least-once claim.  The caller must acknowledge
 -- each returned member after processing it.  Until then, the member stays in
--- the lease set and is reclaimed after ARGV[2] if the response or worker is
--- lost.  All keys use the same editor:index shard hash tag, so the operation
--- is atomic on both standalone Redis and Redis Cluster.
+-- the lease set and is reclaimed after the lease timestamp if the response or
+-- worker is lost.  ARGV[5] selects Redis TIME for document presence; the
+-- force-save queue retains its explicit caller-provided comparison time. All
+-- keys use the same editor:index shard hash tag, so the operation is atomic
+-- on both standalone Redis and Redis Cluster.
 local values = {}
+local useRedisTime = ARGV[5] == 'redis-time'
+local now = useRedisTime and redisTimeMillis() or tonumber(ARGV[1])
 local limit = tonumber(ARGV[3])
-local leaseUntil = ARGV[2]
+local leaseUntil = useRedisTime and tostring(now + tonumber(ARGV[2])) or ARGV[2]
 local claimId = ARGV[4]
 
 local function claim(member)
@@ -179,7 +202,7 @@ end
 
 -- Reclaim timed-out work first.  If a newer expiry was written while the
 -- member was leased, leave that newer source entry authoritative.
-local leased = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', ARGV[1], 'LIMIT', '0', limit)
+local leased = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now, 'LIMIT', '0', limit)
 for _, member in ipairs(leased) do
   if #values < limit then
     redis.call('ZREM', KEYS[2], member)
@@ -196,7 +219,7 @@ end
 -- claim the same source entry.
 local remaining = limit - #values
 if remaining > 0 then
-  local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', '0', remaining)
+  local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now, 'LIMIT', '0', remaining)
   for _, member in ipairs(expired) do
     redis.call('ZREM', KEYS[1], member)
     claim(member)
@@ -454,15 +477,17 @@ return result
 `;
 
 const CLEAN_DOCUMENT_SCRIPT = `
+${REDIS_TIME_MILLIS}
 -- Presence is shared by all replicas.  Expire stale entries first, then only
 -- remove document state when no live replica remains; otherwise an exiting
 -- replica could delete another replica's locks or in-flight state.  During
 -- terminal cleanup, an unowned saved claim is recovered as abandoned.  The
 -- operation that owns a claim passes its id in ARGV[2], so its claim remains
 -- available for acknowledgement after cleanup.
-local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+local now = redisTimeMillis()
+local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now)
 if #expired > 0 then
-  redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+  redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
   for _, userId in ipairs(expired) do
     redis.call('HDEL', KEYS[2], userId)
   end
@@ -474,7 +499,7 @@ if redis.call('HLEN', KEYS[2]) > 0 then
   if score == '' then
     local ttl = redis.call('PTTL', KEYS[2])
     if ttl > 0 then
-      score = tostring(tonumber(ARGV[1]) + ttl)
+      score = tostring(now + ttl)
     end
   end
   return {0, score, version}
