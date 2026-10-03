@@ -381,7 +381,11 @@ async function waitForReconnectSignal(client, selectedTopology, nodePort) {
 function clusterContainerForPort(port) {
   const index = Number(port) - 6999;
   assert.ok(Number.isInteger(index) && index >= 1 && index <= 6, `Unsupported Cluster node port ${port}`);
-  return `eo-test-redis-cluster-${index}-compose`;
+  const containerPrefix = process.env.TEST_REDIS_CLUSTER_CONTAINER_PREFIX || 'eo-test-redis-cluster-';
+  if (process.env.TEST_REDIS_CLUSTER_CONTAINER_PREFIX) {
+    return `${containerPrefix}${port}`;
+  }
+  return `${containerPrefix}${index}-compose`;
 }
 
 async function createUnreadyClient(probe) {
