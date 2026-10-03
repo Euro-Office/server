@@ -7,6 +7,7 @@
 
 const operationContext = require('./../../../../Common/sources/operationContext');
 const redis = require('redis');
+const {ClientOfflineError} = require('@redis/client/dist/lib/errors');
 const {REDIS_CONNECT_TIMEOUT_MS} = require('../redisConfig');
 
 const REDIS_LOG_PREFIX = '[editorDataRedis]';
@@ -42,7 +43,18 @@ class RedisUnavailableError extends Error {
 }
 
 function createSentinelClient(options) {
-  return redis.createSentinel(options);
+  const client = redis.createSentinel(options);
+  const targets = new Set([client, client._self]);
+  targets.forEach(target => {
+    const execute = target._execute.bind(target);
+    target._execute = (...args) => {
+      if (!client.isReady) {
+        return Promise.reject(new ClientOfflineError());
+      }
+      return execute(...args);
+    };
+  });
+  return client;
 }
 
 function withTimeout(promise, timeoutMs, description) {
