@@ -3,12 +3,13 @@
 require('./testSetup');
 
 const assert = require('node:assert/strict');
-const {afterEach, describe, test} = require('@jest/globals');
+const {afterEach, describe, jest, test} = require('@jest/globals');
 
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
 const {POP_EXPIRED_BATCH_SIZE, POP_EXPIRED_MAX_BATCH_SIZE} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
 const {POP_EXPIRED_SCRIPT} = require('../../DocService/sources/editorDataRedis/scripts');
 const {strictMax} = require('../../DocService/sources/editorDataRedis/redisValueCodec');
+const redisConnection = require('../../DocService/sources/editorDataRedis/redisConnection');
 const {
   EDITOR_INDEX_QUEUES,
   EDITOR_INDEX_SHARD_COUNT,
@@ -96,6 +97,81 @@ async function assertBatchLimit(queueName) {
     await Promise.all(third.map(item => queue.acknowledge(data, item)));
     assert.deepEqual(await queue.pop(data, Date.now()), []);
   } finally {
+    await data.close();
+  }
+}
+
+async function assertSkewedBacklogContinuation(queueName) {
+  const data = new EditorData();
+  const queue = queues[queueName];
+  const tenant = `skewed-backlog-${queueName}`;
+  const count = POP_EXPIRED_MAX_BATCH_SIZE + 4;
+  let remaining = count;
+
+  try {
+    // Keep more than the aggregate 96-item limit in one shard. Each Redis pop
+    // still returns at most the per-shard limit, so GC must use the metadata
+    // rather than the flattened result length to schedule its next pass.
+    await seed(data, queue, tenant, count, true);
+
+    while (remaining > 0) {
+      const batch = await queue.pop(data, Date.now());
+      assert.ok(batch.length > 0);
+      assert.ok(batch.length <= POP_EXPIRED_BATCH_SIZE);
+      assert.equal(batch.hasMore, remaining > batch.length);
+      await Promise.all(batch.map(item => queue.acknowledge(data, item)));
+      remaining -= batch.length;
+    }
+
+    const empty = await queue.pop(data, Date.now());
+    assert.deepEqual(empty, []);
+    assert.equal(empty.hasMore, false);
+  } finally {
+    await data.close();
+  }
+}
+
+async function assertShardFailurePreservesHealthyBatch(queueName) {
+  const data = new EditorData();
+  const queue = queues[queueName];
+  const tenant = `shard-failure-${queueName}`;
+  const ctx = context(tenant);
+  const failedShard = 0;
+  const healthyShard = 1;
+  const queueDefinition = EDITOR_INDEX_QUEUES[queueName === 'presence' ? 'documents' : 'forceSaveTimer'];
+  const failedIndex = data._indexKeysForShard(failedShard)[queueDefinition.index];
+  let healthyDocId;
+  const logSpy = jest.spyOn(redisConnection, 'log');
+
+  for (let candidate = 0; healthyDocId === undefined; ++candidate) {
+    const docId = `document-${candidate}`;
+    if (editorIndexShard(ctx, docId) === healthyShard) {
+      healthyDocId = docId;
+    }
+  }
+
+  try {
+    await queue.add(data, ctx, healthyDocId);
+    const popExpired = data._popExpired;
+    data._popExpired = async function (indexKey, ...args) {
+      if (indexKey === failedIndex) {
+        throw new Error('simulated shard failure');
+      }
+      return popExpired.call(this, indexKey, ...args);
+    };
+
+    const batch = await queue.pop(data, Date.now());
+    assert.deepEqual(batch, [[tenant, healthyDocId]]);
+    assert.equal(batch.hasMore, true);
+    assert.equal(batch.hasShardFailure, true);
+    assert.deepEqual(batch.shardFailures, [{shard: failedShard, message: 'simulated shard failure', code: undefined}]);
+    assert.ok(logSpy.mock.calls.some(call => call[0] === 'error' && call[1].includes('expired') && call[3] === failedShard));
+    assert.equal(await queue.acknowledge(data, batch[0]), true);
+
+    data._popExpired = popExpired;
+    assert.deepEqual(await queue.pop(data, Date.now()), []);
+  } finally {
+    logSpy.mockRestore();
     await data.close();
   }
 }
@@ -244,7 +320,8 @@ async function assertTimeoutAfterExecution(queueName) {
     // Pause the server before sending POP_EXPIRED.  The command reaches Redis,
     // executes after the pause, and its reply arrives after the client timeout.
     await data._command(['CLIENT', 'PAUSE', '100', 'WRITE']);
-    await assert.rejects(queue.pop(data, Date.now()), error => error.code === 'ETIMEDOUT');
+    const claimed = await queue.pop(data, Date.now());
+    assert.equal(claimed.hasShardFailure, true);
     await wait(150);
 
     retryData.expiredClaimLeaseMs = 50;
@@ -264,6 +341,10 @@ describe('editorDataRedis expiration claims', () => {
 
   test('limits document-presence expiration batches', () => assertBatchLimit('presence'));
   test('limits force-save expiration batches', () => assertBatchLimit('forceSave'));
+  test('continues a document-presence backlog concentrated in one shard', () => assertSkewedBacklogContinuation('presence'));
+  test('continues a force-save backlog concentrated in one shard', () => assertSkewedBacklogContinuation('forceSave'));
+  test('keeps healthy document-presence shards processing after one shard fails', () => assertShardFailurePreservesHealthyBatch('presence'));
+  test('keeps healthy force-save shards processing after one shard fails', () => assertShardFailurePreservesHealthyBatch('forceSave'));
   test('bounds document-presence claims across all shards', () => assertAggregateBatchLimit('presence'));
   test('bounds force-save claims across all shards', () => assertAggregateBatchLimit('forceSave'));
 

@@ -7,6 +7,7 @@ const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const commonDefines = require('../../Common/sources/commondefines');
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
+const {EDITOR_INDEX_SHARD_COUNT} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context} = require('./testHelpers');
 
 describe('editorDataRedis failure policy', () => {
@@ -59,8 +60,13 @@ describe('editorDataRedis failure policy', () => {
     await assert.rejects(data.getLocks(ctx, 'document'), /Redis unavailable/);
     await assert.rejects(data.getMessages(ctx, 'document'), /Redis unavailable/);
     await assert.rejects(data.getForceSave(ctx, 'document'), /Redis unavailable/);
-    await assert.rejects(data.getDocumentPresenceExpired(Date.now()), /Redis unavailable/);
-    await assert.rejects(data.getForceSaveTimer(Date.now()), /Redis unavailable/);
+    for (const expired of [data.getDocumentPresenceExpired(Date.now()), data.getForceSaveTimer(Date.now())]) {
+      const batch = await expired;
+      assert.deepEqual(batch, []);
+      assert.equal(batch.hasShardFailure, true);
+      assert.equal(batch.shardFailures.length, EDITOR_INDEX_SHARD_COUNT);
+      assert.ok(batch.shardFailures.every(failure => failure.message === 'Redis unavailable'));
+    }
   });
 
   test('does not continue destructive document cleanup after a Redis failure', async () => {
