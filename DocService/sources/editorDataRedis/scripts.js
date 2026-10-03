@@ -282,13 +282,34 @@ const CLAIM_SAVED_SCRIPT = `
 -- for a retry after a lost response or worker crash.
 local currentClaim = redis.call('HGET', KEYS[2], 'id')
 if currentClaim then
+  local claimState = redis.call('HGET', KEYS[2], 'state')
+  local claimedValue = redis.call('HGET', KEYS[2], 'value')
   -- Claims written before leases were introduced have no TTL.  Migrate them
   -- when first observed without extending claims that already have a lease.
   if redis.call('TTL', KEYS[2]) < 0 then
     redis.call('EXPIRE', KEYS[2], ARGV[2])
   end
-  if currentClaim == ARGV[1] then
-    local claimedValue = redis.call('HGET', KEYS[2], 'value')
+
+  if claimState == 'resolved' then
+    -- A duplicate delivery of the resolved operation must not consume a
+    -- newer saved value.  A different operation may claim that value.
+    if claimedValue then
+      return {'unknown'}
+    end
+    if currentClaim == ARGV[1] then
+      return {'absent'}
+    end
+    local value = redis.call('GET', KEYS[1])
+    if not value then
+      return {'absent'}
+    end
+    redis.call('HSET', KEYS[2], 'id', ARGV[1], 'value', value, 'state', 'pending')
+    redis.call('EXPIRE', KEYS[2], ARGV[2])
+    redis.call('DEL', KEYS[1])
+    return {'value', value}
+  end
+
+  if (not claimState or claimState == 'pending') and currentClaim == ARGV[1] then
     if claimedValue then
       return {'value', claimedValue}
     end
@@ -302,23 +323,44 @@ if not value then
   return {'absent'}
 end
 
-redis.call('HSET', KEYS[2], 'id', ARGV[1], 'value', value)
+redis.call('HSET', KEYS[2], 'id', ARGV[1], 'value', value, 'state', 'pending')
 redis.call('EXPIRE', KEYS[2], ARGV[2])
 redis.call('DEL', KEYS[1])
 return {'value', value}
 `;
 
 const ACK_SAVED_SCRIPT = `
-if redis.call('EXISTS', KEYS[1]) == 0 then
-  -- A duplicate acknowledgement, or an acknowledgement after the claim
-  -- expired, is already resolved and is therefore harmless.
-  return 1
-end
-if redis.call('HGET', KEYS[1], 'id') ~= ARGV[1] then
+local currentClaim = redis.call('HGET', KEYS[1], 'id')
+if not currentClaim or currentClaim ~= ARGV[1] then
+  -- The claim is unknown, expired, or belongs to another operation.
   return 0
 end
-redis.call('DEL', KEYS[1])
-return 1
+
+local claimState = redis.call('HGET', KEYS[1], 'state')
+if claimState == 'resolved' then
+  -- A resolved marker is retained under the original claim lease so a
+  -- response-loss retry can safely acknowledge the same operation again.
+  if redis.call('HEXISTS', KEYS[1], 'value') == 1 then
+    return -1
+  end
+  if redis.call('TTL', KEYS[1]) < 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+  end
+  return 2
+end
+
+-- Claims created before the state field was introduced are still valid as
+-- pending claims.  Any other shape is malformed and must fail closed.
+if (not claimState or claimState == 'pending') and redis.call('HEXISTS', KEYS[1], 'value') == 1 then
+  if redis.call('TTL', KEYS[1]) < 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+  end
+  redis.call('HSET', KEYS[1], 'state', 'resolved')
+  redis.call('HDEL', KEYS[1], 'value')
+  return 1
+end
+
+return -1
 `;
 
 // Force-save records use one hash field per scalar and payload.  Payload
