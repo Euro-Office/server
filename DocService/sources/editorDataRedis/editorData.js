@@ -362,8 +362,9 @@ EditorData.prototype.ackSaved = async function (ctx, docId, operationId) {
   if (operationId === undefined || operationId === null || operationId === '') {
     throw new SavedStateUnknownError(docId);
   }
-  const result = await this._eval(ACK_SAVED_SCRIPT, [this._docKeys(ctx, docId).savedClaim], [String(operationId)]);
-  if (Number(result) !== 1) {
+  const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.savedClaim', cfgExpSavedClaim);
+  const result = await this._eval(ACK_SAVED_SCRIPT, [this._docKeys(ctx, docId).savedClaim], [String(operationId), String(ttl)]);
+  if (Number(result) !== 1 && Number(result) !== 2) {
     throw new SavedStateUnknownError(docId);
   }
   return true;
