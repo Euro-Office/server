@@ -286,6 +286,7 @@ jobs:
         env:
           TEST_REDIS_TOPOLOGY_REQUIRED: 'true'
           TEST_REDIS_CLUSTER_FAILOVER_REPLICA_PORT: '7005'
+          TEST_REDIS_CLUSTER_CONTAINER_PREFIX: '${{ matrix.name }}-cluster-'
           TEST_REDIS_PREFIX: 'ci:editor-data-cluster-failover:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
         run: npm run tests -- --runInBand ../tests/redis/editorDataRedis.topology.tests.js
 
