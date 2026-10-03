@@ -7,7 +7,22 @@ const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
 const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
-const {context} = require('./testHelpers');
+const {context, wait} = require('./testHelpers');
+
+async function withClockOffset(offset, operation) {
+  const originalNow = Date.now;
+  Date.now = () => originalNow() + offset;
+  try {
+    return await operation();
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+async function redisTimeMilliseconds(data) {
+  const time = await data._command(['TIME']);
+  return Number(time[0]) * 1000 + Math.floor(Number(time[1]) / 1000);
+}
 
 async function seedDocumentState(data, ctx, docId) {
   await data.lockSave(ctx, docId, 'save-owner', 30);
@@ -61,6 +76,73 @@ describe('editorDataRedis presence invariants', () => {
     } finally {
       await stores[0].removePresence(ctx, 'document', 'user-1');
       await stores[0].cleanDocumentOnExit(ctx, 'document');
+    }
+  });
+
+  test('does not expire live presence when another replica clock is ahead', async () => {
+    const ctx = context('presence-clock-skew-live', {'services.CoAuthoring.expire.presence': 2});
+    const docId = 'document';
+    const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
+
+    try {
+      await withClockOffset(0, () => stores[0].addPresence(ctx, docId, 'user-1', info));
+
+      const result = await withClockOffset(120000, async () => {
+        assert.deepEqual(await stores[1].getPresence(ctx, docId), [info]);
+        assert.deepEqual(await stores[1].getDocumentPresenceExpired(), []);
+        await stores[1].cleanDocumentOnExit(ctx, docId);
+        return stores[1].getPresence(ctx, docId);
+      });
+      assert.deepEqual(result, [info]);
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1', 'connection-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
+  test('refreshes presence TTL and index expiry using Redis time', async () => {
+    const ctx = context('presence-clock-skew-refresh', {'services.CoAuthoring.expire.presence': 2});
+    const docId = 'document';
+    const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
+    const keys = stores[0]._docKeys(ctx, docId);
+    const indexKey = stores[0]._indexKeys(ctx, docId).documents;
+    const member = documentMember(ctx, docId);
+
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      await wait(200);
+      await withClockOffset(120000, () => stores[1].updatePresence(ctx, docId, 'user-1', info));
+
+      const serverNow = await redisTimeMilliseconds(stores[0]);
+      const score = Number(await stores[0]._command(['ZSCORE', indexKey, member]));
+      assert.ok(score >= serverNow + 1500 && score <= serverNow + 3000);
+      assert.ok(Number(await stores[0]._command(['PTTL', keys.presenceHash])) > 1000);
+      assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1', 'connection-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
+  test('expires presence and cleans the document through the bounded GC claim', async () => {
+    const ctx = context('presence-expired-gc', {'services.CoAuthoring.expire.presence': 1});
+    const docId = 'document';
+
+    try {
+      await stores[0].addPresence(ctx, docId, 'user-1', JSON.stringify({id: 'user-1'}));
+      await seedDocumentState(stores[0], ctx, docId);
+      await wait(1100);
+
+      const expired = await stores[1].getDocumentPresenceExpired();
+      assert.deepEqual(expired, [['presence-expired-gc', docId]]);
+
+      await stores[1].cleanDocumentOnExit(ctx, docId);
+      assert.equal(await stores[1]._ackDocumentPresenceExpired(expired[0]), true);
+      assert.deepEqual(await stores[0].getPresence(ctx, docId), []);
+      assert.deepEqual(await readDocumentState(stores[0], ctx, docId), emptyDocumentState());
+    } finally {
+      await stores[0].removePresence(ctx, docId, 'user-1');
+      await stores[0].cleanDocumentOnExit(ctx, docId);
     }
   });
 

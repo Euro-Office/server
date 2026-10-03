@@ -264,8 +264,7 @@ const checkDocumentExpire = function () {
       }
       currentExpDocumentsStep = currentDocumentExpiryConfig.documentsCronStepMs;
       yield ctx.initTenantCache();
-      const now = new Date().getTime();
-      const expiredKeys = yield docsCoServer.editorData.getDocumentPresenceExpired(now);
+      const expiredKeys = yield docsCoServer.editorData.getDocumentPresenceExpired();
       drainRequested = needsExpirationFollowUp(expiredKeys);
       if (expiredKeys.length > 0) {
         queue = new queueService();
