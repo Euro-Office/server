@@ -26,6 +26,7 @@
 'use strict';
 
 const fs = require('fs/promises');
+const fsWatch = require('fs');
 const path = require('path');
 const config = require('config');
 const NodeCache = require('node-cache');
@@ -35,13 +36,16 @@ const logger = require('./logger');
 
 const cfgRuntimeConfig = config.get('runtimeConfig');
 const configFilePath = cfgRuntimeConfig.filePath;
-const configFileName = path.basename(configFilePath);
+const configFileName = configFilePath ? path.basename(configFilePath) : '';
 
 // Initialize cache with TTL and check for expired keys every minute
 const nodeCache = new NodeCache(cfgRuntimeConfig.cache);
 
 // Debounce timer to wait for file write completion
 let reloadTimer = null;
+let runtimeConfigWatcher = null;
+let runtimeConfigWatcherClosed = false;
+let runtimeConfigWatcherGeneration = 0;
 const RELOAD_DEBOUNCE_MS = 200;
 
 /**
@@ -118,6 +122,9 @@ async function replaceConfig(_ctx, config) {
  * @param {string|fs.Stats} filenameOrPrevious - Filename for fs.watch or previous stats for fs.watchFile
  */
 function handleConfigFileChange(eventTypeOrCurrent, filenameOrPrevious) {
+  if (runtimeConfigWatcherClosed) {
+    return;
+  }
   try {
     let shouldReload = false;
 
@@ -159,14 +166,46 @@ function handleConfigFileChange(eventTypeOrCurrent, filenameOrPrevious) {
  * Initialize the configuration directory watcher
  */
 async function initRuntimeConfigWatcher(ctx) {
+  if (runtimeConfigWatcher) {
+    closeRuntimeConfigWatcher();
+  }
+  runtimeConfigWatcherClosed = false;
+  const generation = ++runtimeConfigWatcherGeneration;
   if (!configFilePath) {
     ctx.logger.info(`runtimeConfig.filePath is not specified`);
     return;
   }
   const configDir = path.dirname(configFilePath);
-  await utils.watchWithFallback(ctx, configDir, configFilePath, handleConfigFileChange);
+  const watcher = await utils.watchWithFallback(ctx, configDir, configFilePath, handleConfigFileChange);
+  if (runtimeConfigWatcherClosed || generation !== runtimeConfigWatcherGeneration) {
+    watcher?.close?.();
+    watcher?.stop?.();
+    if (configFilePath) {
+      fsWatch.unwatchFile(configFilePath, handleConfigFileChange);
+    }
+    return;
+  }
+  runtimeConfigWatcher = watcher;
+}
+
+function closeRuntimeConfigWatcher() {
+  runtimeConfigWatcherGeneration++;
+  runtimeConfigWatcherClosed = true;
+  if (reloadTimer) {
+    clearTimeout(reloadTimer);
+    reloadTimer = null;
+  }
+  runtimeConfigWatcher?.close?.();
+  runtimeConfigWatcher?.stop?.();
+  runtimeConfigWatcher = null;
+  // watchWithFallback may have replaced a native watcher with a polling
+  // watcher after an error, so also remove the file watcher explicitly.
+  if (configFilePath) {
+    fsWatch.unwatchFile(configFilePath, handleConfigFileChange);
+  }
 }
 module.exports = {
+  closeRuntimeConfigWatcher,
   initRuntimeConfigWatcher,
   getConfig,
   saveConfig,
