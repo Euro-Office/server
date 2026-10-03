@@ -9,6 +9,7 @@ const {randomUUID} = require('crypto');
 
 const {EditorCommon} = require('./editorCommon');
 const {connectionGroups} = require('./redisConnectionManager');
+const redisConnection = require('./redisConnection');
 const {
   EDITOR_INDEX_SHARD_COUNT,
   EDITOR_INDEX_QUEUES,
@@ -174,6 +175,15 @@ EditorData.prototype._nextExpiredClaim = function () {
   return `${this.expiredClaimOwner}:${this.expiredClaimSequence}`;
 };
 
+function addExpiredBatchMetadata(batch, hasMore, hasShardFailure = false, shardFailures = []) {
+  // Keep the public return value an array for existing callers, while carrying
+  // a continuation signal that survives a per-shard pop being flattened.
+  Object.defineProperty(batch, 'hasMore', {value: hasMore, enumerable: false});
+  Object.defineProperty(batch, 'hasShardFailure', {value: hasShardFailure, enumerable: false});
+  Object.defineProperty(batch, 'shardFailures', {value: shardFailures, enumerable: false});
+  return batch;
+}
+
 EditorData.prototype._popExpired = async function (indexKey, leaseKey, claimsKey, now) {
   const claimId = this._nextExpiredClaim();
   const values = await this._eval(
@@ -189,7 +199,7 @@ EditorData.prototype._popExpired = async function (indexKey, leaseKey, claimsKey
       result.push(item);
     }
   }
-  return result;
+  return addExpiredBatchMetadata(result, (values || []).length >= POP_EXPIRED_BATCH_SIZE);
 };
 
 EditorData.prototype._ackExpired = async function (leaseKey, claimsKey, item) {
@@ -217,13 +227,29 @@ EditorData.prototype._popExpiredAcrossShards = async function (queueName, now) {
   if (!queue) {
     throw new Error(`Unknown expired editor-data queue: ${queueName}`);
   }
-  const batches = await Promise.all(
+  const results = await Promise.allSettled(
     Array.from({length: EDITOR_INDEX_SHARD_COUNT}, (_, shard) => {
       const keys = this._indexKeysForShard(shard);
       return this._popExpired(keys[queue.index], keys[queue.lease], keys[queue.claims], now);
     })
   );
-  return batches.flat();
+  const batches = results.filter(result => result.status === 'fulfilled').map(result => result.value);
+  const shardFailures = results.flatMap((result, shard) => {
+    if (result.status !== 'rejected') {
+      return [];
+    }
+    const reason = result.reason;
+    redisConnection.log('error', 'expired %s queue pop failed on shard %d: %s', queueName, shard, redisConnection.errorDetails(reason));
+    return [
+      {
+        shard,
+        message: reason instanceof Error ? reason.message : String(reason),
+        code: reason && reason.code
+      }
+    ];
+  });
+  const hasShardFailure = shardFailures.length > 0;
+  return addExpiredBatchMetadata(batches.flat(), hasShardFailure || batches.some(batch => batch.hasMore === true), hasShardFailure, shardFailures);
 };
 
 EditorData.prototype.getDocumentPresenceExpired = function (now) {

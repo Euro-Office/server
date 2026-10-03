@@ -502,6 +502,8 @@ class RedisConnection {
 
 module.exports = {
   RedisConnection,
+  log,
+  errorDetails,
   createSentinelClient,
   normalizeNodeOptions,
   normalizeClusterOptions,
