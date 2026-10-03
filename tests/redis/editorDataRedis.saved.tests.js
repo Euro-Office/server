@@ -29,8 +29,41 @@ describe('editorDataRedis saved-state claims', () => {
     assert.equal(await stores[0].getdelSaved(ctx, docId, operationId), '1');
     assert.equal(await stores[0]._command(['GET', stores[0]._docKeys(ctx, docId).saved]), null);
     assert.equal(await stores[0].ackSaved(ctx, docId, operationId), true);
+    const claimKey = stores[0]._docKeys(ctx, docId).savedClaim;
+    assert.equal(await stores[0]._command(['HGET', claimKey, 'state']), 'resolved');
+    assert.equal(await stores[0]._command(['HGET', claimKey, 'value']), null);
+    assert.ok((await stores[0]._command(['PTTL', claimKey])) > 0);
     assert.equal(await stores[0].ackSaved(ctx, docId, operationId), true);
     assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), null);
+  });
+
+  test('acknowledges concurrent duplicate acknowledgements atomically', async () => {
+    const ctx = context('saved-claim-ack-concurrent');
+    const docId = 'document';
+    const operationId = 'operation-a';
+
+    await stores[0].setSaved(ctx, docId, '1');
+    assert.equal(await stores[0].getdelSaved(ctx, docId, operationId), '1');
+
+    const [firstResult, secondResult] = await Promise.all([stores[0].ackSaved(ctx, docId, operationId), stores[1].ackSaved(ctx, docId, operationId)]);
+
+    assert.equal(firstResult, true);
+    assert.equal(secondResult, true);
+  });
+
+  test('does not let a stale acknowledgement affect a newer claim', async () => {
+    const ctx = context('saved-claim-ack-stale');
+    const docId = 'document';
+
+    await stores[0].setSaved(ctx, docId, '1');
+    assert.equal(await stores[0].getdelSaved(ctx, docId, 'operation-a'), '1');
+    await stores[0].ackSaved(ctx, docId, 'operation-a');
+
+    await stores[1].setSaved(ctx, docId, '0');
+    assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
+    await assert.rejects(stores[0].ackSaved(ctx, docId, 'operation-a'), error => error.code === 'EDITOR_DATA_SAVED_UNKNOWN');
+    assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
+    await stores[1].ackSaved(ctx, docId, 'operation-b');
   });
 
   test('returns null only when the saved key and claim are both absent', async () => {
@@ -100,6 +133,7 @@ describe('editorDataRedis saved-state claims', () => {
     await wait(1200);
 
     assert.equal(await stores[1]._command(['EXISTS', claimKey]), 0);
+    await assert.rejects(stores[1].ackSaved(ctx, docId, operationId), error => error.code === 'EDITOR_DATA_SAVED_UNKNOWN');
     await stores[1].setSaved(ctx, docId, '0');
     assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), '0');
     await stores[1].ackSaved(ctx, docId, 'operation-b');
@@ -237,5 +271,24 @@ describe('editorDataRedis saved-state claims', () => {
     await assert.rejects(stores[1].ackSaved(ctx, docId, 'operation-b'), error => error.code === 'EDITOR_DATA_SAVED_UNKNOWN');
     assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-a'), '1');
     await stores[1].ackSaved(ctx, docId, 'operation-a');
+  });
+
+  test('rejects an unknown or malformed acknowledgement without changing a claim', async () => {
+    const ctx = context('saved-claim-ack-invalid');
+    const docId = 'document';
+
+    await assert.rejects(stores[0].ackSaved(ctx, docId, 'unknown-operation'), error => error.code === 'EDITOR_DATA_SAVED_UNKNOWN');
+
+    const malformedDocId = 'malformed-document';
+    const malformedKey = stores[0]._docKeys(ctx, malformedDocId).savedClaim;
+    await stores[0]._command(['HSET', malformedKey, 'id', 'operation-a', 'state', 'pending']);
+    await stores[0]._command(['EXPIRE', malformedKey, '10']);
+    await assert.rejects(stores[0].ackSaved(ctx, malformedDocId, 'operation-a'), error => error.code === 'EDITOR_DATA_SAVED_UNKNOWN');
+    assert.equal(await stores[0]._command(['EXISTS', malformedKey]), 1);
+
+    await stores[0]._command(['HSET', malformedKey, 'id', 'operation-a', 'state', 'resolved', 'value', '1']);
+    await assert.rejects(stores[0].ackSaved(ctx, malformedDocId, 'operation-a'), error => error.code === 'EDITOR_DATA_SAVED_UNKNOWN');
+    assert.equal(await stores[0]._command(['HGET', malformedKey, 'state']), 'resolved');
+    assert.equal(await stores[0]._command(['HGET', malformedKey, 'value']), '1');
   });
 });
