@@ -68,10 +68,13 @@ async function seed(data, queue, tenant, count, sameShard = false) {
 async function discardPopResponse(data, queue, tenant, docId, claimId = 'discarded-response') {
   const ctx = context(tenant);
   const now = Date.now();
+  const useRedisTime = queue === queues.presence;
   await data._eval(
     POP_EXPIRED_SCRIPT,
     [queue.index(data, ctx, docId), queue.lease(data, ctx, docId), queue.claims(data, ctx, docId)],
-    [strictMax(now), String(now + data.expiredClaimLeaseMs), String(POP_EXPIRED_BATCH_SIZE), claimId]
+    useRedisTime
+      ? ['', String(data.expiredClaimLeaseMs), String(POP_EXPIRED_BATCH_SIZE), claimId, 'redis-time']
+      : [strictMax(now), String(now + data.expiredClaimLeaseMs), String(POP_EXPIRED_BATCH_SIZE), claimId, '']
   );
 }
 
