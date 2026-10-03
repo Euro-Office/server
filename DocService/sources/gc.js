@@ -62,6 +62,68 @@ function acknowledgeExpired(editorData, method, item) {
   return typeof acknowledge === 'function' ? acknowledge.call(editorData, item) : undefined;
 }
 
+function acknowledgeForceSaveResult(ctx, expiredKey, result) {
+  if (!result || result.code !== commondefines.c_oAscServerCommandErrors.NoError) {
+    ctx.logger.error(
+      'forceSaveTimeout item failed: tenant=%s docId=%s code=%s',
+      expiredKey[0],
+      expiredKey[1],
+      result && result.code !== undefined ? result.code : 'missing'
+    );
+    return Promise.resolve();
+  }
+  return acknowledgeExpired(docsCoServer.editorData, '_ackForceSaveTimer', expiredKey);
+}
+
+function needsExpirationFollowUp(expiredKeys) {
+  // The editor-data implementation owns its queue limits and reports whether
+  // another bounded claim is needed; GC does not need to know how that signal
+  // was calculated or which storage backend supplied it. A failed shard also
+  // requests a later retry, but uses the normal interval to avoid a tight loop
+  // while the shard is unavailable.
+  return Array.isArray(expiredKeys) && expiredKeys.hasMore === true && expiredKeys.hasShardFailure !== true;
+}
+
+async function processForceSaveItem(ctx, expiredKey, queue, pubsub) {
+  const tenant = expiredKey[0];
+  const docId = expiredKey[1];
+  let itemCtx = null;
+
+  try {
+    // Each force-save can stay async for a while. Give it its own context so a
+    // later item cannot change the tenant or document underneath it. Keeping
+    // this whole lifecycle in the item promise also lets tenant initialization
+    // happen in parallel with other items.
+    itemCtx = new operationContext.Context();
+    itemCtx.init(tenant, docId, ctx.userId);
+    await itemCtx.initTenantCache();
+    //todo opt_initShardKey from ForceSave data or from db
+
+    const result = await docsCoServer.startForceSave(
+      itemCtx,
+      docId,
+      commondefines.c_oAscForceSaveTypes.Timeout,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      queue,
+      pubsub,
+      undefined,
+      true
+    );
+    await acknowledgeForceSaveResult(itemCtx, expiredKey, result);
+  } catch (error) {
+    // Keep the claim unacknowledged so Redis can retry this item, while
+    // continuing with the next item in this bounded pass.
+    (itemCtx || ctx).logger.error('forceSaveTimeout item error: tenant=%s docId=%s: %s', tenant, docId, error && error.stack ? error.stack : error);
+  }
+}
+
 async function processDocumentExpireItem(ctx, expiredKey, state, queue) {
   const tenant = expiredKey[0];
   const docId = expiredKey[1];
@@ -185,6 +247,7 @@ const checkDocumentExpire = function () {
     let queue = null;
     let removedCount = 0;
     let startSaveCount = 0;
+    let drainRequested = false;
     let currentExpDocumentsStep = expDocumentsStep;
     const ctx = new operationContext.Context();
     try {
@@ -203,6 +266,7 @@ const checkDocumentExpire = function () {
       yield ctx.initTenantCache();
       const now = new Date().getTime();
       const expiredKeys = yield docsCoServer.editorData.getDocumentPresenceExpired(now);
+      drainRequested = needsExpirationFollowUp(expiredKeys);
       if (expiredKeys.length > 0) {
         queue = new queueService();
         yield queue.initPromise(true, false, false, false, false, false);
@@ -226,7 +290,11 @@ const checkDocumentExpire = function () {
         ctx.logger.error('checkDocumentExpire error: %s', e.stack);
       }
 
-      setTimeout(checkDocumentExpire, currentExpDocumentsStep);
+      // A full claim means there may be more expired work. Schedule one more
+      // bounded pass immediately; an empty/partial claim returns to the normal
+      // interval. This drains sustained auto-save pressure without turning a
+      // single GC invocation into an unbounded loop.
+      setTimeout(checkDocumentExpire, drainRequested ? 0 : currentExpDocumentsStep);
     }
   });
 };
@@ -234,6 +302,7 @@ const forceSaveTimeout = function () {
   return co(function* () {
     let queue = null;
     let pubsub = null;
+    let drainRequested = false;
     let currentForceSaveStep = cfgForceSaveStep;
     const ctx = new operationContext.Context();
     try {
@@ -242,6 +311,7 @@ const forceSaveTimeout = function () {
       currentForceSaveStep = ctx.getCfg('services.CoAuthoring.autoAssembly.step', cfgForceSaveStep);
       const now = new Date().getTime();
       const expiredKeys = yield docsCoServer.editorData.getForceSaveTimer(now);
+      drainRequested = needsExpirationFollowUp(expiredKeys);
       if (expiredKeys.length > 0) {
         queue = new queueService();
         yield queue.initPromise(true, false, false, false, false, false);
@@ -252,43 +322,12 @@ const forceSaveTimeout = function () {
         expiredKeys.sort((a, b) => a[0].localeCompare(b[0]));
 
         const actions = [];
-        let currentTenant = null;
 
         for (let i = 0; i < expiredKeys.length; ++i) {
           const expiredKey = expiredKeys[i];
-          const tenant = expiredKey[0];
           const docId = expiredKey[1];
           if (docId) {
-            if (currentTenant !== tenant) {
-              ctx.init(tenant, docId, ctx.userId);
-              yield ctx.initTenantCache();
-              //todo opt_initShardKey from ForceSave data or from db
-              currentTenant = tenant;
-            } else {
-              ctx.setDocId(docId);
-            }
-
-            actions.push(
-              docsCoServer
-                .startForceSave(
-                  ctx,
-                  docId,
-                  commondefines.c_oAscForceSaveTypes.Timeout,
-                  undefined,
-                  undefined,
-                  undefined,
-                  undefined,
-                  undefined,
-                  undefined,
-                  undefined,
-                  undefined,
-                  queue,
-                  pubsub,
-                  undefined,
-                  true
-                )
-                .then(() => acknowledgeExpired(docsCoServer.editorData, '_ackForceSaveTimer', expiredKey))
-            );
+            actions.push(processForceSaveItem(ctx, expiredKey, queue, pubsub));
           } else {
             actions.push(Promise.resolve(acknowledgeExpired(docsCoServer.editorData, '_ackForceSaveTimer', expiredKey)));
           }
@@ -311,7 +350,10 @@ const forceSaveTimeout = function () {
       } catch (e) {
         ctx.logger.error('forceSaveTimeout cleanup error: %s', e.stack);
       }
-      setTimeout(forceSaveTimeout, ms(currentForceSaveStep));
+      // Keep force-save expiration on the same bounded continuation policy as
+      // document presence expiration. This is important when auto-save keeps
+      // producing timers faster than one 96-item pass can process them.
+      setTimeout(forceSaveTimeout, drainRequested ? 0 : ms(currentForceSaveStep));
     }
   });
 };
@@ -325,3 +367,4 @@ exports.startGC = function () {
 exports.getCronStep = getCronStep;
 exports.checkFileExpire = checkFileExpire;
 exports.checkDocumentExpire = checkDocumentExpire;
+exports.forceSaveTimeout = forceSaveTimeout;
