@@ -187,7 +187,7 @@ describe('canvasservice saved-state handling', () => {
     spies.push(getdelSaved, ackSaved, cleanDocumentOnExitPromise, publish);
 
     await canvasservice.commandSfcCallback(ctx, command(), false, false);
-    assert.equal(await editorData._command(['EXISTS', claimKey]), 0);
+    assert.equal(await editorData._command(['HGET', claimKey, 'state']), 'resolved');
     await canvasservice.commandSfcCallback(ctx, command(), false, false);
 
     assert.equal(getdelSaved.mock.calls.length, 2);
@@ -196,6 +196,40 @@ describe('canvasservice saved-state handling', () => {
     assert.equal(ackSaved.mock.calls.length, 1);
     assert.equal(ackSaved.mock.calls[0][1], 'saved-state-document');
     assert.equal(ackSaved.mock.calls[0][2], 'save-key');
+  });
+
+  test('handles concurrent duplicate delivery through receiveTask', async () => {
+    const ctx = context();
+    const editorData = docsCoServer.editorData;
+    const keys = editorData._docKeys(ctx, 'saved-state-document');
+    await editorData._command(['DEL', keys.saved, keys.savedClaim]);
+    await editorData.setSaved(ctx, 'saved-state-document', '1');
+
+    const update = jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
+    const cleanDocumentOnExitPromise = jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockResolvedValue(undefined);
+    const publish = jest.spyOn(docsCoServer, 'publish').mockResolvedValue(undefined);
+    const ackSaved = jest.spyOn(editorData, 'ackSaved');
+    spies.push(update, cleanDocumentOnExitPromise, publish, ackSaved);
+
+    const task = new commonDefines.TaskQueueData();
+    task.setCtx({tenant: ctx.tenant, docId: 'saved-state-document', userId: 'user-1'});
+    task.setCmd(command({c: 'sfc'}));
+    const encodedTask = JSON.stringify(task);
+    const acknowledgements = [jest.fn(), jest.fn()];
+
+    await Promise.all(acknowledgements.map(ack => canvasservice.receiveTask(encodedTask, ack)));
+
+    assert.deepEqual(
+      acknowledgements.map(ack => ack.mock.calls.length),
+      [1, 1]
+    );
+    assert.equal(ackSaved.mock.calls.length, 2);
+    assert.equal(ackSaved.mock.calls[0][2], 'save-key');
+    assert.equal(ackSaved.mock.calls[1][2], 'save-key');
+    assert.equal(cleanDocumentOnExitPromise.mock.calls.length, 2);
+    assert.equal(cleanDocumentOnExitPromise.mock.calls[0][4], 'save-key');
+    assert.equal(cleanDocumentOnExitPromise.mock.calls[1][4], 'save-key');
+    assert.equal(publish.mock.calls.length, 2);
   });
 
   test.each([
