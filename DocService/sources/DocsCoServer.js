@@ -641,17 +641,17 @@ function* updateEditUsers(ctx, licenseInfo, userId, anonym, isLiveViewer) {
     yield editorStat.addPresenceUniqueUsersOfMonth(ctx, userId, period, {anonym, firstOpenDate: now.toISOString()});
   }
 }
-function* getEditorsCount(ctx, docId, opt_hvals) {
+function* getEditorsCount(ctx, docId, opt_presenceEntries) {
   let elem,
     editorsCount = 0;
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    elem = JSON.parse(presenceEntries[i]);
     if (!elem.view && !elem.isCloseCoAuthoring) {
       editorsCount++;
       break;
@@ -659,8 +659,8 @@ function* getEditorsCount(ctx, docId, opt_hvals) {
   }
   return editorsCount;
 }
-function* hasEditors(ctx, docId, opt_hvals) {
-  const editorsCount = yield* getEditorsCount(ctx, docId, opt_hvals);
+function* hasEditors(ctx, docId, opt_presenceEntries) {
+  const editorsCount = yield* getEditorsCount(ctx, docId, opt_presenceEntries);
   return editorsCount > 0;
 }
 function* isUserReconnect(ctx, docId, userId, connectionId) {
@@ -1545,11 +1545,12 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
   }
   return true;
 });
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId) {
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_cleanupOptions) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  const cleanupResult = yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
+  const cleanupResult = yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId, {preserveSavedClaim});
   if (cleanupResult !== true) {
     return false;
   }
@@ -1568,6 +1569,16 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
     return false;
   }
   return true;
+}
+/**
+ * Performs terminal cleanup after the final viewer leaves. Active saved-state
+ * claims are preserved so an in-flight callback can acknowledge its claim.
+ */
+function* cleanDocumentAfterFinalViewerExit(ctx, docId) {
+  // A viewer has no saved-state operation to acknowledge. Preserve a claim
+  // that may belong to a callback still completing; its lease will recover it
+  // if that callback is abandoned.
+  yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, {preserveSavedClaim: true});
 }
 function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges) {
   const userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
@@ -1719,16 +1730,16 @@ function getLicenseNowUtc() {
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds()) / 1000;
 }
-const getParticipantMap = co.wrap(function* (ctx, docId, opt_hvals) {
+const getParticipantMap = co.wrap(function* (ctx, docId, opt_presenceEntries) {
   const participantsMap = [];
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    const elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    const elem = JSON.parse(presenceEntries[i]);
     if (!elem.isCloseCoAuthoring) {
       participantsMap.push(elem);
     }
@@ -2094,7 +2105,8 @@ exports.install = function (server, app, callbackFunction) {
     if (null == docId) {
       return;
     }
-    let hvals;
+    let presenceEntries;
+    let localPresenceEmpty = false;
     let participantsTimestamp;
     const tmpUser = conn.user;
     const isView = tmpUser.view;
@@ -2111,9 +2123,10 @@ exports.install = function (server, app, callbackFunction) {
         ctx.logger.info('reconnected');
       } else {
         yield removePresence(ctx, conn);
-        hvals = yield editorData.getPresence(ctx, docId, connections);
+        presenceEntries = yield editorData.getPresence(ctx, docId, connections);
         participantsTimestamp = Date.now();
-        if (hvals.length <= 0) {
+        localPresenceEmpty = presenceEntries.length <= 0;
+        if (localPresenceEmpty) {
           yield editorData.removePresenceDocument(ctx, docId);
         }
       }
@@ -2136,7 +2149,7 @@ exports.install = function (server, app, callbackFunction) {
       //revert old view to send event
       const tmpView = tmpUser.view;
       tmpUser.view = isView;
-      const participants = yield getParticipantMap(ctx, docId, hvals);
+      const participants = yield getParticipantMap(ctx, docId, presenceEntries);
       if (!participantsTimestamp) {
         participantsTimestamp = Date.now();
       }
@@ -2153,7 +2166,7 @@ exports.install = function (server, app, callbackFunction) {
         // For this user, we remove the lock from saving
         yield editorData.unlockSave(ctx, docId, conn.user.id);
 
-        bHasEditors = yield* hasEditors(ctx, docId, hvals);
+        bHasEditors = yield* hasEditors(ctx, docId, presenceEntries);
         bHasChanges = yield hasChanges(ctx, docId);
 
         let needSendStatus = true;
@@ -2217,8 +2230,8 @@ exports.install = function (server, app, callbackFunction) {
           );
         }
       } else {
-        if (preStopFlag && hvals?.length <= 0 && editorStatProxy?.deleteKey) {
-          yield editorStatProxy.deleteKey(docId);
+        if (localPresenceEmpty) {
+          yield* cleanDocumentAfterFinalViewerExit(ctx, docId);
         }
       }
       const sessionType = isView ? 'view' : 'edit';
