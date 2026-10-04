@@ -1329,15 +1329,21 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       if (!isSfcm) {
         //todo simultaneous opening
         //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-        yield docsCoServer.editorData.cleanDocumentOnExit(ctx, docId, savedClaimed ? savedClaimId : undefined);
-        if (docsCoServer.getIsPreStop() && docsCoServer?.editorStatProxy?.deleteKey) {
-          yield docsCoServer.editorStatProxy.deleteKey(docId);
+        //and perform terminal cleanup only when no replica still has presence
+        const cleanupResult = yield docsCoServer.cleanDocumentOnExitPromise(
+          ctx,
+          docId,
+          false,
+          callbackUserIndex,
+          savedClaimed ? savedClaimId : undefined
+        );
+        if (cleanupResult === true) {
+          //cleanupRes can be false in case of simultaneous opening. it is OK
+          const cleanupRes = yield cleanupCacheIf(ctx, updateMask);
+          ctx.logger.debug('storeForgotten cleanupRes=%s', cleanupRes);
+        } else {
+          ctx.logger.debug('storeForgotten skipped terminal cleanup while document is active');
         }
-        //to unlock wopi file
-        yield docsCoServer.unlockWopiDoc(ctx, docId, callbackUserIndex);
-        //cleanupRes can be false in case of simultaneous opening. it is OK
-        const cleanupRes = yield cleanupCacheIf(ctx, updateMask);
-        ctx.logger.debug('storeForgotten cleanupRes=%s', cleanupRes);
       }
     }
     if (forceSave) {

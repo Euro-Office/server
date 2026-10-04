@@ -247,6 +247,42 @@ describe('editorDataRedis saved-state claims', () => {
     await stores[0].ackSaved(ctx, docId, operationId);
   });
 
+  test('preserves an active claim during overlapping viewer cleanup', async () => {
+    const ctx = context('saved-claim-viewer-cleanup');
+    const docId = 'document';
+    const operationId = 'operation-a';
+
+    await stores[0].addPresence(ctx, docId, 'user-a', JSON.stringify({id: 'user-a'}));
+    await stores[0].setSaved(ctx, docId, '1');
+    await stores[0].removePresence(ctx, docId, 'user-a');
+
+    let resumeCallback;
+    let signalClaimed;
+    const callbackCanResume = new Promise(resolve => {
+      resumeCallback = resolve;
+    });
+    const callbackClaimed = new Promise(resolve => {
+      signalClaimed = resolve;
+    });
+    const callback = (async () => {
+      assert.equal(await stores[0].getdelSaved(ctx, docId, operationId), '1');
+      signalClaimed();
+      await callbackCanResume;
+      assert.equal(await stores[0].ackSaved(ctx, docId, operationId), true);
+    })();
+
+    await callbackClaimed;
+    assert.equal(await stores[1].cleanDocumentOnExit(ctx, docId, undefined, {preserveSavedClaim: true}), true);
+
+    assert.equal(await stores[1]._command(['HGET', stores[1]._docKeys(ctx, docId).savedClaim, 'id']), operationId);
+    await assert.rejects(stores[1].getdelSaved(ctx, docId, 'operation-b'), error => error.code === 'EDITOR_DATA_SAVED_UNKNOWN');
+
+    resumeCallback();
+    await callback;
+    await stores[0].cleanDocumentOnExit(ctx, docId);
+    assert.equal(await stores[1].getdelSaved(ctx, docId, 'operation-b'), null);
+  });
+
   test('preserves a newer saved value while an older claim is outstanding', async () => {
     const ctx = context('saved-claim-overwrite');
     const docId = 'document';
