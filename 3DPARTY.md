@@ -5,6 +5,7 @@
 - @aws-sdk/s3-request-presigner 3.370.0 ([Apache-2.0](https://raw.githubusercontent.com/aws/aws-sdk-js-v3/main/LICENSE))
 - @aws-sdk/client-kms 3.637.0 ([Apache-2.0](https://raw.githubusercontent.com/aws/aws-sdk-js-v3/main/LICENSE))
 - @azure/storage-blob 12.27.0 ([MIT](https://raw.githubusercontent.com/Azure/azure-sdk-for-js/refs/heads/main/sdk/storage/storage-blob/LICENSE))
+- @sentry/node 10.75.3 ([MIT](https://raw.githubusercontent.com/getsentry/sentry-javascript/develop/LICENSE))
 - amqplib 0.10.7 ([MIT](https://raw.githubusercontent.com/amqp-node/amqplib/main/LICENSE))
 - co 4.6.0 ([MIT](https://raw.githubusercontent.com/tj/co/master/LICENSE))
 - config 3.3.12 ([MIT](https://raw.githubusercontent.com/node-config/node-config/master/LICENSE))
