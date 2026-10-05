@@ -8,7 +8,6 @@ const {randomUUID} = require('node:crypto');
 const net = require('node:net');
 const {describe, test} = require('@jest/globals');
 
-const config = require('../../DocService/node_modules/config');
 const redis = require('../../DocService/node_modules/redis');
 const calculateClusterSlot = require('../../DocService/node_modules/cluster-key-slot');
 const {
@@ -20,13 +19,7 @@ const {
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
 const {createSentinelClient} = require('../../DocService/sources/editorDataRedis/redisConnection');
 const redisTopologyConfig = require('../../DocService/sources/editorDataRedis/redisConfig');
-
-const WAIT_TIMEOUT_MS = 30000;
-const POLL_INTERVAL_MS = 100;
-
-function redisConfig() {
-  return config.get('services.CoAuthoring.redis');
-}
+const {redisConfig, waitFor} = require('./redisTestHelpers');
 
 function configuredPassword(options) {
   return options.password || undefined;
@@ -57,25 +50,6 @@ async function withDirectClient(port, credentials, operation, host) {
   } finally {
     await client.close();
   }
-}
-
-async function waitFor(scenario, operation, predicate, timeoutMs = WAIT_TIMEOUT_MS) {
-  const deadline = Date.now() + timeoutMs;
-  let lastValue;
-  let lastError;
-  while (Date.now() <= deadline) {
-    try {
-      lastValue = await operation();
-      lastError = undefined;
-      if (predicate(lastValue)) {
-        return lastValue;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
-  }
-  assert.fail(`${scenario} timed out; last value: ${JSON.stringify(lastValue)}; last error: ${lastError?.message || 'none'}`);
 }
 
 function stopContainer(containerName) {
