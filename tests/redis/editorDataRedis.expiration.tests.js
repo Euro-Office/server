@@ -51,6 +51,24 @@ const queues = {
   )
 };
 
+const expirationQueueCases = [
+  ['document-presence', 'presence'],
+  ['force-save', 'forceSave']
+];
+
+function testForEachQueue(name, callback, timeout) {
+  test.each(expirationQueueCases)(name, (_label, queueName) => callback(queueName), timeout);
+}
+
+async function withQueueData(queueName, tenantPrefix, operation) {
+  const data = new EditorData();
+  try {
+    return await operation(data, queues[queueName], `${tenantPrefix}-${queueName}`);
+  } finally {
+    await data.close();
+  }
+}
+
 async function seed(data, queue, tenant, count, sameShard = false) {
   const ctx = context(tenant);
   const targetShard = editorIndexShard(ctx, 'document-0');
@@ -79,12 +97,8 @@ async function discardPopResponse(data, queue, tenant, docId, claimId = 'discard
 }
 
 async function assertBatchLimit(queueName) {
-  const data = new EditorData();
-  const queue = queues[queueName];
-  const tenant = `expired-batch-${queueName}`;
   const count = POP_EXPIRED_BATCH_SIZE * 2 + 5;
-
-  try {
+  return withQueueData(queueName, 'expired-batch', async (data, queue, tenant) => {
     await seed(data, queue, tenant, count, true);
 
     const first = await queue.pop(data, Date.now());
@@ -99,19 +113,13 @@ async function assertBatchLimit(queueName) {
     assert.equal(third.length, 5);
     await Promise.all(third.map(item => queue.acknowledge(data, item)));
     assert.deepEqual(await queue.pop(data, Date.now()), []);
-  } finally {
-    await data.close();
-  }
+  });
 }
 
 async function assertSkewedBacklogContinuation(queueName) {
-  const data = new EditorData();
-  const queue = queues[queueName];
-  const tenant = `skewed-backlog-${queueName}`;
   const count = POP_EXPIRED_MAX_BATCH_SIZE + 4;
-  let remaining = count;
-
-  try {
+  return withQueueData(queueName, 'skewed-backlog', async (data, queue, tenant) => {
+    let remaining = count;
     // Keep more than the aggregate 96-item limit in one shard. Each Redis pop
     // still returns at most the per-shard limit, so GC must use the metadata
     // rather than the flattened result length to schedule its next pass.
@@ -129,63 +137,55 @@ async function assertSkewedBacklogContinuation(queueName) {
     const empty = await queue.pop(data, Date.now());
     assert.deepEqual(empty, []);
     assert.equal(empty.hasMore, false);
-  } finally {
-    await data.close();
-  }
+  });
 }
 
 async function assertShardFailurePreservesHealthyBatch(queueName) {
-  const data = new EditorData();
-  const queue = queues[queueName];
-  const tenant = `shard-failure-${queueName}`;
-  const ctx = context(tenant);
-  const failedShard = 0;
-  const healthyShard = 1;
-  const queueDefinition = EDITOR_INDEX_QUEUES[queueName === 'presence' ? 'documents' : 'forceSaveTimer'];
-  const failedIndex = data._indexKeysForShard(failedShard)[queueDefinition.index];
-  let healthyDocId;
-  const logSpy = jest.spyOn(redisConnection, 'log');
+  return withQueueData(queueName, 'shard-failure', async (data, queue, tenant) => {
+    const ctx = context(tenant);
+    const failedShard = 0;
+    const healthyShard = 1;
+    const queueDefinition = EDITOR_INDEX_QUEUES[queueName === 'presence' ? 'documents' : 'forceSaveTimer'];
+    const failedIndex = data._indexKeysForShard(failedShard)[queueDefinition.index];
+    let healthyDocId;
+    const logSpy = jest.spyOn(redisConnection, 'log');
 
-  for (let candidate = 0; healthyDocId === undefined; ++candidate) {
-    const docId = `document-${candidate}`;
-    if (editorIndexShard(ctx, docId) === healthyShard) {
-      healthyDocId = docId;
-    }
-  }
-
-  try {
-    await queue.add(data, ctx, healthyDocId);
-    const popExpired = data._popExpired;
-    data._popExpired = async function (indexKey, ...args) {
-      if (indexKey === failedIndex) {
-        throw new Error('simulated shard failure');
+    for (let candidate = 0; healthyDocId === undefined; ++candidate) {
+      const docId = `document-${candidate}`;
+      if (editorIndexShard(ctx, docId) === healthyShard) {
+        healthyDocId = docId;
       }
-      return popExpired.call(this, indexKey, ...args);
-    };
+    }
 
-    const batch = await queue.pop(data, Date.now());
-    assert.deepEqual(batch, [[tenant, healthyDocId]]);
-    assert.equal(batch.hasMore, true);
-    assert.equal(batch.hasShardFailure, true);
-    assert.deepEqual(batch.shardFailures, [{shard: failedShard, message: 'simulated shard failure', code: undefined}]);
-    assert.ok(logSpy.mock.calls.some(call => call[0] === 'error' && call[1].includes('expired') && call[3] === failedShard));
-    assert.equal(await queue.acknowledge(data, batch[0]), true);
+    try {
+      await queue.add(data, ctx, healthyDocId);
+      const popExpired = data._popExpired;
+      data._popExpired = async function (indexKey, ...args) {
+        if (indexKey === failedIndex) {
+          throw new Error('simulated shard failure');
+        }
+        return popExpired.call(this, indexKey, ...args);
+      };
 
-    data._popExpired = popExpired;
-    assert.deepEqual(await queue.pop(data, Date.now()), []);
-  } finally {
-    logSpy.mockRestore();
-    await data.close();
-  }
+      const batch = await queue.pop(data, Date.now());
+      assert.deepEqual(batch, [[tenant, healthyDocId]]);
+      assert.equal(batch.hasMore, true);
+      assert.equal(batch.hasShardFailure, true);
+      assert.deepEqual(batch.shardFailures, [{shard: failedShard, message: 'simulated shard failure', code: undefined}]);
+      assert.ok(logSpy.mock.calls.some(call => call[0] === 'error' && call[1].includes('expired') && call[3] === failedShard));
+      assert.equal(await queue.acknowledge(data, batch[0]), true);
+
+      data._popExpired = popExpired;
+      assert.deepEqual(await queue.pop(data, Date.now()), []);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
 }
 
 async function assertResponseDiscarded(queueName) {
-  const data = new EditorData();
-  const queue = queues[queueName];
-  const tenant = `discarded-response-${queueName}`;
-  data.expiredClaimLeaseMs = 30;
-
-  try {
+  return withQueueData(queueName, 'discarded-response', async (data, queue, tenant) => {
+    data.expiredClaimLeaseMs = 30;
     await seed(data, queue, tenant, 1);
     // Redis has executed the claim, but the client deliberately discards the reply.
     await discardPopResponse(data, queue, tenant, 'document-0');
@@ -195,20 +195,14 @@ async function assertResponseDiscarded(queueName) {
     assert.deepEqual(recovered, [[tenant, 'document-0']]);
     assert.equal(await queue.acknowledge(data, recovered[0]), true);
     assert.deepEqual(await queue.pop(data, Date.now()), []);
-  } finally {
-    await data.close();
-  }
+  });
 }
 
 async function assertAllShards(queueName) {
-  const data = new EditorData();
-  const queue = queues[queueName];
-  const tenant = `all-shards-${queueName}`;
-  const ctx = context(tenant);
-  const documents = [];
-  const shards = new Set();
-
-  try {
+  return withQueueData(queueName, 'all-shards', async (data, queue, tenant) => {
+    const ctx = context(tenant);
+    const documents = [];
+    const shards = new Set();
     for (let candidate = 0; shards.size < EDITOR_INDEX_SHARD_COUNT; ++candidate) {
       const docId = `document-${candidate}`;
       const shard = editorIndexShard(ctx, docId);
@@ -223,21 +217,15 @@ async function assertAllShards(queueName) {
     assert.deepEqual(new Set(expired.map(item => item[1])), new Set(documents), `${queueName} expiration did not process every shard`);
     await Promise.all(expired.map(item => queue.acknowledge(data, item)));
     assert.deepEqual(await queue.pop(data, Date.now()), []);
-  } finally {
-    await data.close();
-  }
+  });
 }
 
 async function assertAggregateBatchLimit(queueName) {
-  const data = new EditorData();
-  const queue = queues[queueName];
-  const tenant = `aggregate-batch-${queueName}`;
-  const ctx = context(tenant);
-  const shardCounts = new Map();
-  const documents = [];
-  let fullShards = 0;
-
-  try {
+  return withQueueData(queueName, 'aggregate-batch', async (data, queue, tenant) => {
+    const ctx = context(tenant);
+    const shardCounts = new Map();
+    const documents = [];
+    let fullShards = 0;
     for (let candidate = 0; fullShards < EDITOR_INDEX_SHARD_COUNT; ++candidate) {
       const docId = `document-${candidate}`;
       const shard = editorIndexShard(ctx, docId);
@@ -260,18 +248,12 @@ async function assertAggregateBatchLimit(queueName) {
     const remaining = await queue.pop(data, Date.now());
     assert.equal(remaining.length, documents.length - first.length);
     await Promise.all(remaining.map(item => queue.acknowledge(data, item)));
-  } finally {
-    await data.close();
-  }
+  });
 }
 
 async function assertRetryToken(queueName) {
-  const data = new EditorData();
-  const queue = queues[queueName];
-  const tenant = `retry-token-${queueName}`;
-  data.expiredClaimLeaseMs = 30;
-
-  try {
+  return withQueueData(queueName, 'retry-token', async (data, queue, tenant) => {
+    data.expiredClaimLeaseMs = 30;
     await seed(data, queue, tenant, 1);
     const first = await queue.pop(data, Date.now());
     await wait(60);
@@ -281,18 +263,12 @@ async function assertRetryToken(queueName) {
     assert.equal(await queue.acknowledge(data, first[0]), false);
     assert.equal(await queue.acknowledge(data, retry[0]), true);
     assert.deepEqual(await queue.pop(data, Date.now()), []);
-  } finally {
-    await data.close();
-  }
+  });
 }
 
 async function assertPartialBatchRecovery(queueName) {
-  const data = new EditorData();
-  const queue = queues[queueName];
-  const tenant = `partial-batch-${queueName}`;
-  data.expiredClaimLeaseMs = 30;
-
-  try {
+  return withQueueData(queueName, 'partial-batch', async (data, queue, tenant) => {
+    data.expiredClaimLeaseMs = 30;
     await seed(data, queue, tenant, 2);
     const claimed = await queue.pop(data, Date.now());
     assert.equal(claimed.length, 2);
@@ -305,9 +281,7 @@ async function assertPartialBatchRecovery(queueName) {
     assert.deepEqual(recovered, [claimed[1]]);
     assert.equal(await queue.acknowledge(data, recovered[0]), true);
     assert.deepEqual(await queue.pop(data, Date.now()), []);
-  } finally {
-    await data.close();
-  }
+  });
 }
 
 async function assertTimeoutAfterExecution(queueName) {
@@ -342,38 +316,23 @@ describe('editorDataRedis expiration claims', () => {
     await wait(20);
   });
 
-  test('limits document-presence expiration batches', () => assertBatchLimit('presence'));
-  test('limits force-save expiration batches', () => assertBatchLimit('forceSave'));
-  test('continues a document-presence backlog concentrated in one shard', () => assertSkewedBacklogContinuation('presence'));
-  test('continues a force-save backlog concentrated in one shard', () => assertSkewedBacklogContinuation('forceSave'));
-  test('keeps healthy document-presence shards processing after one shard fails', () => assertShardFailurePreservesHealthyBatch('presence'));
-  test('keeps healthy force-save shards processing after one shard fails', () => assertShardFailurePreservesHealthyBatch('forceSave'));
-  test('bounds document-presence claims across all shards', () => assertAggregateBatchLimit('presence'));
-  test('bounds force-save claims across all shards', () => assertAggregateBatchLimit('forceSave'));
+  testForEachQueue('limits %s expiration batches', assertBatchLimit);
+  testForEachQueue('continues a %s backlog concentrated in one shard', assertSkewedBacklogContinuation);
+  testForEachQueue('keeps healthy %s shards processing after one shard fails', assertShardFailurePreservesHealthyBatch);
+  testForEachQueue('bounds %s claims across all shards', assertAggregateBatchLimit);
+  testForEachQueue('recovers a %s entry after a discarded response', assertResponseDiscarded);
+  testForEachQueue('does not let a stale %s acknowledgement remove a retry', assertRetryToken);
+  testForEachQueue('recovers only the unacknowledged %s item after a partial batch', assertPartialBatchRecovery);
+  testForEachQueue('processes %s expiration from every shard', assertAllShards);
 
-  test('recovers a document-presence entry after a discarded response', () => assertResponseDiscarded('presence'));
-  test('recovers a force-save entry after a discarded response', () => assertResponseDiscarded('forceSave'));
-
-  test('does not let a stale document-presence acknowledgement remove a retry', () => assertRetryToken('presence'));
-  test('does not let a stale force-save acknowledgement remove a retry', () => assertRetryToken('forceSave'));
-
-  test('recovers only the unacknowledged document-presence item after a partial batch', () => assertPartialBatchRecovery('presence'));
-  test('recovers only the unacknowledged force-save item after a partial batch', () => assertPartialBatchRecovery('forceSave'));
-
-  test('processes document-presence expiration from every shard', () => assertAllShards('presence'));
-  test('processes force-save timers from every shard', () => assertAllShards('forceSave'));
-
-  test('recovers document-presence expiration after a client timeout', async () => {
-    if (process.env.TEST_REDIS_CLUSTER === 'true') {
-      return;
-    }
-    await assertTimeoutAfterExecution('presence');
-  }, 10000);
-
-  test('recovers force-save expiration after a client timeout', async () => {
-    if (process.env.TEST_REDIS_CLUSTER === 'true') {
-      return;
-    }
-    await assertTimeoutAfterExecution('forceSave');
-  }, 10000);
+  testForEachQueue(
+    'recovers %s expiration after a client timeout',
+    async queueName => {
+      if (process.env.TEST_REDIS_CLUSTER === 'true') {
+        return;
+      }
+      await assertTimeoutAfterExecution(queueName);
+    },
+    10000
+  );
 });
