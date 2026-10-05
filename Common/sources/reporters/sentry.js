@@ -70,7 +70,7 @@ function configure(config, layouts, findAppender, levels) {
       context.tags.docId = DOCID;
     }
     if (typeof template === 'string') {
-      context.fingerprint = [template];
+      context.fingerprint = error ? [template, '{{ default }}'] : [template];
     }
     if (error) {
       Sentry.captureException(error, context);

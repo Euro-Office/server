@@ -66,10 +66,13 @@ describe('sentry reporter', () => {
     );
   });
 
-  test('passes Error objects through', () => {
+  test('passes Error objects through, grouped by template and stack', () => {
     const err = new Error('boom');
     appender(logEvent('FATAL', 'convert failed', err));
-    expect(Sentry.captureException).toHaveBeenCalledWith(err, expect.objectContaining({level: 'fatal', fingerprint: ['convert failed']}));
+    expect(Sentry.captureException).toHaveBeenCalledWith(
+      err,
+      expect.objectContaining({level: 'fatal', fingerprint: ['convert failed', '{{ default }}']})
+    );
   });
 
   test('uses default grouping when the first argument is an Error', () => {
