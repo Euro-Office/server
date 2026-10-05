@@ -94,6 +94,7 @@ const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
 const aiProxyHandler = require('./ai/aiProxyHandler');
+const {StartupRedisCancelledError, connectRedisForStartup} = require('./startupRedis');
 
 const cfgEditorDataStorage = config.get('services.CoAuthoring.server.editorDataStorage');
 const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatStorage');
@@ -165,6 +166,7 @@ let pubsub;
 let queue;
 let shutdownFlag = false;
 let preStopFlag = false;
+let startupAbortController;
 const expDocumentsStep = gc.getCronStep(cfgExpDocumentsCron);
 
 const MIN_SAVE_EXPIRATION = 60000;
@@ -1847,6 +1849,24 @@ async function encryptPasswordParams(ctx, data) {
 exports.encryptPasswordParams = encryptPasswordParams;
 exports.getOpenFormatByEditor = getOpenFormatByEditor;
 exports.install = function (server, app, callbackFunction) {
+  startupAbortController?.abort();
+  const installAbortController = new AbortController();
+  startupAbortController = installAbortController;
+  let startupCallbackCalled = false;
+  const completeStartup = error => {
+    if (startupCallbackCalled) {
+      return;
+    }
+    startupCallbackCalled = true;
+    callbackFunction(error);
+  };
+  const notifyStartup = error => {
+    try {
+      completeStartup(error);
+    } catch (callbackError) {
+      operationContext.global.logger.error('Redis startup callback error: %s', callbackError.stack || callbackError.message || callbackError);
+    }
+  };
   io = new Server(server, cfgSocketIoConnection);
 
   io.use((socket, next) => {
@@ -4345,20 +4365,37 @@ exports.install = function (server, app, callbackFunction) {
       Promise.all(requestPromises).then(
         checkResult => {
           if (checkResult.includes(false)) {
+            const error = new Error('Database schema is incompatible');
+            operationContext.global.logger.error('Database schema compatibility check failed');
+            notifyStartup(error);
             return;
           }
-          editorData
-            .connect()
-            .then(() => editorStat.connect())
-            .then(() => callbackFunction())
+          connectRedisForStartup({
+            editorData,
+            editorStat,
+            logger: operationContext.global.logger,
+            signal: installAbortController.signal
+          })
+            .then(() => notifyStartup())
             .catch(err => {
-              operationContext.global.logger.error('editorData error: %s', err.stack);
+              if (!(err instanceof StartupRedisCancelledError)) {
+                operationContext.global.logger.error('Redis startup error: %s', err.stack || err.message || err);
+                notifyStartup(err);
+              }
             });
         },
-        error => operationContext.global.logger.error('getTableColumns error: %s', error.stack)
+        error => {
+          operationContext.global.logger.error('getTableColumns error: %s', error.stack || error.message || error);
+          notifyStartup(error);
+        }
       );
     });
   });
+};
+exports.cancelStartup = function () {
+  const controller = startupAbortController;
+  startupAbortController = undefined;
+  controller?.abort();
 };
 exports.setLicenseInfo = async function (globalCtx, data, original) {
   tenantManager.setDefLicense(data, original);

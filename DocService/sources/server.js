@@ -58,6 +58,7 @@ const ms = require('ms');
 const aiProxyHandler = require('./ai/aiProxyHandler');
 const runtimeConfigManager = require('./../../Common/sources/runtimeConfigManager');
 const {installShutdownHandlers, resolveShutdownTimeout, trackUpgradedSockets, waitForServerClose} = require('./serverShutdown');
+const {startHttpServer} = require('./serverStartup');
 
 const cfgWopiEnable = config.get('wopi.enable');
 const cfgWopiDummyEnable = config.get('wopi.dummy.enable');
@@ -164,18 +165,27 @@ try {
 // If you want to use 'development' and 'production',
 // then with app.settings.env (https://github.com/strongloop/express/issues/936)
 // If error handling is needed, now it's like this https://github.com/expressjs/errorhandler
-docsCoServer.install(server, app, () => {
-  operationContext.global.logger.info('Start callbackFunction');
-
-  server.listen(config.get('services.CoAuthoring.server.port'), () => {
-    operationContext.global.logger.warn(
-      'Express server listening on port %d in %s mode. Version: %s. Build: %s',
-      config.get('services.CoAuthoring.server.port'),
-      app.settings.env,
-      commonDefines.buildVersion,
-      commonDefines.buildNumber
-    );
+docsCoServer.install(server, app, startupError => {
+  const started = startHttpServer({
+    server,
+    startupError,
+    logger: operationContext.global.logger,
+    shutdown: shutdownRedis,
+    port: config.get('services.CoAuthoring.server.port'),
+    onListening: () => {
+      operationContext.global.logger.warn(
+        'Express server listening on port %d in %s mode. Version: %s. Build: %s',
+        config.get('services.CoAuthoring.server.port'),
+        app.settings.env,
+        commonDefines.buildVersion,
+        commonDefines.buildNumber
+      );
+    }
   });
+  if (!started) {
+    return;
+  }
+  operationContext.global.logger.info('Start callbackFunction');
 
   app.get('/index.html', (req, res) => {
     return co(function* () {
@@ -542,6 +552,7 @@ async function shutdownRedis(signal, exitCode = 0) {
   }
   processShutdownPromise = (async () => {
     isShuttingDown = true;
+    docsCoServer.cancelStartup?.();
     closeLocalResources();
     try {
       // Stop accepting new work and close upgraded editor sockets before
