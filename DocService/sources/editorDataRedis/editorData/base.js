@@ -9,11 +9,7 @@ const {randomUUID} = require('crypto');
 
 const {EditorCommon} = require('../editorCommon');
 const {connectionGroups} = require('../redisConnectionManager');
-const {
-  editorIndexKeys,
-  editorIndexKeysForItem,
-  editorIndexKeysForShard
-} = require('../redisKeys');
+const {editorIndexKeys, editorIndexKeysForItem, editorIndexKeysForShard} = require('../redisKeys');
 const {POP_EXPIRED_LEASE_MS} = require('../editorDataSettings');
 
 function EditorData() {

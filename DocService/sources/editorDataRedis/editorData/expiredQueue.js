@@ -6,12 +6,7 @@
 'use strict';
 
 const redisConnection = require('../redisConnection');
-const {
-  EDITOR_INDEX_SHARD_COUNT,
-  EDITOR_INDEX_QUEUES,
-  documentMember,
-  decodeDocumentMember
-} = require('../redisKeys');
+const {EDITOR_INDEX_SHARD_COUNT, EDITOR_INDEX_QUEUES, documentMember, decodeDocumentMember} = require('../redisKeys');
 const {POP_EXPIRED_BATCH_SIZE} = require('../editorDataSettings');
 const {POP_EXPIRED_SCRIPT, ACK_EXPIRED_SCRIPT} = require('../scripts');
 const {strictMax} = require('../redisValueCodec');
