@@ -32,7 +32,7 @@ test('closes a polling fallback and removes only its listener', async () => {
 test('removes polling fallback when a native watcher errors', async () => {
   let onError;
   const nativeWatcher = {close: jest.fn(), on: jest.fn((_event, callback) => (onError = callback))};
-  jest.spyOn(fsPromises, 'statfs').mockResolvedValue({type: 0xEF53});
+  jest.spyOn(fsPromises, 'statfs').mockResolvedValue({type: 0xef53});
   const watch = jest.spyOn(fsWatch, 'watch').mockReturnValue(nativeWatcher);
   const watchFile = jest.spyOn(fsWatch, 'watchFile').mockReturnValue({});
   const unwatchFile = jest.spyOn(fsWatch, 'unwatchFile').mockImplementation(() => {});
@@ -55,7 +55,7 @@ test('polling fallback detects a subsequent file edit', async () => {
   const filePath = path.join(tempDir, 'runtime.json');
   fsWatch.writeFileSync(filePath, '{}');
 
-  jest.spyOn(fsPromises, 'statfs').mockResolvedValue({type: 0xEF53});
+  jest.spyOn(fsPromises, 'statfs').mockResolvedValue({type: 0xef53});
   jest.spyOn(fsWatch, 'watch').mockReturnValue(nativeWatcher);
   const listener = jest.fn();
   let watcher;
@@ -86,7 +86,7 @@ test('polling fallback detects a subsequent file edit', async () => {
 test('does not start polling if a native watcher errors after close', async () => {
   let onError;
   const nativeWatcher = {close: jest.fn(), on: jest.fn((_event, callback) => (onError = callback))};
-  jest.spyOn(fsPromises, 'statfs').mockResolvedValue({type: 0xEF53});
+  jest.spyOn(fsPromises, 'statfs').mockResolvedValue({type: 0xef53});
   jest.spyOn(fsWatch, 'watch').mockReturnValue(nativeWatcher);
   const watchFile = jest.spyOn(fsWatch, 'watchFile').mockReturnValue({});
   const listener = jest.fn();

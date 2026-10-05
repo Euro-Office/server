@@ -142,7 +142,7 @@ test('a stale native initialization does not remove the active polling listener'
     pending[1]({type: 0x6969});
     await newer;
 
-    pending[0]({type: 0xEF53});
+    pending[0]({type: 0xef53});
     await older;
 
     fsWatch.writeFileSync(runtimeFile, '{"changed":true}');
