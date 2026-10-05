@@ -529,6 +529,7 @@ function closeLocalResources() {
   }
 
   closeResource('license file watcher', () => fs.unwatchFile(cfgLicenseFile, updateLicense));
+  closeResource('runtime config watcher', () => runtimeConfigManager.closeRuntimeConfigWatcher());
 
   const watcher = pluginsWatcher;
   pluginsWatcher = undefined;
