@@ -1479,28 +1479,60 @@ async function getFsType(ctx, path) {
  * @param {string} filePath - File path to watch
  * @param {Function} listener - Change event callback
  * @param {Object} opts - Options
- * @returns {Promise<fs.FSWatcher|fs.StatWatcher>} Watcher instance
+ * @returns {Promise<{close: Function}>} Watcher controller
  */
 exports.watchWithFallback = async function watchWithFallback(ctx, dirPath, filePath, listener, opts = {}) {
+  let nativeWatcher = null;
+  let polling = false;
+  let closed = false;
+
+  const startPolling = () => {
+    if (closed || polling) {
+      return;
+    }
+    fs.watchFile(filePath, opts, listener);
+    polling = true;
+  };
+
+  const watcher = {
+    close() {
+      closed = true;
+      nativeWatcher?.close();
+      nativeWatcher = null;
+      if (polling) {
+        fs.unwatchFile(filePath, listener);
+        polling = false;
+      }
+    }
+  };
+
   const fsType = await getFsType(ctx, dirPath);
   if (null === fsType || UNSAFE_MAGIC.has(fsType)) {
     ctx.logger.info(`watchWithFallback fs type=${fsType} unsupport watch. fallback to watchFile ${filePath}`);
-    return fs.watchFile(filePath, opts, listener);
+    startPolling();
+    return watcher;
   }
 
   //Try native watch
   try {
-    const watcher = fs.watch(dirPath, opts, listener);
-    watcher.on('error', err => {
-      watcher.close();
+    nativeWatcher = fs.watch(dirPath, opts, listener);
+    nativeWatcher.on('error', err => {
+      if (closed || polling) {
+        return;
+      }
+      nativeWatcher.close();
+      nativeWatcher = null;
       ctx.logger.info(`watchWithFallback error ${dirPath} fallback to watchFile ${filePath}: ${err.message}`);
-      fs.watchFile(filePath, opts, listener);
+      startPolling();
     });
     ctx.logger.info(`watchWithFallback watch: ${dirPath}`);
     return watcher;
   } catch (err) {
+    nativeWatcher?.close();
+    nativeWatcher = null;
     ctx.logger.info(`watchWithFallback error ${dirPath} fallback to watchFile ${filePath}: ${err.message}`);
-    return fs.watchFile(filePath, opts, listener);
+    startPolling();
+    return watcher;
   }
 };
 /**

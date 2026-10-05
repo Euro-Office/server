@@ -1,0 +1,95 @@
+# Independent-process `editorDataRedis` tests
+
+`editorDataRedis.process.tests.js` verifies behavior that requires two
+independent Node.js processes sharing the same Redis backend or topology. It
+is separate from the regular Redis tests because those tests create multiple
+storage instances in one process.
+
+## What the suite does
+
+The suite forks two workers, `replica-a` and `replica-b`. Each worker has its
+own `EditorData` and `EditorStat` instances, event loop, timers, shared
+per-database Redis connection, process ID, and replica identity. Within a
+worker, the data and stat instances lease the same default-database client;
+the proxy database, when enabled, remains isolated. The parent communicates with the
+workers through structured Node.js IPC messages containing request IDs.
+Every operation has a deadline, and protocol errors include the scenario and
+replica that produced them.
+
+One test compares a successful-operation trace between the in-memory backend
+and the two Redis workers. The comparison covers observable results for locks,
+unlock enums, object-lock conflicts and removal, messages, saved-value
+claim/read/ack operations, force-save transitions, first-write-wins force-save
+timers, unique-user statistics, and notification mutexes.
+
+Redis-only scenarios cover cross-process visibility and races for presence,
+presence expiry, locks, messages, saved-value claims, force-save operations, timers,
+and notification mutexes. The crash scenario kills `replica-a` after Redis
+has acknowledged a presence write but before the public method completes.
+`replica-b` must still observe the committed presence, answer a ping, acquire
+and release a lock, and remove the remaining presence.
+
+Saved-state reads are durable claims. The claim operation ID is stable across
+retries, so a response lost after Redis commits can recover the value. A
+different consumer receives an unknown-outcome error until the claim is
+acknowledged; only an actually absent saved key returns `null`. Terminal
+document cleanup recovers claims whose owner is no longer completing the
+operation, while the active owner passes its claim ID through cleanup before
+acknowledging it.
+
+## Cleanup and topology coverage
+
+Each test uses a unique prefix derived from `TEST_REDIS_PREFIX`. Workers are
+shut down explicitly, surviving children are terminated during cleanup, and
+the parent scans and deletes keys belonging to that prefix.
+
+The process suite runs in the standalone, Cluster, and Sentinel Redis jobs.
+The workers use the same topology configuration as the parent test process.
+Cleanup uses a direct client for standalone Redis, scans every Cluster master,
+and scans the Sentinel-discovered master.
+
+The topology integration suite in `editorDataRedis.topology.tests.js` runs
+separately for Cluster and Sentinel. It promotes a real replica, verifies the
+topology reports the new master, exercises a command against the already-open
+`editorDataRedis` connection during the transition, and verifies that the same
+connection writes and reads successfully from the promoted master. Sentinel
+also verifies that its authenticated connection rejects a command while no
+master is usable before reconnecting.
+
+The dedicated topology CI steps set `TEST_REDIS_TOPOLOGY_REQUIRED=true`; when
+that flag is set, missing topology or failover configuration fails the test
+file instead of silently skipping its scenarios. The flag is not set for the
+general Redis suite, where topology-specific scenarios remain skipped.
+
+The CI fixtures authenticate every Redis node and Sentinel in the password
+matrix. A separate standalone job runs the same suite without a password so
+the unauthenticated configuration remains covered.
+
+The test topology is selected through the `TEST_REDIS_*` environment variables.
+Those values are parsed and validated by `testConfig.js`, including the
+standalone host and port, Cluster root nodes, Sentinel root nodes and master
+name, key prefix, database number, and mutually exclusive topology flags.
+
+The original harness guarded the whole `describe` block with
+`TEST_REDIS_CLUSTER !== 'true'`, so Jest discovered the file but skipped every
+independent-process scenario in the Cluster job. That was a test-selection
+limitation, not a Redis Cluster limitation. The workers now create the same
+topology-selected client as the parent, and Cluster cleanup scans each master.
+
+One separate single-process test remains intentionally standalone-only:
+`editorDataRedis.tests.js` checks timeout recovery for a Redis `MULTI`
+transaction, while the Cluster implementation routes command batches
+individually to preserve hash-slot correctness. This exclusion is limited to
+that transaction test and does not skip the process suite or its Cluster
+scenarios.
+
+## Not covered by this suite
+
+The separate `editorDataRedis.failure.integration.tests.js` test stops a real
+Redis container and verifies the production failure policy: lock acquisition
+and release fail closed, reads reject, and destructive cleanup stops after the
+connection failure. It runs in an isolated CI step because the Redis process
+is intentionally stopped.
+
+Not covered here: packaged-binary loading or force-save payload serialization.
+Those concerns belong to the packaging and regular behavior tests respectively.
