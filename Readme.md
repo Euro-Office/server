@@ -122,6 +122,7 @@ values are seconds unless noted otherwise.
 | Messages                       | 86400 seconds (24 hours) |
 | Force-save state               |  604800 seconds (7 days) |
 | Saved status                   |    3600 seconds (1 hour) |
+| Saved-state claim lease        | 86400 seconds (24 hours) |
 | Monthly unique-user statistics |                     `1y` |
 
 Presence, locks, messages, force-save state, saved status, and shard counters
@@ -129,6 +130,24 @@ are refreshed or expired by the backend as they are used. The document and
 force-save indexes are sorted sets with timestamp scores; cleanup removes
 expired members, so an index key itself can remain present after its members
 expire.
+
+Saved status has a separate claim lease. A claim is created only when a save
+result is consumed: the backend creates a per-document `saved:claim` key and
+removes the `saved` key as one operation. The claim prevents another operation
+from consuming the same result while the current operation is completing. A
+successful consumer acknowledges the claim after it has accepted the saved
+result; the claim then remains only for the rest of its configured lease. A
+retry with the same operation can recover a claimed result before that lease
+expires, while a different operation fails closed until the claim is
+acknowledged or expires.
+
+If the consumer does not acknowledge the claim, its lease expires after the
+configured `services.CoAuthoring.expire.savedClaim` interval. The abandoned
+claim is then eligible for abandoned-claim recovery, so it no longer blocks a
+later saved status; terminal document cleanup can also clear an abandoned
+claim while finalizing the document. The default claim lease is 86400 seconds
+(24 hours), independently of the 3600-second saved-status lifetime. A claim
+that has already been acknowledged is also removed when its lease expires.
 
 Expiration cleanup is processed in batches of 6 members per index shard. The
 Redis `POP_EXPIRED` Lua operation is atomic for one shard, so this cap bounds
@@ -156,7 +175,8 @@ Tenant and document identifiers are encoded with URL-safe Base64. For a tenant
 
 The per-document keys are the base followed by `presence:set`,
 `presence:hash`, `presence:version`, `savelock`, `lockdocument`, `locks`,
-`message`, `saved`, and `forcesave`.
+`message`, `saved`, `saved:claim`, and `forcesave`. `saved:claim` is the
+lease-limited coordination key used while a saved status is being consumed.
 
 Cross-document editor-data indexes use 16 fixed shards. The shard is the
 FNV-1a hash of the UTF-8 JSON pair `[tenant, document]`, reduced modulo 16.
