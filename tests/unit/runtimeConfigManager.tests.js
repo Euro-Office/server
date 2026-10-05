@@ -5,6 +5,7 @@
 
 const {afterEach, expect, jest, test} = require('@jest/globals');
 const fsWatch = require('fs');
+const fsPromises = require('fs/promises');
 const operationContext = require('../../Common/sources/operationContext');
 const runtimeConfigManager = require('../../Common/sources/runtimeConfigManager');
 const utils = require('../../Common/sources/utils');
@@ -112,13 +113,36 @@ test('closes the previous watcher when initialization runs again', async () => {
 });
 
 test('removes the file callback when closing a polling watcher', async () => {
-  const watcher = {stop: jest.fn()};
+  let watchedFile;
+  let changeListener;
   const unwatchFile = jest.spyOn(fsWatch, 'unwatchFile').mockImplementation(() => {});
-  jest.spyOn(utils, 'watchWithFallback').mockResolvedValue(watcher);
+  jest.spyOn(utils, 'watchWithFallback').mockImplementation(async (_ctx, _dir, file, listener) => {
+    watchedFile = file;
+    changeListener = listener;
+    return {};
+  });
 
   await runtimeConfigManager.initRuntimeConfigWatcher({logger: {info: jest.fn()}});
   runtimeConfigManager.closeRuntimeConfigWatcher();
 
-  expect(watcher.stop).toHaveBeenCalledTimes(1);
-  expect(unwatchFile).toHaveBeenCalledWith(expect.any(String), expect.any(Function));
+  expect(unwatchFile).toHaveBeenCalledWith(watchedFile, changeListener);
+});
+
+test('a stale initialization does not stop the active polling watcher', async () => {
+  const pending = [];
+  jest.spyOn(fsPromises, 'statfs').mockImplementation(() => new Promise(resolve => pending.push(() => resolve({type: 0x6969}))));
+  const watchFile = jest.spyOn(fsWatch, 'watchFile');
+
+  const older = runtimeConfigManager.initRuntimeConfigWatcher({logger: {info: jest.fn()}});
+  const newer = runtimeConfigManager.initRuntimeConfigWatcher({logger: {info: jest.fn()}});
+  pending[1]();
+  await newer;
+  const onStop = jest.fn();
+  watchFile.mock.results[0].value.on('stop', onStop);
+
+  pending[0]();
+  await older;
+  await new Promise(resolve => setImmediate(resolve));
+
+  expect(onStop).not.toHaveBeenCalled();
 });

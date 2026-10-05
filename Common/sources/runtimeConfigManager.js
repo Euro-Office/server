@@ -179,7 +179,6 @@ async function initRuntimeConfigWatcher(ctx) {
   const watcher = await utils.watchWithFallback(ctx, configDir, configFilePath, handleConfigFileChange);
   if (runtimeConfigWatcherClosed || generation !== runtimeConfigWatcherGeneration) {
     watcher?.close?.();
-    watcher?.stop?.();
     if (configFilePath) {
       fsWatch.unwatchFile(configFilePath, handleConfigFileChange);
     }
@@ -196,7 +195,6 @@ function closeRuntimeConfigWatcher() {
     reloadTimer = null;
   }
   runtimeConfigWatcher?.close?.();
-  runtimeConfigWatcher?.stop?.();
   runtimeConfigWatcher = null;
   // watchWithFallback may have replaced a native watcher with a polling
   // watcher after an error, so also remove the file watcher explicitly.
