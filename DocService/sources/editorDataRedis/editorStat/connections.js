@@ -5,12 +5,7 @@
 
 'use strict';
 
-const {
-  SET_CONNECTION_SAMPLE_SCRIPT,
-  SET_SHARD_COUNT_SCRIPT,
-  INCR_SHARD_COUNT_SCRIPT,
-  GET_SHARD_COUNT_SCRIPT
-} = require('../scripts');
+const {SET_CONNECTION_SAMPLE_SCRIPT, SET_SHARD_COUNT_SCRIPT, INCR_SHARD_COUNT_SCRIPT, GET_SHARD_COUNT_SCRIPT} = require('../scripts');
 const {cfgExpShard} = require('../editorStatSettings');
 const {ttlSeconds, jsonEncode, jsonDecode, strictMax} = require('../redisValueCodec');
 

@@ -5,12 +5,7 @@
 
 'use strict';
 
-const {
-  FORCE_SAVE_FIELDS,
-  START_FORCE_SAVE_SCRIPT,
-  SET_FORCE_SAVE_SCRIPT,
-  STORE_FORCE_SAVE_SCRIPT
-} = require('../scripts');
+const {FORCE_SAVE_FIELDS, START_FORCE_SAVE_SCRIPT, SET_FORCE_SAVE_SCRIPT, STORE_FORCE_SAVE_SCRIPT} = require('../scripts');
 const {cfgExpForceSave} = require('../editorDataSettings');
 const {ttlSeconds, jsonEncode, jsonDecode, toRedisString} = require('../redisValueCodec');
 
@@ -88,4 +83,3 @@ module.exports = function attachForceSave(EditorData) {
     await this._command(['DEL', this._docKeys(ctx, docId).forceSave]);
   };
 };
-

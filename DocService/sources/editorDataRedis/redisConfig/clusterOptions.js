@@ -5,12 +5,7 @@
 
 'use strict';
 
-const {
-  REDIS_RESP_VERSION,
-  cfgRedisOptionsCluster,
-  cloneConfig,
-  normalizeCommandOptions
-} = require('./base');
+const {REDIS_RESP_VERSION, cfgRedisOptionsCluster, cloneConfig, normalizeCommandOptions} = require('./base');
 const {normalizeNodeOptions} = require('./nodeOptions');
 
 function normalizeClusterOptions(source) {
