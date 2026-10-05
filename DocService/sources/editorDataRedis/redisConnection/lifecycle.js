@@ -30,6 +30,14 @@ module.exports = function attachLifecycle(RedisConnection) {
     }
   };
 
+  RedisConnection.prototype.cancelConnect = function () {
+    if (!this.connectPromise) {
+      return false;
+    }
+    this._abortClient();
+    return true;
+  };
+
   RedisConnection.prototype._detachClient = function (expectedClient = this.client, expectedGeneration, {preserveConnectPromise = false} = {}) {
     if (expectedClient && expectedClient !== this.client) {
       return null;

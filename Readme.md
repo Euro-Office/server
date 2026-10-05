@@ -53,6 +53,23 @@ adapter timeout and fail before readiness rather than entering an unbounded
 offline queue. A deliberate store or process shutdown remains terminal until
 the store is recreated.
 
+### DocumentServer startup retry policy
+
+When Redis-backed editor-data or editor-stat storage is enabled, DocumentServer
+does not accept HTTP requests until both stores have connected successfully.
+Startup retries the complete editor-data/editor-stat readiness sequence at most
+three times. Between attempts it waits one second, then two seconds. These
+startup retry values are fixed and are not runtime configuration settings.
+
+Each individual Redis connection still uses the normal topology-specific
+connection timeout and reconnect behavior described above. Consequently, a
+Redis outage can delay final startup failure longer than the two retry delays.
+If all startup attempts fail, DocumentServer logs the final Redis error and
+terminates with a non-zero exit status; it does not start listening on a
+partially initialized server. Standalone, Cluster, and Sentinel deployments
+follow the same startup policy. Process shutdown cancels pending startup
+retries and closes any in-flight Redis connection attempt.
+
 ### Redis command timeout isolation
 
 Node-Redis multiplexes commands on one physical client, but a command that has
