@@ -86,6 +86,17 @@ describe('sentry reporter', () => {
     expect(event.request.headers).toEqual({Authorization: '[Filtered]', 'user-agent': 'ua'});
   });
 
+  test('scrubs WOPI access tokens, bare query strings and raw JWTs', () => {
+    const event = reporter.scrub({
+      message: 'error downloadFile:url=https://nc/wopi/files/1/contents?access_token=secret&x=1',
+      breadcrumbs: [{data: {'http.query': 'token=secret&a=1'}}],
+      extra: {data: '{"key":"k","token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc-def_123"}', keep: 'mydoc=fine'}
+    });
+    expect(event.message).toBe('error downloadFile:url=https://nc/wopi/files/1/contents?access_token=[Filtered]&x=1');
+    expect(event.breadcrumbs[0].data['http.query']).toBe('token=[Filtered]&a=1');
+    expect(event.extra).toEqual({data: '{"key":"k","token":"[Filtered]"}', keep: 'mydoc=fine'});
+  });
+
   test('shutdown flushes the SDK', done => {
     appender.shutdown(() => {
       expect(Sentry.close).toHaveBeenCalled();

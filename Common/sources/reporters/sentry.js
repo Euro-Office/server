@@ -8,9 +8,10 @@ const util = require('util');
 const constants = require('../constants');
 
 const SECRETS = [
-  [/([?&](?:token|doc)=)[^&#\s"'\\]*/gi, '$1[Filtered]'],
+  [/(\b(?:access_token|token|doc)=)[^&#\s"'\\]*/gi, '$1[Filtered]'],
   [/("authorization"\s*:\s*")[^"]*/gi, '$1[Filtered]'],
-  [/(Bearer\s+)[^\s"'\\]+/gi, '$1[Filtered]']
+  [/(Bearer\s+)[^\s"'\\]+/gi, '$1[Filtered]'],
+  [/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[Filtered]']
 ];
 
 let Sentry = null;
