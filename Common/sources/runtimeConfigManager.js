@@ -26,7 +26,6 @@
 'use strict';
 
 const fs = require('fs/promises');
-const fsWatch = require('fs');
 const path = require('path');
 const config = require('config');
 const NodeCache = require('node-cache');
@@ -179,9 +178,6 @@ async function initRuntimeConfigWatcher(ctx) {
   const watcher = await utils.watchWithFallback(ctx, configDir, configFilePath, handleConfigFileChange);
   if (runtimeConfigWatcherClosed || generation !== runtimeConfigWatcherGeneration) {
     watcher?.close?.();
-    if (configFilePath) {
-      fsWatch.unwatchFile(configFilePath, handleConfigFileChange);
-    }
     return;
   }
   runtimeConfigWatcher = watcher;
@@ -196,11 +192,6 @@ function closeRuntimeConfigWatcher() {
   }
   runtimeConfigWatcher?.close?.();
   runtimeConfigWatcher = null;
-  // watchWithFallback may have replaced a native watcher with a polling
-  // watcher after an error, so also remove the file watcher explicitly.
-  if (configFilePath) {
-    fsWatch.unwatchFile(configFilePath, handleConfigFileChange);
-  }
 }
 module.exports = {
   closeRuntimeConfigWatcher,
