@@ -1,0 +1,7 @@
+{
+  "name": "string-form-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "scripts": "./sources/missing.js"
+  }
+}
