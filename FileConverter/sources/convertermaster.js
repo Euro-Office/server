@@ -25,6 +25,7 @@
 
 'use strict';
 
+require('./../../Common/sources/reporters').init('converter');
 const cluster = require('cluster');
 const moduleReloader = require('./../../Common/sources/moduleReloader');
 const config = moduleReloader.requireConfigWithRuntime();
