@@ -63,17 +63,22 @@ test('polling fallback detects a subsequent file edit', async () => {
   try {
     watcher = await utils.watchWithFallback({logger: {info: jest.fn()}}, tempDir, filePath, listener, {interval: 10});
     onError(new Error('native watcher failed'));
-    fsWatch.writeFileSync(filePath, '{"changed":true}');
 
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('polling watcher did not detect the file edit')), 1000);
+      const timeout = setTimeout(() => {
+        clearInterval(check);
+        reject(new Error('polling watcher did not detect the file edit'));
+      }, 1000);
       const check = setInterval(() => {
         if (listener.mock.calls.length > 0) {
           clearTimeout(timeout);
           clearInterval(check);
           resolve();
+          return;
         }
-      }, 10);
+
+        fsWatch.appendFileSync(filePath, ' ');
+      }, 20);
     });
 
     expect(listener).toHaveBeenCalled();
