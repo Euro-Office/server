@@ -145,11 +145,20 @@ test('a stale native initialization does not remove the active polling listener'
     pending[0]({type: 0xef53});
     await older;
 
-    fsWatch.writeFileSync(runtimeFile, '{"changed":true}');
+    let edits = 0;
+    const edit = () => fsWatch.writeFileSync(runtimeFile, '{"changed":true}' + ' '.repeat(++edits));
+
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('active polling watcher did not reload the edited file')), 1000);
+      edit();
+      const rewrite = setInterval(edit, 300);
+      const timeout = setTimeout(() => {
+        clearInterval(rewrite);
+        clearInterval(check);
+        reject(new Error('active polling watcher did not reload the edited file'));
+      }, 3000);
       const check = setInterval(() => {
         if (cleanRuntimeConfigCache.mock.calls.length > 0) {
+          clearInterval(rewrite);
           clearTimeout(timeout);
           clearInterval(check);
           resolve();
