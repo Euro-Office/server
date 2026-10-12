@@ -42,6 +42,10 @@ function isEnabled() {
 }
 
 function scrub(event) {
+  if (event.request) {
+    const {method, url, query_string} = event.request;
+    event.request = {method, url, query_string};
+  }
   const json = SECRETS.reduce((str, [pattern, replacement]) => str.replace(pattern, replacement), JSON.stringify(event));
   return JSON.parse(json);
 }
@@ -56,6 +60,7 @@ function configure(config, layouts, findAppender, levels) {
     }
     const [template] = logEvent.data;
     const error = logEvent.data.find(arg => arg instanceof Error);
+    const stack = logEvent.data.find(arg => typeof arg === 'string' && /\n\s+at /.test(arg));
     const message = util.format(...logEvent.data);
     const {TENANT, DOCID} = logEvent.context || {};
     const context = {
@@ -70,7 +75,7 @@ function configure(config, layouts, findAppender, levels) {
       context.tags.docId = DOCID;
     }
     if (typeof template === 'string') {
-      context.fingerprint = error ? [template, '{{ default }}'] : [template];
+      context.fingerprint = error ? [template, '{{ default }}'] : stack ? [template, stack.split('\n')[0]] : [template];
     }
     if (error) {
       Sentry.captureException(error, context);
@@ -78,7 +83,8 @@ function configure(config, layouts, findAppender, levels) {
       Sentry.captureMessage(message, context);
     }
   };
-  appender.shutdown = done => Sentry.close(2000).then(() => done(), done);
+  // log4js also calls shutdown on every reconfigure, so flush rather than close the client
+  appender.shutdown = done => Sentry.flush(2000).then(() => done(), done);
   return appender;
 }
 
