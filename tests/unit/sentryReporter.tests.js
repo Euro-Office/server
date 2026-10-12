@@ -10,6 +10,7 @@ jest.mock('../../Common/node_modules/@sentry/node', () => ({
   init: jest.fn(),
   captureException: jest.fn(),
   captureMessage: jest.fn(),
+  flush: jest.fn(() => Promise.resolve(true)),
   close: jest.fn(() => Promise.resolve(true))
 }));
 
@@ -66,6 +67,11 @@ describe('sentry reporter', () => {
     );
   });
 
+  test('groups stack-shaped arguments by template and error line', () => {
+    appender(logEvent('ERROR', 'uncaughtException:%s', 'TypeError: x is undefined\n    at f (a.js:1:1)'));
+    expect(Sentry.captureMessage.mock.calls[0][1].fingerprint).toEqual(['uncaughtException:%s', 'TypeError: x is undefined']);
+  });
+
   test('passes Error objects through, grouped by template and stack', () => {
     const err = new Error('boom');
     appender(logEvent('FATAL', 'convert failed', err));
@@ -80,13 +86,20 @@ describe('sentry reporter', () => {
     expect(Sentry.captureException.mock.calls[0][1].fingerprint).toBeUndefined();
   });
 
-  test('scrubs tokens, doc params and authorization headers', () => {
+  test('scrubs tokens and reduces request data to method, url and query', () => {
     const event = reporter.scrub({
       message: 'GET https://nc/x?a=1&token=abc.def&doc=secret#h failed, Authorization: Bearer abc.def',
-      request: {headers: {Authorization: 'Bearer abc', 'user-agent': 'ua'}}
+      request: {
+        method: 'POST',
+        url: 'https://ds/coauthoring/CommandService.ashx',
+        query_string: 'token=abc',
+        headers: {Authorization: 'Bearer abc', 'user-agent': 'ua'},
+        cookies: {nc_session_id: 'secret'},
+        data: '{"user":"alice"}'
+      }
     });
     expect(event.message).toBe('GET https://nc/x?a=1&token=[Filtered]&doc=[Filtered]#h failed, Authorization: Bearer [Filtered]');
-    expect(event.request.headers).toEqual({Authorization: '[Filtered]', 'user-agent': 'ua'});
+    expect(event.request).toEqual({method: 'POST', url: 'https://ds/coauthoring/CommandService.ashx', query_string: 'token=[Filtered]'});
   });
 
   test('scrubs WOPI access tokens, bare query strings and raw JWTs', () => {
@@ -100,9 +113,12 @@ describe('sentry reporter', () => {
     expect(event.extra).toEqual({data: '{"key":"k","token":"[Filtered]"}', keep: 'mydoc=fine'});
   });
 
-  test('shutdown flushes the SDK', done => {
+  test('shutdown flushes without closing, so reporting survives a log4js reconfigure', done => {
     appender.shutdown(() => {
-      expect(Sentry.close).toHaveBeenCalled();
+      expect(Sentry.flush).toHaveBeenCalled();
+      expect(Sentry.close).not.toHaveBeenCalled();
+      appender(logEvent('ERROR', 'after reload'));
+      expect(Sentry.captureMessage).toHaveBeenCalledWith('after reload', expect.anything());
       done();
     });
   });
