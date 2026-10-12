@@ -25,6 +25,7 @@
 
 'use strict';
 
+require('./../../Common/sources/reporters').init('docservice');
 const moduleReloader = require('./../../Common/sources/moduleReloader');
 const config = moduleReloader.requireConfigWithRuntime();
 //process.env.NODE_ENV = config.get('services.CoAuthoring.server.mode');
