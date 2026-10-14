@@ -1,0 +1,9 @@
+{
+  "name": "no-scripts-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "assets": [
+      "assets/**/*"
+    ]
+  }
+}
