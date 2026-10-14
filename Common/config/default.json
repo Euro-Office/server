@@ -405,6 +405,7 @@
       },
       "redis": {
         "name": "redis",
+        "mode": "auto",
         "prefix": "ds:",
         "host": "127.0.0.1",
         "port": 6379,
