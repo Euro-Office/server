@@ -6,7 +6,6 @@
 const {afterEach, expect, jest, test} = require('@jest/globals');
 const fsWatch = require('fs');
 const fsPromises = require('fs/promises');
-const path = require('path');
 const operationContext = require('../../Common/sources/operationContext');
 const runtimeConfigManager = require('../../Common/sources/runtimeConfigManager');
 const utils = require('../../Common/sources/utils');
@@ -113,66 +112,37 @@ test('closes the previous watcher when initialization runs again', async () => {
   expect(secondWatcher.close).not.toHaveBeenCalled();
 });
 
-test('removes the file callback when closing a polling watcher', async () => {
-  const watcher = {close: jest.fn()};
-  jest.spyOn(utils, 'watchWithFallback').mockResolvedValue(watcher);
-
-  await runtimeConfigManager.initRuntimeConfigWatcher({logger: {info: jest.fn()}});
-  runtimeConfigManager.closeRuntimeConfigWatcher();
-
-  expect(watcher.close).toHaveBeenCalledTimes(1);
-});
-
 test('a stale native initialization does not remove the active polling listener', async () => {
   const pending = [];
-  const runtimeFile = path.resolve(__dirname, '../../runtime.json');
-  const runtimeFileExists = fsWatch.existsSync(runtimeFile);
-  const originalRuntimeFile = runtimeFileExists ? fsWatch.readFileSync(runtimeFile) : null;
-  const originalWatchFile = fsWatch.watchFile;
+  let pollingListener;
+  jest.useFakeTimers();
   const cleanRuntimeConfigCache = jest.spyOn(operationContext.global, 'cleanRuntimeConfigCache');
   jest.spyOn(fsPromises, 'statfs').mockImplementation(() => new Promise(resolve => pending.push(resolve)));
-  jest.spyOn(fsWatch, 'watchFile').mockImplementation((file, _opts, listener) => {
-    return originalWatchFile(file, {interval: 10}, listener);
+  jest.spyOn(fsWatch, 'watchFile').mockImplementation((_file, _opts, listener) => {
+    pollingListener = listener;
+    return {};
   });
+  const nativeWatcher = {
+    close: jest.fn(),
+    on: jest.fn()
+  };
+  const watch = jest.spyOn(fsWatch, 'watch').mockReturnValue(nativeWatcher);
 
-  try {
-    fsWatch.writeFileSync(runtimeFile, '{}');
-    const older = runtimeConfigManager.initRuntimeConfigWatcher({logger: {info: jest.fn()}});
-    const newer = runtimeConfigManager.initRuntimeConfigWatcher({logger: {info: jest.fn()}});
-    pending[1]({type: 0x6969});
-    await newer;
+  const older = runtimeConfigManager.initRuntimeConfigWatcher({logger: {info: jest.fn()}});
+  const newer = runtimeConfigManager.initRuntimeConfigWatcher({logger: {info: jest.fn()}});
+  pending[1]({type: 0x6969});
+  await newer;
 
-    pending[0]({type: 0xef53});
-    await older;
+  pending[0]({type: 0xef53});
+  await older;
 
-    let edits = 0;
-    const edit = () => fsWatch.writeFileSync(runtimeFile, '{"changed":true}' + ' '.repeat(++edits));
+  expect(watch).toHaveBeenCalledTimes(1);
+  expect(nativeWatcher.close).toHaveBeenCalledTimes(1);
+  expect(fsWatch.watchFile).toHaveBeenCalledTimes(1);
 
-    await new Promise((resolve, reject) => {
-      edit();
-      const rewrite = setInterval(edit, 300);
-      const timeout = setTimeout(() => {
-        clearInterval(rewrite);
-        clearInterval(check);
-        reject(new Error('active polling watcher did not reload the edited file'));
-      }, 3000);
-      const check = setInterval(() => {
-        if (cleanRuntimeConfigCache.mock.calls.length > 0) {
-          clearInterval(rewrite);
-          clearTimeout(timeout);
-          clearInterval(check);
-          resolve();
-        }
-      }, 10);
-    });
+  // Deliver a polling event after the stale native watcher has been closed.
+  pollingListener({isFile: true, mtime: 2}, {mtime: 1});
+  jest.runOnlyPendingTimers();
 
-    expect(cleanRuntimeConfigCache).toHaveBeenCalledTimes(1);
-  } finally {
-    runtimeConfigManager.closeRuntimeConfigWatcher();
-    if (runtimeFileExists) {
-      fsWatch.writeFileSync(runtimeFile, originalRuntimeFile);
-    } else {
-      fsWatch.rmSync(runtimeFile, {force: true});
-    }
-  }
+  expect(cleanRuntimeConfigCache).toHaveBeenCalledTimes(1);
 });

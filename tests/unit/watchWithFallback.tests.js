@@ -98,6 +98,7 @@ test('does not start polling if a native watcher errors after close', async () =
 
   const watcher = await utils.watchWithFallback(ctx, '/config', '/config/runtime.json', listener);
   watcher.close();
+  expect(nativeWatcher.close).toHaveBeenCalledTimes(1);
   onError(new Error('late native watcher failure'));
 
   expect(watchFile).not.toHaveBeenCalled();
