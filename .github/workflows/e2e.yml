@@ -5,8 +5,9 @@ name: E2E (overlay on nightly)
 # Playwright e2e suite against it. Fast feedback on a server change against the
 # full stack without rebuilding core/sdkjs/web-apps.
 #
-# Scope: overlays the four pkg binaries (docservice, fileconverter, metrics,
-# adminpanel). The AdminPanel webpack client is intentionally NOT overlaid —
+# Scope: overlays the pkg binaries (docservice, fileconverter, metrics) and
+# their matching Common/config/default.json. The AdminPanel webpack client is
+# intentionally NOT overlaid —
 # the e2e suite never exercises the admin UI, so the nightly image's client
 # build is left in place.
 on:
@@ -98,6 +99,7 @@ jobs:
           ( cd DocService    && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/docservice" )
           ( cd FileConverter && pkg . -t linux-x64 -o "$BUILD_ROOT/fileconverter" )
           ( cd Metrics       && pkg . -t linux-x64 -o "$BUILD_ROOT/metrics" )
+          cp Common/config/default.json "$BUILD_ROOT/default.json"
 
       - name: Build overlay image with fresh server binaries
         run: |
@@ -105,15 +107,16 @@ jobs:
           cat > overlay.Dockerfile <<'EOF'
           ARG NIGHTLY_IMAGE
           FROM ${NIGHTLY_IMAGE}
-          COPY docservice fileconverter metrics /tmp/srv/
+          COPY docservice fileconverter metrics default.json /tmp/srv/
           # The install path is brand-derived (/var/www/<brand>/documentserver);
-          # locate it via the sdkjs dir, then replace the service binaries.
+          # locate it via the sdkjs dir, then install the binaries and defaults.
           RUN set -eux; \
               root="$(dirname "$(find /var/www -maxdepth 5 -type d -name sdkjs -path '*documentserver*' | head -n1)")"; \
               test -n "$root"; \
               install -m0755 /tmp/srv/docservice    "$root/server/DocService/docservice"; \
               install -m0755 /tmp/srv/fileconverter "$root/server/FileConverter/converter"; \
               install -m0755 /tmp/srv/metrics       "$root/server/Metrics/metrics"; \
+              install -m0644 /tmp/srv/default.json "$EO_CONF/default.json"; \
               rm -rf /tmp/srv
           EOF
           docker build \
