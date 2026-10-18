@@ -371,11 +371,6 @@ function repeat(taskqueue) {
     addTask(taskqueue, elem.task, elem.priority, () => {}, elem.expiration, elem.headers);
   }
   taskqueue.addTaskStore.length = 0;
-  for (let i = 0; i < taskqueue.addDelayedStore.length; ++i) {
-    const elem = taskqueue.addDelayedStore[i];
-    addDelayed(taskqueue, elem.task, elem.ttl, () => {});
-  }
-  taskqueue.addDelayedStore.length = 0;
 }
 function addTaskRabbit(taskqueue, content, priority, callback, opt_expiration, opt_headers) {
   const options = {persistent: true, priority};
@@ -541,7 +536,6 @@ function TaskQueueRabbitMQ(simulateErrorResponse) {
   this.channelConvertResponseReceive = null;
   this.channelDelayed = null;
   this.addTaskStore = [];
-  this.addDelayedStore = [];
   this.channelConvertTaskData = {};
   this.channelConvertResponseData = {};
   this.channelDelayedData = {};
@@ -587,7 +581,7 @@ TaskQueueRabbitMQ.prototype.addResponse = function (task) {
 TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl, opt_requireConfirm) {
   const t = this;
   return new Promise((resolve, reject) => {
-    const content = new Buffer(JSON.stringify(task));
+    const content = Buffer.from(JSON.stringify(task));
     if (null != t.channelDelayed) {
       addDelayed(t, content, ttl, (err, _ok) => {
         if (null != err) {
@@ -599,8 +593,9 @@ TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl, opt_requireConfirm
     } else if (opt_requireConfirm) {
       reject(new Error('Delayed-task channel is unavailable; retry was not persisted'));
     } else {
-      t.addDelayedStore.push({task: content, ttl});
-      resolve();
+      // Callers may acknowledge the original delivery only after the broker
+      // confirms its retry. An in-memory reconnect buffer is not durable.
+      reject(new Error('Delayed queue is unavailable'));
     }
   });
 };
