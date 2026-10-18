@@ -70,6 +70,8 @@ function normalizeSentinelOptions(source, database) {
   options.reserveClient = true;
   options.commandOptions = normalizeCommandOptions(options.commandOptions);
   // Do not let the native Sentinel client replay commands after a lost reply.
+  // RedisConnection invalidates stale clients on topology errors so the next
+  // operation rediscovers the primary without replaying the failed operation.
   // Initial discovery retries are handled by RedisConnection with a fresh
   // client and one overall connection budget.
   options.maxCommandRediscovers = REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS;
