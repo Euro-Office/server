@@ -5,7 +5,7 @@ require('./testSetup');
 const assert = require('node:assert/strict');
 const {EventEmitter} = require('node:events');
 const net = require('node:net');
-const {describe, test} = require('@jest/globals');
+const {describe, test, jest} = require('@jest/globals');
 const redis = require('../../DocService/node_modules/redis');
 
 const {
@@ -24,6 +24,9 @@ const {
 const {EditorCommon} = require('../../DocService/sources/editorDataRedis/editorCommon');
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
 const {
+  cfgRedisOptions,
+  cfgRedisOptionsCluster,
+  cfgRedisOptionsSentinel,
   normalizeNodeOptions,
   normalizeClusterOptions,
   normalizeSentinelOptions,
@@ -37,6 +40,62 @@ function fakeClient(properties = {}) {
 }
 
 describe('editorDataRedis connection contract', () => {
+  test('distinguishes configured databases from explicit overrides in connection scopes', () => {
+    assert.equal(connectionScope(), connectionScope(null));
+    assert.equal(connectionScope(), connectionScope(''));
+    assert.notEqual(connectionScope(), connectionScope(0));
+    assert.equal(connectionScope(0), connectionScope('0'));
+    assert.equal(connectionScope(5), connectionScope('5'));
+  });
+
+  test.each([
+    ['standalone database', {database: '5'}, {}],
+    ['standalone legacy db', {db: '5'}, {}],
+    ['Sentinel fallback', {database: '5'}, {nodeClientOptions: {}}],
+    ['Sentinel database', {database: 2}, {database: '5'}],
+    ['Sentinel node database', {database: 2}, {nodeClientOptions: {database: '5'}}]
+  ])('preserves the configured database for both editor stores with %s', async (_label, nodeOptions, sentinelOptions) => {
+    const configs = [cfgRedisOptions, cfgRedisOptionsCluster, cfgRedisOptionsSentinel];
+    const originals = configs.map(options => ({...options}));
+    function replaceOptions(target, source) {
+      Object.keys(target).forEach(key => delete target[key]);
+      Object.assign(target, source);
+    }
+    const sentinel = Object.keys(sentinelOptions).length > 0;
+    replaceOptions(cfgRedisOptions, nodeOptions);
+    replaceOptions(cfgRedisOptionsCluster, {});
+    replaceOptions(
+      cfgRedisOptionsSentinel,
+      sentinel
+        ? {
+            name: 'mymaster',
+            sentinelRootNodes: [{host: '127.0.0.1', port: 26379}],
+            ...sentinelOptions,
+            nodeClientOptions: {...sentinelOptions.nodeClientOptions, socket: {tls: true}}
+          }
+        : {}
+    );
+    const createClient = jest.spyOn(redis, sentinel ? 'createSentinel' : 'createClient');
+    // Acquire the explicit-zero lease first to catch cache collisions as well
+    // as the database override passed to the client factory.
+    const stores = [new EditorStat(0), new EditorData(), new EditorStat(), new EditorStat(7)];
+
+    try {
+      stores.forEach(store => store.redis._createClient());
+      assert.deepEqual(
+        Array.from(createClient.mock.calls, ([options]) => (sentinel ? options.nodeClientOptions.database : options.database)),
+        [0, 5, 5, 7]
+      );
+      if (sentinel) {
+        assert.ok(createClient.mock.calls.every(([options]) => options.nodeClientOptions.socket.tls));
+      }
+    } finally {
+      await Promise.all(stores.map(store => store.close()));
+      createClient.mockRestore();
+      configs.forEach((options, index) => replaceOptions(options, originals[index]));
+    }
+  });
+
   test('closes each managed client once and rejects new leases after terminal shutdown', async () => {
     const clients = [];
     const manager = new RedisConnectionManager(() => {
@@ -142,7 +201,7 @@ describe('editorDataRedis connection contract', () => {
     const stat = new EditorStat();
 
     try {
-      assert.equal(connectionScope(), connectionScope(0));
+      assert.notEqual(connectionScope(), connectionScope(0));
       assert.notEqual(connectionScope(0, connectionGroups.editorData), connectionScope(0, connectionGroups.editorStat));
       assert.notEqual(data.redis, stat.redis);
       assert.equal(data.redis.serializeOperations, true);
