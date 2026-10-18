@@ -21,7 +21,7 @@ const mockSocketIo = {
   }
 };
 
-jest.mock('socket.io', () => mockSocketIo, {virtual: true});
+jest.mock('../../DocService/node_modules/socket.io', () => mockSocketIo);
 jest.mock(
   '../../DocService/sources/pubsubRabbitMQ',
   () =>
