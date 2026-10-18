@@ -233,20 +233,164 @@ describe('canvasservice saved-state handling', () => {
   });
 
   test.each([
-    ['Redis failure', new Error('Redis unavailable')],
-    ['unknown saved state', Object.assign(new Error('saved state unknown'), {code: 'EDITOR_DATA_SAVED_UNKNOWN'})]
-  ])('acknowledges queue delivery when saved-state processing fails: %s', async (_scenario, error) => {
+    ['force-save read', 'getForceSave', new Error('Redis unavailable')],
+    ['saved-state read', 'getdelSaved', new Error('Redis unavailable')],
+    ['unknown saved state', 'getdelSaved', Object.assign(new Error('saved state unknown'), {code: 'EDITOR_DATA_SAVED_UNKNOWN'})]
+  ])('persists a retry before acknowledging a failed %s, then completes the final save', async (_scenario, method, error) => {
+    const row = {
+      callback: 'https://callback.example.test/save',
+      baseurl: 'https://storage.example.test',
+      status: commonDefines.FileStatus.SaveVersion,
+      status_info: 12
+    };
+    taskResult.select.mockResolvedValue([row]);
+    taskResult.updateIf.mockImplementation(async (_ctx, update, mask) => {
+      if (row.status !== mask.status || row.status_info !== mask.statusInfo) {
+        return {affectedRows: 0};
+      }
+      row.status = update.status;
+      row.status_info = update.statusInfo;
+      return {affectedRows: 1};
+    });
     const update = jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
-    const getdelSaved = jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockRejectedValue(error);
+    const getdelSaved = jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1');
+    const ackSaved = jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
+    const cleanup = jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockResolvedValue(true);
+    const publish = jest.spyOn(docsCoServer, 'publish').mockResolvedValue(undefined);
+    docsCoServer.editorData[method].mockRejectedValueOnce(error);
+    let confirmRetry;
+    const confirmed = new Promise(resolve => {
+      confirmRetry = resolve;
+    });
+    let retryStarted;
+    const started = new Promise(resolve => {
+      retryStarted = resolve;
+    });
+    let delayedTask;
+    const addDelayed = jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* (task, timeout) {
+      delayedTask = new commonDefines.TaskQueueData(JSON.parse(JSON.stringify(task)));
+      assert.ok(timeout > 0);
+      retryStarted();
+      yield confirmed;
+    });
     const ack = jest.fn();
     const task = new commonDefines.TaskQueueData();
     task.setCtx({tenant: 'saved-state-tenant', docId: 'saved-state-document', userId: 'user-1'});
     task.setCmd(command({c: 'sfc'}));
-    spies.push(update, getdelSaved);
+    spies.push(update, getdelSaved, ackSaved, cleanup, publish, addDelayed);
+
+    const processing = canvasservice.receiveTask(JSON.stringify(task), ack);
+    // A failed implementation returns without scheduling anything. Race with
+    // processing so that regression fails instead of waiting for the test timeout.
+    await Promise.race([started, processing]);
+
+    assert.equal(addDelayed.mock.calls.length, 1);
+    assert.equal(row.status, commonDefines.FileStatus.UpdateVersion);
+    assert.equal(ack.mock.calls.length, 0);
+    assert.equal(cleanup.mock.calls.length, 0);
+    assert.equal(ackSaved.mock.calls.length, 0);
+    assert.equal(publish.mock.calls.length, 0);
+    assert.equal(docsCoServer.sendServerRequest.mock.calls.length, method === 'getForceSave' ? 0 : 1);
+    assert.equal(delayedTask.getCmd().getSaveKey(), 'save-key');
+    assert.equal(delayedTask.getCmd().getStatusInfoIn(), 12);
+    assert.equal(delayedTask.getCmd().getOutputPath(), 'output.docx');
+    assert.equal(delayedTask.getCmd().getAttempt(), 1);
+    assert.equal(delayedTask.getCtx().tenant, 'saved-state-tenant');
+
+    confirmRetry();
+    await processing;
+    assert.equal(ack.mock.calls.length, 1);
+    const retryAck = jest.fn();
+    await canvasservice.receiveTask(JSON.stringify(delayedTask), retryAck);
+    assert.equal(retryAck.mock.calls.length, 1);
+    assert.equal(addDelayed.mock.calls.length, 1);
+    assert.equal(cleanup.mock.calls.length, 1);
+    assert.equal(cleanup.mock.calls[0][4], 'save-key');
+    assert.equal(ackSaved.mock.calls.length, 1);
+    assert.equal(ackSaved.mock.calls[0][2], 'save-key');
+    assert.equal(publish.mock.calls.length, 1);
+    assert.equal(publish.mock.calls[0][1].success, true);
+  });
+
+  test('leaves delivery unacknowledged when the retry cannot be persisted', async () => {
+    const update = jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
+    docsCoServer.editorData.getForceSave.mockRejectedValue(new Error('Redis unavailable'));
+    const addDelayed = jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* () {
+      yield Promise.reject(new Error('queue unavailable'));
+    });
+    spies.push(update, addDelayed);
+    const task = new commonDefines.TaskQueueData();
+    task.setCtx({tenant: 'saved-state-tenant', docId: 'saved-state-document', userId: 'user-1'});
+    task.setCmd(command({c: 'sfc'}));
+    const ack = jest.fn();
 
     await canvasservice.receiveTask(JSON.stringify(task), ack);
 
-    assert.equal(getdelSaved.mock.calls.length, 1);
+    assert.equal(addDelayed.mock.calls.length, 1);
+    assert.equal(ack.mock.calls.length, 0);
+  });
+
+  test('recovers a Redis claim whose reply was lost using the same save key', async () => {
+    const ctx = {...context(), tenant: 'saved-state-lost-reply'};
+    const editorData = docsCoServer.editorData;
+    await editorData.setSaved(ctx, 'saved-state-document', '1');
+    const claimKey = editorData._docKeys(ctx, 'saved-state-document').savedClaim;
+    const originalGetdelSaved = editorData.getdelSaved.bind(editorData);
+    const getdelSaved = jest.spyOn(editorData, 'getdelSaved').mockImplementationOnce(async (...args) => {
+      await originalGetdelSaved(...args);
+      throw new Error('Redis claim reply lost');
+    });
+    const ackSaved = jest.spyOn(editorData, 'ackSaved');
+    const update = jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
+    const cleanup = jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockResolvedValue(true);
+    const publish = jest.spyOn(docsCoServer, 'publish').mockResolvedValue(undefined);
+    let delayedTask;
+    const addDelayed = jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* (task) {
+      delayedTask = JSON.stringify(task);
+      yield Promise.resolve();
+    });
+    spies.push(getdelSaved, ackSaved, update, cleanup, publish, addDelayed);
+    const task = new commonDefines.TaskQueueData();
+    task.setCtx({tenant: ctx.tenant, docId: 'saved-state-document', userId: 'user-1'});
+    task.setCmd(command({c: 'sfc'}));
+    const ack = jest.fn();
+
+    await canvasservice.receiveTask(JSON.stringify(task), ack);
+
+    assert.equal(ack.mock.calls.length, 1);
+    assert.equal(addDelayed.mock.calls.length, 1);
+    assert.equal(await editorData._command(['HGET', claimKey, 'state']), 'pending');
+    assert.equal(cleanup.mock.calls.length, 0);
+    assert.equal(ackSaved.mock.calls.length, 0);
+
+    await canvasservice.receiveTask(delayedTask, ack);
+
+    assert.equal(ack.mock.calls.length, 2);
+    assert.deepEqual(
+      Array.from(getdelSaved.mock.calls, call => call[2]),
+      ['save-key', 'save-key']
+    );
+    assert.equal(cleanup.mock.calls.length, 1);
+    assert.equal(ackSaved.mock.calls.length, 1);
+    assert.equal(await editorData._command(['HGET', claimKey, 'state']), 'resolved');
+    assert.equal(publish.mock.calls[0][1].success, true);
+  });
+
+  test('keeps retrying Redis failures after the HTTP retry limit with a capped backoff', async () => {
+    const update = jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
+    docsCoServer.editorData.getForceSave.mockRejectedValue(new Error('Redis unavailable'));
+    const addDelayed = jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* () {});
+    spies.push(update, addDelayed);
+    const task = new commonDefines.TaskQueueData();
+    task.setCtx({tenant: 'saved-state-tenant', docId: 'saved-state-document', userId: 'user-1'});
+    task.setCmd(command({c: 'sfc', attempt: 100}));
+    const ack = jest.fn();
+
+    await canvasservice.receiveTask(JSON.stringify(task), ack);
+
+    assert.equal(addDelayed.mock.calls.length, 1);
+    assert.equal(addDelayed.mock.calls[0][0].getCmd().getAttempt(), 101);
+    assert.equal(addDelayed.mock.calls[0][1], 8000);
     assert.equal(ack.mock.calls.length, 1);
   });
 });

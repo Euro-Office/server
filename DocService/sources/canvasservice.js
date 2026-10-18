@@ -1029,6 +1029,19 @@ function getSavedClaimId(cmd) {
   // still addresses the same saved-state claim.
   return `fallback:${cmd.getOutputPath() || ''}:${cmd.getStatusInfoIn() || ''}:${cmd.getUserActionId() || cmd.getUserId() || ''}`;
 }
+function* scheduleSfcRetry(ctx, cmd) {
+  const options = ctx.getCfg('services.CoAuthoring.callbackBackoffOptions', cfgCallbackBackoffOptions);
+  const attempt = cmd.getAttempt() || 0;
+  cmd.setAttempt(attempt + 1);
+  const queueData = new commonDefines.TaskQueueData();
+  queueData.setCtx(ctx);
+  queueData.setCmd(cmd);
+  // Infrastructure failures can outlast the HTTP retry budget. Keep retrying,
+  // but cap the backoff at that budget so recovery does not drift days away.
+  const timeout = retry.createTimeout(Math.min(attempt, options.retries), options.timeout);
+  ctx.logger.debug('commandSfcCallback backoff timeout = %d', timeout);
+  yield* docsCoServer.addDelayed(queueData, timeout);
+}
 const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
@@ -1350,14 +1363,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       yield* docsCoServer.setForceSave(ctx, docId, forceSave, cmd, isSfcmSuccess && !isError, outputSfc?.getUrl());
     }
     if (needRetry) {
-      const attempt = cmd.getAttempt() || 0;
-      cmd.setAttempt(attempt + 1);
-      const queueData = new commonDefines.TaskQueueData();
-      queueData.setCtx(ctx);
-      queueData.setCmd(cmd);
-      const timeout = retry.createTimeout(attempt, tenCallbackBackoffOptions.timeout);
-      ctx.logger.debug('commandSfcCallback backoff timeout = %d', timeout);
-      yield* docsCoServer.addDelayed(queueData, timeout);
+      yield* scheduleSfcRetry(ctx, cmd);
     }
     // A claim is retained through document cleanup so a worker crash can
     // replay the same task.  Resolve it after saved-state work and retry
@@ -2022,8 +2028,10 @@ async function processWopiSaveAs(ctx, cmd) {
 exports.receiveTask = function (data, ack) {
   return co(function* () {
     const ctx = new operationContext.Context();
+    let task;
+    let shouldAck = true;
     try {
-      const task = new commonDefines.TaskQueueData(JSON.parse(data));
+      task = new commonDefines.TaskQueueData(JSON.parse(data));
       if (task) {
         const cmd = task.getCmd();
         ctx.initFromTaskQueueData(task);
@@ -2115,12 +2123,25 @@ exports.receiveTask = function (data, ack) {
       }
     } catch (err) {
       ctx.logger.error('receiveTask error: %s', err.stack);
+      const cmd = task && task.getCmd();
+      if (cmd && 'sfc' === cmd.getCommand()) {
+        shouldAck = false;
+        try {
+          // Replay the converted output with the same save key/claim even if
+          // Redis failed after the SQL row moved to UpdateVersion.
+          yield* scheduleSfcRetry(ctx, cmd);
+          shouldAck = true;
+        } catch (retryError) {
+          ctx.logger.error('receiveTask retry scheduling error: %s', retryError.stack);
+        }
+      }
     } finally {
       ctx.logger.info('receiveTask end');
-      // Queue delivery is acknowledged even when processing fails.  Saved-state
-      // recovery is provided by callback retries and the Redis claim lease;
-      // broker redelivery is not used for these failures.
-      ack();
+      // A claim lease cannot reschedule work. Leave a failed final-save
+      // delivery with the broker unless a persistent retry was confirmed.
+      if (shouldAck) {
+        ack();
+      }
     }
   });
 };
