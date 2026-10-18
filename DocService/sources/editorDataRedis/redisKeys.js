@@ -67,6 +67,10 @@ function editorIndexKeys(ctx, docId) {
   return editorIndexKeysForShard(editorIndexShard(ctx, docId));
 }
 
+function forceSaveTimerCleanupKey(ctx, docId) {
+  return `${editorIndexKeys(ctx, docId).forceSaveTimer}:cleanup:${encodePart(documentMember(ctx, docId))}`;
+}
+
 function editorIndexKeysForItem(item) {
   if (!Array.isArray(item) || item.length !== 2) {
     return null;
@@ -94,6 +98,7 @@ module.exports = {
   editorIndexTag,
   editorIndexTagForShard,
   editorIndexKeys,
+  forceSaveTimerCleanupKey,
   editorIndexKeysForShard,
   editorIndexKeysForItem,
   decodeDocumentMember
