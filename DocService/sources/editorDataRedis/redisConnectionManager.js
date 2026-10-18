@@ -10,7 +10,9 @@ const {cfgRedisName, cfgRedisHost, cfgRedisPort, cfgRedisOptions, cfgRedisOption
 
 function connectionDatabaseKey(database) {
   if (database === undefined || database === null || database === '') {
-    return 0;
+    // Leave database selection to the client configuration. Explicit zero is
+    // a separate scope because it can override a configured non-zero database.
+    return undefined;
   }
   return Number(database);
 }
