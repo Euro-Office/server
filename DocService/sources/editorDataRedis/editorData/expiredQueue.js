@@ -6,9 +6,9 @@
 'use strict';
 
 const redisConnection = require('../redisConnection');
-const {EDITOR_INDEX_SHARD_COUNT, EDITOR_INDEX_QUEUES, documentMember, decodeDocumentMember} = require('../redisKeys');
+const {EDITOR_INDEX_SHARD_COUNT, EDITOR_INDEX_QUEUES, documentMember, decodeDocumentMember, forceSaveTimerCleanupKey} = require('../redisKeys');
 const {POP_EXPIRED_BATCH_SIZE} = require('../editorDataSettings');
-const {POP_EXPIRED_SCRIPT, ACK_EXPIRED_SCRIPT} = require('../scripts');
+const {POP_EXPIRED_SCRIPT, ACK_EXPIRED_SCRIPT, ADD_FORCE_SAVE_TIMER_SCRIPT} = require('../scripts');
 const {strictMax} = require('../redisValueCodec');
 
 const expiredClaimIds = new WeakMap();
@@ -100,7 +100,11 @@ module.exports = function attachExpiredQueue(EditorData) {
   };
 
   EditorData.prototype.addForceSaveTimerNX = async function (ctx, docId, expireAt) {
-    await this._command(['ZADD', this._indexKeys(ctx, docId).forceSaveTimer, 'NX', String(expireAt), documentMember(ctx, docId)]);
+    await this._eval(
+      ADD_FORCE_SAVE_TIMER_SCRIPT,
+      [this._indexKeys(ctx, docId).forceSaveTimer, forceSaveTimerCleanupKey(ctx, docId)],
+      [String(expireAt), documentMember(ctx, docId)]
+    );
   };
 
   EditorData.prototype._ackForceSaveTimer = function (item) {

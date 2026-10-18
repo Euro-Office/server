@@ -5,8 +5,10 @@
 
 'use strict';
 
-const {CLEAN_DOCUMENT_SCRIPT} = require('../scripts');
-const {documentMember} = require('../redisKeys');
+const {randomUUID} = require('crypto');
+const {CLEAN_DOCUMENT_SCRIPT, CLAIM_FORCE_SAVE_TIMER_CLEANUP_SCRIPT, CLEAN_FORCE_SAVE_TIMER_SCRIPT} = require('../scripts');
+const {documentMember, forceSaveTimerCleanupKey} = require('../redisKeys');
+const {POP_EXPIRED_LEASE_MS} = require('../editorDataSettings');
 const {toRedisString} = require('../redisValueCodec');
 
 function isRedisResultValue(value) {
@@ -23,6 +25,12 @@ module.exports = function attachCleanup(EditorData) {
   EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId, cleanupOptions) {
     const preserveSavedClaim = cleanupOptions?.preserveSavedClaim === true;
     const keys = this._docKeys(ctx, docId);
+    const timerCleanupKey = forceSaveTimerCleanupKey(ctx, docId);
+    const timerCleanupId = randomUUID();
+    // Claim before checking presence. Scheduling revokes this claim atomically
+    // in the index slot, even when NX retains the previous timer's deadline.
+    // Aborted cleanups leave only a short-lived claim, never a permanent key.
+    await this._eval(CLAIM_FORCE_SAVE_TIMER_CLEANUP_SCRIPT, [timerCleanupKey], [timerCleanupId, String(POP_EXPIRED_LEASE_MS)]);
     const result = await this._eval(
       CLEAN_DOCUMENT_SCRIPT,
       [
@@ -65,7 +73,11 @@ module.exports = function attachCleanup(EditorData) {
     }
     if (resultCode === 1 || resultCode === 3) {
       await this._syncPresenceIndex(ctx, docId, toRedisString(result[1] || ''), '');
-      await this._command(['ZREM', this._indexKeys(ctx, docId).forceSaveTimer, documentMember(ctx, docId)]);
+      await this._eval(
+        CLEAN_FORCE_SAVE_TIMER_SCRIPT,
+        [this._indexKeys(ctx, docId).forceSaveTimer, timerCleanupKey],
+        [documentMember(ctx, docId), timerCleanupId]
+      );
       return true;
     }
 

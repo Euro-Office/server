@@ -7,6 +7,25 @@
 
 const {REDIS_TIME_MILLIS} = require('./helpers');
 
+const CLAIM_FORCE_SAVE_TIMER_CLEANUP_SCRIPT = `
+return redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+`;
+
+const ADD_FORCE_SAVE_TIMER_SCRIPT = `
+local added = redis.call('ZADD', KEYS[1], 'NX', ARGV[1], ARGV[2])
+-- Scheduling protects even an existing NX timer from an older cleanup.
+redis.call('DEL', KEYS[2])
+return added
+`;
+
+const CLEAN_FORCE_SAVE_TIMER_SCRIPT = `
+if redis.call('GET', KEYS[2]) ~= ARGV[2] then
+  return 0
+end
+redis.call('DEL', KEYS[2])
+return redis.call('ZREM', KEYS[1], ARGV[1])
+`;
+
 const POP_EXPIRED_SCRIPT = `
 ${REDIS_TIME_MILLIS}
 -- POP_EXPIRED is a bounded, at-least-once claim.  The caller must acknowledge
@@ -65,4 +84,10 @@ redis.call('HDEL', KEYS[2], ARGV[2])
 return redis.call('ZREM', KEYS[1], ARGV[2])
 `;
 
-module.exports = {POP_EXPIRED_SCRIPT, ACK_EXPIRED_SCRIPT};
+module.exports = {
+  CLAIM_FORCE_SAVE_TIMER_CLEANUP_SCRIPT,
+  ADD_FORCE_SAVE_TIMER_SCRIPT,
+  CLEAN_FORCE_SAVE_TIMER_SCRIPT,
+  POP_EXPIRED_SCRIPT,
+  ACK_EXPIRED_SCRIPT
+};
