@@ -292,6 +292,40 @@ describe('editorDataRedis presence invariants', () => {
     }
   });
 
+  test.each(['absent', 'existing', 'replaced'])('preserves a new session force-save timer during cleanup (previous timer: %s)', async timerState => {
+    const ctx = context(`presence-cleanup-timer-race-${timerState}`);
+    const docId = 'document';
+    const info = JSON.stringify({id: 'new-user', connectionId: 'new-connection'});
+    const expireAt = Date.now() + 60000;
+    const indexKey = stores[0]._indexKeys(ctx, docId).forceSaveTimer;
+    const member = documentMember(ctx, docId);
+    const syncPresenceIndex = stores[0]._syncPresenceIndex;
+
+    if (timerState !== 'absent') {
+      await stores[0].addForceSaveTimerNX(ctx, docId, expireAt);
+    }
+    stores[0]._syncPresenceIndex = async (...args) => {
+      await stores[1].addPresence(ctx, docId, 'new-user', info);
+      await stores[1].setForceSave(ctx, docId, 2, 2, 'https://example.test');
+      if (timerState === 'replaced') {
+        await stores[1]._command(['ZREM', indexKey, member]);
+      }
+      await stores[1].addForceSaveTimerNX(ctx, docId, expireAt);
+      return syncPresenceIndex.apply(stores[0], args);
+    };
+
+    try {
+      assert.equal(await stores[0].cleanDocumentOnExit(ctx, docId), true);
+      assert.deepEqual(await stores[1].getPresence(ctx, docId), [info]);
+      assert.equal((await stores[1].getForceSave(ctx, docId)).time, 2);
+      assert.equal(Number(await stores[1]._command(['ZSCORE', indexKey, member])), expireAt);
+    } finally {
+      stores[0]._syncPresenceIndex = syncPresenceIndex;
+      await stores[1].removePresence(ctx, docId, 'new-user', 'new-connection');
+      await stores[1].cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
   test('requeues a live document when GC cleanup races with an active presence', async () => {
     const ctx = context('presence-gc-live');
     const docId = 'document';

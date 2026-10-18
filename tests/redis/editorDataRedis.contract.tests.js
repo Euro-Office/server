@@ -51,6 +51,7 @@ describe('editorDataRedis contract', () => {
     const second = data._docKeys(ctx, 'other-doc');
     const otherTenant = data._docKeys({tenant: 'other'}, 'doc:世界');
     const indexKeys = data._indexKeys(ctx, 'doc:世界');
+    const timerCleanupKey = redisKeys.forceSaveTimerCleanupKey(ctx, 'doc:世界');
 
     try {
       const firstHashTags = Object.values(first).map(key => key.match(/\{[^}]+\}/)?.[0]);
@@ -71,6 +72,12 @@ describe('editorDataRedis contract', () => {
       assert.equal(indexKeys.documents.match(/\{[^}]+\}/)?.[0], indexKeys.forceSaveTimer.match(/\{[^}]+\}/)?.[0]);
       assert.equal(indexKeys.documents, `${redisKeys.cfgRedisPrefix}${redisKeys.editorIndexTag(ctx, 'doc:世界')}:documents`);
       assert.equal(indexKeys.forceSaveTimer, `${redisKeys.cfgRedisPrefix}${redisKeys.editorIndexTag(ctx, 'doc:世界')}:forcesavetimer`);
+      assert.equal(timerCleanupKey.match(/\{[^}]+\}/)?.[0], indexKeys.forceSaveTimer.match(/\{[^}]+\}/)?.[0]);
+      assert.notEqual(timerCleanupKey, redisKeys.forceSaveTimerCleanupKey(ctx, 'other-doc'));
+      assert.notEqual(timerCleanupKey, redisKeys.forceSaveTimerCleanupKey({tenant: 'other'}, 'doc:世界'));
+      if (process.env.TEST_REDIS_CLUSTER === 'true') {
+        assert.equal(Number(await clusterKeySlot(data, timerCleanupKey)), Number(await clusterKeySlot(data, indexKeys.forceSaveTimer)));
+      }
     } finally {
       await data.close();
     }
