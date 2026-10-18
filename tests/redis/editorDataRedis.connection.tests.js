@@ -7,6 +7,7 @@ const {EventEmitter} = require('node:events');
 const net = require('node:net');
 const {describe, test, jest} = require('@jest/globals');
 const redis = require('../../DocService/node_modules/redis');
+const {SimpleError, MultiErrorReply} = require('../../DocService/node_modules/@redis/client/dist/lib/errors');
 
 const {
   RedisConnection,
@@ -850,6 +851,98 @@ describe('editorDataRedis connection contract', () => {
 
     await assert.rejects(connection.command(['PING']), /command failed/);
     assert.equal(connection.client, client);
+  });
+
+  test.each([
+    ['READONLY', 'command'],
+    ['READONLY', 'transaction'],
+    ['READONLY', 'transaction reply'],
+    ['MASTERDOWN', 'command'],
+    ['MASTERDOWN', 'transaction'],
+    ['MASTERDOWN', 'transaction reply']
+  ])('invalidates Sentinel on %s from a %s without replaying it', async (code, kind) => {
+    const topologyError = new SimpleError(`${code} primary is unavailable`);
+    const error = kind === 'transaction reply' ? new MultiErrorReply(['OK', topologyError], [1]) : topologyError;
+    const failedOperation = jest.fn().mockRejectedValue(error);
+    const destroy = jest.fn();
+    const client = fakeClient({
+      sendCommand: failedOperation,
+      multi: () => ({addCommand() {}, exec: failedOperation}),
+      destroy
+    });
+    const replacement = fakeClient({sendCommand: jest.fn().mockResolvedValue('OK'), close: async () => {}});
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.sentinel = true;
+    connection._createClient = jest.fn(() => {
+      connection.client = replacement;
+      connection.clientGeneration++;
+    });
+
+    const commands = [['INCR', 'key']];
+    await assert.rejects(kind === 'command' ? connection.command(commands[0]) : connection.commands(commands), caught => caught === error);
+    assert.equal(connection.client, null);
+    assert.equal(destroy.mock.calls.length, 1);
+    assert.equal(failedOperation.mock.calls.length, 1);
+    assert.equal(connection._createClient.mock.calls.length, 0);
+
+    assert.equal(await connection.command(['SET', 'next-key', 'value']), 'OK');
+    assert.equal(connection._createClient.mock.calls.length, 1);
+    assert.deepEqual(
+      Array.from(replacement.sendCommand.mock.calls, call => Array.from(call)),
+      [[false, ['SET', 'next-key', 'value']]]
+    );
+    assert.equal(failedOperation.mock.calls.length, 1);
+    await connection.close();
+  });
+
+  test('does not let a stale Sentinel topology error abort a replacement client', async () => {
+    const pending = [];
+    const client = fakeClient({
+      sendCommand: () => new Promise((_resolve, reject) => pending.push(reject)),
+      destroy: jest.fn()
+    });
+    const replacement = fakeClient({sendCommand: async () => 'OK', close: async () => {}});
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.sentinel = true;
+    connection._createClient = () => {
+      connection.client = replacement;
+      connection.clientGeneration++;
+    };
+
+    const first = assert.rejects(connection.command(['INCR', 'key']), /^Error: READONLY /);
+    const stale = assert.rejects(connection.command(['INCR', 'key']), /^Error: READONLY /);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(pending.length, 2);
+    pending[0](new SimpleError('READONLY old primary'));
+    await first;
+    assert.equal(await connection.command(['SET', 'next-key', 'value']), 'OK');
+
+    pending[1](new SimpleError('READONLY old primary'));
+    await stale;
+    assert.equal(connection.client, replacement);
+    assert.equal(client.destroy.mock.calls.length, 1);
+    await connection.close();
+  });
+
+  test.each([
+    new SimpleError('WRONGTYPE Operation against a key holding the wrong kind of value'),
+    new SimpleError('ERR script failed: READONLY'),
+    new SimpleError('NOREPLICAS Not enough good replicas to write.'),
+    new SimpleError('EXECABORT Transaction discarded because of previous errors.'),
+    new MultiErrorReply([new SimpleError('WRONGTYPE invalid value'), 'READONLY user value'], [0]),
+    new Error('Socket closed unexpectedly')
+  ])('keeps the Sentinel client after an ordinary failure: %s', async error => {
+    const client = fakeClient({sendCommand: jest.fn().mockRejectedValue(error), close: async () => {}});
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.sentinel = true;
+
+    await assert.rejects(connection.command(['INCR', 'key']), caught => caught === error);
+    assert.equal(connection.client, client);
+    assert.equal(client.sendCommand.mock.calls.length, 1);
+    await connection.close();
   });
 
   test('cleans up a failed connection attempt so a later attempt can create a client', async () => {
