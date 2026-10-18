@@ -11,7 +11,7 @@ const storage = require('../../Common/sources/storage/storage-base');
 const mockSocketIo = {connection: null};
 
 jest.mock(
-  'socket.io',
+  '../../DocService/node_modules/socket.io',
   () => ({
     Server: class {
       constructor() {
@@ -30,8 +30,7 @@ jest.mock(
         return Promise.resolve();
       }
     }
-  }),
-  {virtual: true}
+  })
 );
 
 jest.mock(
