@@ -16,20 +16,24 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-test('closes a polling fallback and removes only its listener', async () => {
+test('unregisters its polling listener when closed', async () => {
   jest.spyOn(fsPromises, 'statfs').mockResolvedValue({type: 0x6969});
   const watchFile = jest.spyOn(fsWatch, 'watchFile').mockReturnValue({});
   const unwatchFile = jest.spyOn(fsWatch, 'unwatchFile').mockImplementation(() => {});
   const listener = jest.fn();
 
   const watcher = await utils.watchWithFallback(ctx, '/config', '/config/runtime.json', listener);
+  expect(watchFile).toHaveBeenCalledTimes(1);
+  expect(watchFile).toHaveBeenCalledWith('/config/runtime.json', {}, listener);
+  expect(unwatchFile).not.toHaveBeenCalled();
+
   watcher.close();
 
-  expect(watchFile).toHaveBeenCalledWith('/config/runtime.json', {}, listener);
+  expect(unwatchFile).toHaveBeenCalledTimes(1);
   expect(unwatchFile).toHaveBeenCalledWith('/config/runtime.json', listener);
 });
 
-test('removes polling fallback when a native watcher errors', async () => {
+test('removes polling fallback on close after a native watcher error', async () => {
   let onError;
   const nativeWatcher = {close: jest.fn(), on: jest.fn((_event, callback) => (onError = callback))};
   jest.spyOn(fsPromises, 'statfs').mockResolvedValue({type: 0xef53});
@@ -39,13 +43,22 @@ test('removes polling fallback when a native watcher errors', async () => {
   const listener = jest.fn();
 
   const watcher = await utils.watchWithFallback(ctx, '/config', '/config/runtime.json', listener);
-  onError(new Error('native watcher failed'));
-  watcher.close();
-
   expect(watch).toHaveBeenCalledWith('/config', {}, listener);
+  expect(nativeWatcher.on).toHaveBeenCalledWith('error', expect.any(Function));
+  expect(nativeWatcher.close).not.toHaveBeenCalled();
+  expect(watchFile).not.toHaveBeenCalled();
+
+  onError(new Error('native watcher failed'));
+  expect(watchFile).toHaveBeenCalledTimes(1);
   expect(watchFile).toHaveBeenCalledWith('/config/runtime.json', {}, listener);
   expect(nativeWatcher.close).toHaveBeenCalledTimes(1);
+  expect(unwatchFile).not.toHaveBeenCalled();
+
+  watcher.close();
+
+  expect(unwatchFile).toHaveBeenCalledTimes(1);
   expect(unwatchFile).toHaveBeenCalledWith('/config/runtime.json', listener);
+  expect(nativeWatcher.close).toHaveBeenCalledTimes(1);
 });
 
 test('polling fallback detects a subsequent file edit', async () => {
@@ -62,7 +75,9 @@ test('polling fallback detects a subsequent file edit', async () => {
 
   try {
     watcher = await utils.watchWithFallback({logger: {info: jest.fn()}}, tempDir, filePath, listener, {interval: 10});
+    expect(nativeWatcher.on).toHaveBeenCalledWith('error', expect.any(Function));
     onError(new Error('native watcher failed'));
+    expect(listener).not.toHaveBeenCalled();
 
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -82,6 +97,8 @@ test('polling fallback detects a subsequent file edit', async () => {
     });
 
     expect(listener).toHaveBeenCalled();
+    const [current, previous] = listener.mock.calls[0];
+    expect(current.size).toBeGreaterThan(previous.size);
   } finally {
     watcher?.close();
     fsWatch.rmSync(tempDir, {recursive: true, force: true});
@@ -97,9 +114,12 @@ test('does not start polling if a native watcher errors after close', async () =
   const listener = jest.fn();
 
   const watcher = await utils.watchWithFallback(ctx, '/config', '/config/runtime.json', listener);
+  expect(nativeWatcher.on).toHaveBeenCalledWith('error', expect.any(Function));
+  expect(nativeWatcher.close).not.toHaveBeenCalled();
   watcher.close();
   expect(nativeWatcher.close).toHaveBeenCalledTimes(1);
   onError(new Error('late native watcher failure'));
 
   expect(watchFile).not.toHaveBeenCalled();
+  expect(nativeWatcher.close).toHaveBeenCalledTimes(1);
 });
