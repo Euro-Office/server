@@ -1536,7 +1536,7 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
   //remove changes
   if (deleteChanges) {
     yield taskResult.restoreInitialPassword(ctx, docId);
-    sqlBase.deleteChanges(ctx, docId, null);
+    yield sqlBase.deleteChangesPromise(ctx, docId, null);
     //delete forgotten after successful send on callbackUrl
     yield storage.deletePath(ctx, docId, tenForgottenFiles);
   }
