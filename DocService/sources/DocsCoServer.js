@@ -711,9 +711,9 @@ function* addResponse(data, opt_queue) {
   const realQueue = opt_queue ? opt_queue : queue;
   yield realQueue.addResponse(data);
 }
-function* addDelayed(data, ttl, opt_queue) {
+function* addDelayed(data, ttl, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addDelayed(data, ttl);
+  yield realQueue.addDelayed(data, ttl, opt_requireConfirm);
 }
 function* removeResponse(data) {
   yield queue.removeResponse(data);
