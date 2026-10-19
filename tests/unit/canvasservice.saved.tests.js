@@ -14,6 +14,15 @@ const {EditorData} = require('../../DocService/sources/editorDataMemory');
 const sqlBase = require('../../DocService/sources/databaseConnectors/baseConnector');
 const storage = require('../../Common/sources/storage/storage-base');
 const taskResult = require('../../DocService/sources/taskresult');
+const config = require('../../Common/node_modules/config');
+const sqlConnectorNames = {
+  mysql: 'mysqlConnector',
+  mariadb: 'mysqlConnector',
+  mssql: 'mssqlConnector',
+  oracle: 'oracleConnector'
+};
+const sqlConnectorName = sqlConnectorNames[config.get('services.CoAuthoring.sql.type')] || 'postgreConnector';
+const sqlConnector = require(`../../DocService/sources/databaseConnectors/${sqlConnectorName}`);
 
 const ctx = {tenant: 'saved-state-tenant', getCfg: (_path, fallback) => fallback, logger: {debug() {}, error() {}, warn() {}}};
 function command(overrides = {}) {
@@ -98,6 +107,39 @@ describe('final-save saved-state handling', () => {
     expect(taskResult.removeIf).not.toHaveBeenCalled();
   });
 
+  test.each([null, new Error('SQL deletion failed')])('waits for SQL deletion before acknowledging a claim: %s', async error => {
+    docsCoServer.cleanDocumentOnExitPromise.mockRestore();
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1');
+    const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
+    jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockResolvedValue(true);
+    jest.spyOn(taskResult, 'restoreInitialPassword').mockResolvedValue(undefined);
+    jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+    let completeDeletion;
+    const started = new Promise(resolve => {
+      jest.spyOn(sqlConnector, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => {
+        completeDeletion = callback;
+        resolve();
+      });
+    });
+
+    const save = canvasservice.commandSfcCallback(ctx, command(), false, false);
+    const outcome = error ? expect(save).rejects.toBe(error) : expect(save).resolves.toBe('{"error":0}');
+    await started;
+    await new Promise(setImmediate);
+    expect(ack).not.toHaveBeenCalled();
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+
+    completeDeletion(error, {affectedRows: 1});
+    await outcome;
+    if (error) {
+      expect(ack).not.toHaveBeenCalled();
+      expect(docsCoServer.publish).not.toHaveBeenCalled();
+    } else {
+      expect(ack).toHaveBeenCalledWith(ctx, 'document', 'save-key');
+      expect(docsCoServer.publish).toHaveBeenCalledWith(ctx, expect.objectContaining({success: true}));
+    }
+  });
+
   test.each([new Error('Redis unavailable'), Object.assign(new Error('unknown outcome'), {code: 'EDITOR_DATA_SAVED_UNKNOWN'})])(
     'propagates saved-state errors before destructive cleanup: %s',
     async error => {
@@ -126,6 +168,26 @@ describe('final-save saved-state handling', () => {
     await canvasservice.commandSfcCallback(ctx, command(), false, false);
     expect(storage.copyObject).toHaveBeenCalledTimes(1);
     expect(taskResult.removeIf).not.toHaveBeenCalled();
+  });
+
+  test.each([false, undefined, true])('reopened forgotten-document cache deletion requires completed cleanup (%s)', async cleanupResult => {
+    storage.listObjects.mockResolvedValueOnce(['document/forgotten.docx']).mockResolvedValueOnce(['document/forgotten.txt']);
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1');
+    jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
+    docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(cleanupResult);
+    const removeRow = jest.spyOn(taskResult, 'remove').mockResolvedValue({affectedRows: 1});
+    const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+
+    await expect(canvasservice.commandSfcCallback(ctx, command(), false, false)).resolves.toBe('{"error":0}');
+
+    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, 'document', true, 1, 'save-key');
+    if (cleanupResult === true) {
+      expect(removeRow).toHaveBeenCalledWith(ctx, 'document');
+      expect(removeFiles).toHaveBeenCalledWith(ctx, 'document');
+    } else {
+      expect(removeRow).not.toHaveBeenCalled();
+      expect(removeFiles).not.toHaveBeenCalled();
+    }
   });
 
   test('uses a stable fallback operation id for older tasks without a save key', async () => {
@@ -181,7 +243,7 @@ describe('document cleanup completion contract', () => {
       clean.mockResolvedValue(result);
     }
     const restore = jest.spyOn(taskResult, 'restoreInitialPassword');
-    const removeChanges = jest.spyOn(sqlBase, 'deleteChanges');
+    const removeChanges = jest.spyOn(sqlBase, 'deleteChangesPromise');
     const removeFiles = jest.spyOn(storage, 'deletePath');
     const select = jest.spyOn(taskResult, 'select');
     const cleanup = docsCoServer.cleanDocumentOnExitPromise(ctx, 'document', true, 1, 'save-key');
@@ -200,12 +262,91 @@ describe('document cleanup completion contract', () => {
   test('cleans changes and files only after backend cleanup completes', async () => {
     jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockResolvedValue(true);
     const restore = jest.spyOn(taskResult, 'restoreInitialPassword').mockResolvedValue(undefined);
-    const removeChanges = jest.spyOn(sqlBase, 'deleteChanges').mockResolvedValue(undefined);
+    const removeChanges = jest.spyOn(sqlBase, 'deleteChangesPromise').mockResolvedValue(undefined);
     const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
     jest.spyOn(taskResult, 'select').mockResolvedValue([]);
     await expect(docsCoServer.cleanDocumentOnExitPromise(ctx, 'document', true, 1, 'save-key')).resolves.toBe(true);
     expect(restore).toHaveBeenCalledTimes(1);
     expect(removeChanges).toHaveBeenCalledWith(ctx, 'document', null);
     expect(removeFiles).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([null, new Error('SQL deletion failed')])('keeps cleanup pending until the SQL callback: %s', async error => {
+    jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockResolvedValue(true);
+    jest.spyOn(taskResult, 'restoreInitialPassword').mockResolvedValue(undefined);
+    const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+    const select = jest.spyOn(taskResult, 'select').mockResolvedValue([]);
+    let completeDeletion;
+    const started = new Promise(resolve => {
+      jest.spyOn(sqlConnector, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => {
+        completeDeletion = callback;
+        resolve();
+      });
+    });
+
+    let settled = false;
+    const cleanup = docsCoServer.cleanDocumentOnExitPromise(ctx, 'document', true, 1, 'save-key');
+    cleanup.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+    const outcome = error ? expect(cleanup).rejects.toBe(error) : expect(cleanup).resolves.toBe(true);
+    await started;
+    await new Promise(setImmediate);
+    expect(settled).toBe(false);
+    expect(sqlBase.isLockCriticalSection('document')).toBe(true);
+    expect(removeFiles).not.toHaveBeenCalled();
+    expect(select).not.toHaveBeenCalled();
+
+    completeDeletion(error, {affectedRows: 1});
+    await outcome;
+    expect(sqlBase.isLockCriticalSection('document')).toBe(false);
+    expect(removeFiles).toHaveBeenCalledTimes(error ? 0 : 1);
+    expect(select).toHaveBeenCalledTimes(error ? 0 : 1);
+  });
+});
+
+describe('SQL deletion critical section', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test.each([null, new Error('SQL deletion failed')])('serializes legacy and awaited deletions and releases on %s', async error => {
+    const callbacks = [];
+    const query = jest.spyOn(sqlConnector, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => {
+      callbacks.push(callback);
+    });
+    sqlBase.deleteChanges(ctx, 'document', null);
+    const first = sqlBase.deleteChangesPromise(ctx, 'document', 4);
+    const outcome = error ? expect(first).rejects.toBe(error) : expect(first).resolves.toEqual({affectedRows: 1});
+    const second = sqlBase.deleteChangesPromise(ctx, 'document', null);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(sqlBase.isLockCriticalSection('document')).toBe(true);
+
+    callbacks[0](null, {affectedRows: 1});
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1][5]).toEqual([ctx.tenant, 'document', 4]);
+    callbacks[1](error, {affectedRows: 1});
+    await outcome;
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(sqlBase.isLockCriticalSection('document')).toBe(true);
+
+    callbacks[2](null, {affectedRows: 2});
+    await expect(second).resolves.toEqual({affectedRows: 2});
+    expect(sqlBase.isLockCriticalSection('document')).toBe(false);
+  });
+
+  test('rejects synchronous SQL errors and releases the critical section', async () => {
+    const error = new Error('SQL connector failed');
+    const query = jest.spyOn(sqlConnector, 'sqlQuery').mockImplementationOnce(() => {
+      throw error;
+    });
+    await expect(sqlBase.deleteChangesPromise(ctx, 'document', null)).rejects.toBe(error);
+    expect(sqlBase.isLockCriticalSection('document')).toBe(false);
+
+    query.mockImplementationOnce((_ctx, _sql, callback) => callback(null, {affectedRows: 1}));
+    await expect(sqlBase.deleteChangesPromise(ctx, 'document', null)).resolves.toEqual({affectedRows: 1});
   });
 });

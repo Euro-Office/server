@@ -1278,8 +1278,14 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
             if (requestRes) {
               isSfcSuccess = true;
               updateIfTask = undefined;
-              yield docsCoServer.cleanDocumentOnExitPromise(ctx, docId, true, callbackUserIndex, savedClaimed ? savedClaimId : undefined);
-              if (isOpenFromForgotten) {
+              const cleanupResult = yield docsCoServer.cleanDocumentOnExitPromise(
+                ctx,
+                docId,
+                true,
+                callbackUserIndex,
+                savedClaimed ? savedClaimId : undefined
+              );
+              if (cleanupResult === true && isOpenFromForgotten) {
                 //remove forgotten file in cache
                 yield cleanupCache(ctx, docId);
               }

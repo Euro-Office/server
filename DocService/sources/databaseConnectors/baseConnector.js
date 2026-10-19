@@ -187,7 +187,7 @@ function deleteChangesCallback(ctx, docId, deleteIndex, callback) {
 
 function deleteChangesPromise(ctx, docId, deleteIndex) {
   return new Promise((resolve, reject) => {
-    deleteChangesCallback(ctx, docId, deleteIndex, (error, result) => {
+    deleteChanges(ctx, docId, deleteIndex, (error, result) => {
       if (error) {
         reject(error);
       } else {
@@ -197,16 +197,24 @@ function deleteChangesPromise(ctx, docId, deleteIndex) {
   });
 }
 
-function deleteChanges(ctx, docId, deleteIndex) {
+function deleteChanges(ctx, docId, deleteIndex, callback) {
   lockCriticalSection(docId, () => {
-    _deleteChanges(ctx, docId, deleteIndex);
+    _deleteChanges(ctx, docId, deleteIndex, callback);
   });
 }
 
-function _deleteChanges(ctx, docId, deleteIndex) {
-  deleteChangesCallback(ctx, docId, deleteIndex, () => {
+function _deleteChanges(ctx, docId, deleteIndex, callback) {
+  const onComplete = (error, result) => {
     unLockCriticalSection(docId);
-  });
+    if (callback) {
+      callback(error, result);
+    }
+  };
+  try {
+    deleteChangesCallback(ctx, docId, deleteIndex, onComplete);
+  } catch (error) {
+    onComplete(error);
+  }
 }
 
 function getChangesIndex(ctx, docId, callback) {
