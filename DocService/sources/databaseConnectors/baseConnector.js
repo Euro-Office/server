@@ -171,39 +171,48 @@ function _insertChangesCallback(ctx, startIndex, objChanges, docId, index, user,
   dbInstance.sqlQuery(ctx, sqlCommand, callback, undefined, undefined, values);
 }
 
-function deleteChangesCallback(ctx, docId, deleteIndex, callback) {
-  let sqlCommand;
-  const values = [];
+function deleteChangesCallback(ctx, docId, deleteIndex, callback, opt_taskResultCondition) {
+  const values = opt_taskResultCondition ? [...opt_taskResultCondition.values] : [];
+  const conditions = [];
+  if (opt_taskResultCondition) {
+    conditions.push(`EXISTS (SELECT 1 FROM ${cfgTableResult} WHERE ${opt_taskResultCondition.sql})`);
+  }
   const p1 = addSqlParameter(ctx.tenant, values);
   const p2 = addSqlParameter(docId, values);
+  conditions.push(`tenant=${p1}`, `id=${p2}`);
   if (null !== deleteIndex) {
     const sqlParam2 = addSqlParameter(deleteIndex, values);
-    sqlCommand = `DELETE FROM ${cfgTableChanges} WHERE tenant=${p1} AND id=${p2} AND change_id >= ${sqlParam2};`;
-  } else {
-    sqlCommand = `DELETE FROM ${cfgTableChanges} WHERE tenant=${p1} AND id=${p2};`;
+    conditions.push(`change_id >= ${sqlParam2}`);
   }
+  const sqlCommand = `DELETE FROM ${cfgTableChanges} WHERE ${conditions.join(' AND ')};`;
   dbInstance.sqlQuery(ctx, sqlCommand, callback, undefined, undefined, values);
 }
 
-function deleteChangesPromise(ctx, docId, deleteIndex) {
+function deleteChangesPromise(ctx, docId, deleteIndex, opt_taskResultCondition) {
   return new Promise((resolve, reject) => {
-    deleteChanges(ctx, docId, deleteIndex, (error, result) => {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(result);
-      }
-    });
+    deleteChanges(
+      ctx,
+      docId,
+      deleteIndex,
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      },
+      opt_taskResultCondition
+    );
   });
 }
 
-function deleteChanges(ctx, docId, deleteIndex, callback) {
+function deleteChanges(ctx, docId, deleteIndex, callback, opt_taskResultCondition) {
   lockCriticalSection(docId, () => {
-    _deleteChanges(ctx, docId, deleteIndex, callback);
+    _deleteChanges(ctx, docId, deleteIndex, callback, opt_taskResultCondition);
   });
 }
 
-function _deleteChanges(ctx, docId, deleteIndex, callback) {
+function _deleteChanges(ctx, docId, deleteIndex, callback, opt_taskResultCondition) {
   const onComplete = (error, result) => {
     unLockCriticalSection(docId);
     if (callback) {
@@ -211,7 +220,7 @@ function _deleteChanges(ctx, docId, deleteIndex, callback) {
     }
   };
   try {
-    deleteChangesCallback(ctx, docId, deleteIndex, onComplete);
+    deleteChangesCallback(ctx, docId, deleteIndex, onComplete, opt_taskResultCondition);
   } catch (error) {
     onComplete(error);
   }

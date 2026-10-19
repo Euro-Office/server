@@ -488,10 +488,7 @@ const cleanupCache = co.wrap(function* (ctx, docId) {
 const cleanupCacheIf = co.wrap(function* (ctx, mask) {
   //todo redis ?
   let res = false;
-  const removeRes = yield taskResult.removeIf(ctx, mask);
-  // A prior attempt may have removed the task row and failed during SQL
-  // deletion. Always retry this idempotent deletion before completing cleanup.
-  yield sqlBase.deleteChangesPromise(ctx, mask.key, null);
+  const removeRes = yield taskResult.removeIf(ctx, mask, true);
   if (removeRes.affectedRows > 0) {
     yield storage.deletePath(ctx, mask.key);
     if (docsCoServer?.editorStatProxy?.deleteKey) {

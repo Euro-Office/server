@@ -352,13 +352,18 @@ function remove(ctx, docId) {
     );
   });
 }
-function removeIf(ctx, mask) {
+async function removeIf(ctx, mask, opt_deleteChanges) {
+  const values = [];
+  const commandArgMask = toUpdateArray(mask, false, true, values, false);
+  commandArgMask.push('tenant=' + addSqlParam(mask.tenant, values));
+  commandArgMask.push('id=' + addSqlParam(mask.key, values));
+  const sqlWhere = commandArgMask.join(' AND ');
+  if (opt_deleteChanges) {
+    // Keep the task row on failure so a callback retry retains its metadata.
+    // Check ownership inside DELETE; a stale cleanup must not delete new edits.
+    await sqlBase.deleteChangesPromise(ctx, mask.key, null, {sql: sqlWhere, values});
+  }
   return new Promise((resolve, reject) => {
-    const values = [];
-    const commandArgMask = toUpdateArray(mask, false, true, values, false);
-    commandArgMask.push('tenant=' + addSqlParam(mask.tenant, values));
-    commandArgMask.push('id=' + addSqlParam(mask.key, values));
-    const sqlWhere = commandArgMask.join(' AND ');
     const sqlCommand = `DELETE FROM ${cfgTableResult} WHERE ${sqlWhere};`;
     sqlBase.sqlQuery(
       ctx,
