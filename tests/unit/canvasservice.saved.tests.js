@@ -151,17 +151,22 @@ describe('final-save saved-state handling', () => {
     }
   });
 
-  test('retries SQL deletion after the task row was removed by a failed cleanup', async () => {
-    taskResult.removeIf.mockResolvedValueOnce({affectedRows: 1}).mockResolvedValueOnce({affectedRows: 0});
+  test('keeps the task row until SQL deletion succeeds so cleanup can be retried', async () => {
+    taskResult.removeIf.mockRestore();
     const error = new Error('SQL deletion failed');
     const removeChanges = jest.spyOn(sqlBase, 'deleteChangesPromise').mockRejectedValueOnce(error).mockResolvedValueOnce({affectedRows: 1});
+    const removeRow = jest.spyOn(sqlBase, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => callback(null, {affectedRows: 1}));
+    jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+    const mask = {tenant: ctx.tenant, key: 'document', status: commonDefines.FileStatus.SaveVersion, statusInfo: 12};
 
-    await expect(canvasservice.cleanupCacheIf(ctx, {key: 'document'})).rejects.toBe(error);
+    await expect(canvasservice.cleanupCacheIf(ctx, mask)).rejects.toBe(error);
+    expect(removeRow).not.toHaveBeenCalled();
+    expect(storage.deletePath).not.toHaveBeenCalled();
 
-    await expect(canvasservice.cleanupCacheIf(ctx, {key: 'document'})).resolves.toBe(false);
-    expect(removeChanges).toHaveBeenNthCalledWith(1, ctx, 'document', null);
-    expect(removeChanges).toHaveBeenNthCalledWith(2, ctx, 'document', null);
-    expect(taskResult.removeIf).toHaveBeenCalledTimes(2);
+    await expect(canvasservice.cleanupCacheIf(ctx, mask)).resolves.toBe(true);
+    expect(removeChanges).toHaveBeenCalledTimes(2);
+    expect(removeRow).toHaveBeenCalledTimes(1);
+    expect(storage.deletePath).toHaveBeenCalledTimes(1);
   });
 
   test.each([new Error('Redis unavailable'), Object.assign(new Error('unknown outcome'), {code: 'EDITOR_DATA_SAVED_UNKNOWN'})])(
