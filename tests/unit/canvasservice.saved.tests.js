@@ -15,6 +15,8 @@ const sqlBase = require('../../DocService/sources/databaseConnectors/baseConnect
 const storage = require('../../Common/sources/storage/storage-base');
 const taskResult = require('../../DocService/sources/taskresult');
 const config = require('../../Common/node_modules/config');
+const operationContext = require('../../Common/sources/operationContext');
+const TaskQueue = require('../../Common/sources/taskqueueRabbitMQ');
 const sqlConnectorNames = {
   mysql: 'mysqlConnector',
   mariadb: 'mysqlConnector',
@@ -63,6 +65,7 @@ describe('final-save saved-state handling', () => {
     jest.spyOn(docsCoServer, 'parseReplyData').mockReturnValue({error: 0});
     jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockResolvedValue(true);
     jest.spyOn(docsCoServer, 'publish').mockResolvedValue(undefined);
+    jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* () {});
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -151,9 +154,7 @@ describe('final-save saved-state handling', () => {
   test('retries SQL deletion after the task row was removed by a failed cleanup', async () => {
     taskResult.removeIf.mockResolvedValueOnce({affectedRows: 1}).mockResolvedValueOnce({affectedRows: 0});
     const error = new Error('SQL deletion failed');
-    const removeChanges = jest.spyOn(sqlBase, 'deleteChangesPromise')
-      .mockRejectedValueOnce(error)
-      .mockResolvedValueOnce({affectedRows: 1});
+    const removeChanges = jest.spyOn(sqlBase, 'deleteChangesPromise').mockRejectedValueOnce(error).mockResolvedValueOnce({affectedRows: 1});
 
     await expect(canvasservice.cleanupCacheIf(ctx, {key: 'document'})).rejects.toBe(error);
 
@@ -198,14 +199,17 @@ describe('final-save saved-state handling', () => {
     expect(storage.copyObject).toHaveBeenCalledTimes(status === '0' ? 1 : 0);
     expect(taskResult.removeIf).not.toHaveBeenCalled();
     expect(ack).not.toHaveBeenCalled();
+    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
   });
 
   test('retains the claim and source files when forgotten-file preservation fails', async () => {
     jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
-    storage.copyObject.mockRejectedValue(new Error('recovery storage unavailable'));
+    const error = new Error('recovery storage unavailable');
+    storage.copyObject.mockRejectedValue(error);
 
-    await canvasservice.commandSfcCallback(ctx, command(), false, false);
+    await expect(canvasservice.commandSfcCallback(ctx, command(), false, false)).rejects.toBe(error);
 
     expect(storage.copyObject).toHaveBeenCalledTimes(1);
     expect(docsCoServer.cleanDocumentOnExitPromise).not.toHaveBeenCalled();
@@ -309,6 +313,245 @@ describe('final-save saved-state handling', () => {
     await canvasservice.commandSfcCallback(ctx, command(), true, false);
     expect(read).not.toHaveBeenCalled();
     expect(ack).not.toHaveBeenCalled();
+  });
+
+  test('does not enqueue an encrypted HTTP save as an unencrypted callback retry', async () => {
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1');
+    const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
+    docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(false);
+    await canvasservice.commandSfcCallback(ctx, command(), false, true);
+    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.addDelayed).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+  });
+});
+
+describe('final-save queue recovery', () => {
+  let row;
+  beforeEach(() => {
+    row = {
+      callback: 'https://callback.example.test/save',
+      baseurl: 'https://storage.example.test',
+      status: commonDefines.FileStatus.SaveVersion,
+      status_info: 12
+    };
+    jest.spyOn(operationContext.Context.prototype, 'initTenantCache').mockResolvedValue(undefined);
+    jest.spyOn(operationContext.Context.prototype, 'getCfg').mockImplementation((_path, fallback) => fallback);
+    for (const level of ['debug', 'info', 'warn', 'error']) {
+      jest.spyOn(operationContext.global.logger, level).mockImplementation(() => {});
+    }
+    jest.spyOn(taskResult, 'select').mockImplementation(async () => [row]);
+    jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
+    jest.spyOn(taskResult, 'updateIf').mockImplementation(async (_ctx, update, mask) => {
+      if (row.status !== mask.status || row.status_info !== mask.statusInfo) {
+        return {affectedRows: 0};
+      }
+      row.status = update.status;
+      row.status_info = update.statusInfo;
+      return {affectedRows: 1};
+    });
+    jest.spyOn(taskResult, 'removeIf').mockResolvedValue({affectedRows: 0});
+    jest.spyOn(sqlBase, 'deleteChangesPromise').mockResolvedValue({affectedRows: 1});
+    jest.spyOn(sqlBase.UserCallback.prototype, 'getCallbackByUserIndex').mockReturnValue(row.callback);
+    jest.spyOn(storage, 'listObjects').mockResolvedValue([]);
+    jest.spyOn(storage, 'getObject').mockResolvedValue(Buffer.from('{}'));
+    jest.spyOn(storage, 'getSignedUrl').mockResolvedValue('https://storage.example.test/signed');
+    jest.spyOn(storage, 'copyObject').mockResolvedValue(undefined);
+    jest.spyOn(docsCoServer, 'getEditorsCountPromise').mockResolvedValue(0);
+    jest.spyOn(docsCoServer.editorData, 'getForceSave').mockResolvedValue(null);
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1');
+    jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
+    jest.spyOn(docsCoServer, 'sendServerRequest').mockResolvedValue('{"error":0}');
+    jest.spyOn(docsCoServer, 'parseReplyData').mockReturnValue({error: 0});
+    jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockResolvedValue(true);
+    jest.spyOn(docsCoServer, 'publish').mockResolvedValue(undefined);
+    jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* () {});
+    jest.spyOn(docsCoServer, 'getIsShutdown').mockReturnValue(false);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  function queuedCommand(overrides = {}) {
+    const task = new commonDefines.TaskQueueData();
+    task.setCtx({tenant: 'queue-recovery', docId: 'document', userId: 'user'});
+    task.setCmd(command({c: 'sfc', ...overrides}));
+    return JSON.stringify(task);
+  }
+
+  test.each(['getForceSave', 'getdelSaved', 'cleanup', 'ackSaved', 'unknown claim'])(
+    'confirms a retry before acknowledging a failed %s, then completes the same operation',
+    async method => {
+      const error = Object.assign(new Error('storage unavailable'), {code: 'EDITOR_DATA_SAVED_UNKNOWN'});
+      const target =
+        method === 'cleanup' ? docsCoServer.cleanDocumentOnExitPromise : docsCoServer.editorData[method === 'unknown claim' ? 'getdelSaved' : method];
+      target.mockRejectedValueOnce(error);
+      let confirm;
+      let retryStarted;
+      let retryTask;
+      const confirmed = new Promise(resolve => (confirm = resolve));
+      const started = new Promise(resolve => (retryStarted = resolve));
+      docsCoServer.addDelayed.mockImplementationOnce(function* (task) {
+        retryTask = new commonDefines.TaskQueueData(JSON.parse(JSON.stringify(task)));
+        retryStarted();
+        yield confirmed;
+      });
+      const ack = jest.fn();
+      const processing = canvasservice.receiveTask(queuedCommand(), ack);
+      await Promise.race([started, processing]);
+      expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+      expect(docsCoServer.addDelayed.mock.calls[0].slice(2)).toEqual([undefined, true]);
+      expect(ack).not.toHaveBeenCalled();
+      expect(docsCoServer.publish).not.toHaveBeenCalled();
+      expect(row.status).toBe(commonDefines.FileStatus.UpdateVersion);
+      expect(retryTask.getCmd().getSaveKey()).toBe('save-key');
+      expect(retryTask.getCmd().getOutputPath()).toBe('output.docx');
+      expect(retryTask.getCmd().getStatusInfoIn()).toBe(12);
+      expect(retryTask.getCmd().getAttempt()).toBe(1);
+      confirm();
+      await processing;
+      expect(ack).toHaveBeenCalledTimes(1);
+
+      const retryAck = jest.fn();
+      await canvasservice.receiveTask(JSON.stringify(retryTask), retryAck);
+      expect(retryAck).toHaveBeenCalledTimes(1);
+      expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+      expect(docsCoServer.publish).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({success: true}));
+      expect(docsCoServer.editorData.ackSaved).toHaveBeenLastCalledWith(expect.anything(), 'document', 'save-key');
+    }
+  );
+
+  test('leaves the broker delivery unacknowledged if retry persistence fails', async () => {
+    docsCoServer.editorData.getdelSaved.mockRejectedValue(new Error('storage unavailable'));
+    docsCoServer.addDelayed.mockImplementation(function* () {
+      yield Promise.reject(new Error('broker unavailable'));
+    });
+    const ack = jest.fn();
+    await canvasservice.receiveTask(queuedCommand(), ack);
+    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+    expect(ack).not.toHaveBeenCalled();
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+  });
+
+  test('recovers an actual SQL cleanup failure with the memory saved-state backend', async () => {
+    docsCoServer.cleanDocumentOnExitPromise.mockRestore();
+    docsCoServer.editorData.getdelSaved.mockRestore();
+    jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockResolvedValue(true);
+    jest.spyOn(taskResult, 'restoreInitialPassword').mockResolvedValue(undefined);
+    jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+    sqlBase.deleteChangesPromise.mockRejectedValueOnce(new Error('SQL unavailable'));
+    const ack = jest.fn();
+    await canvasservice.receiveTask(queuedCommand(), ack);
+    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+    expect(storage.deletePath).not.toHaveBeenCalled();
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledTimes(1);
+
+    const retryTask = docsCoServer.addDelayed.mock.calls[0][0];
+    await canvasservice.receiveTask(JSON.stringify(retryTask), jest.fn());
+    expect(sqlBase.deleteChangesPromise).toHaveBeenCalledTimes(2);
+    expect(storage.deletePath).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.publish).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({success: true}));
+  });
+
+  test('does not accept a retry buffered only in process memory', async () => {
+    const queue = new TaskQueue();
+    docsCoServer.editorData.getdelSaved.mockRejectedValue(new Error('storage unavailable'));
+    docsCoServer.addDelayed.mockRestore();
+    const addDelayed = docsCoServer.addDelayed;
+    jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* (task, ttl, _queue, requireConfirm) {
+      yield* addDelayed(task, ttl, queue, requireConfirm);
+    });
+    const ack = jest.fn();
+    await canvasservice.receiveTask(queuedCommand(), ack);
+    expect(ack).not.toHaveBeenCalled();
+    expect(queue.addDelayedStore).toEqual([]);
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+  });
+
+  test.each(['declined cleanup', 'forgotten copy'])('reschedules %s without completing the claim', async scenario => {
+    if (scenario === 'declined cleanup') {
+      docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(false);
+    } else {
+      docsCoServer.editorData.getdelSaved.mockResolvedValue('0');
+      storage.copyObject.mockRejectedValue(new Error('forgotten storage unavailable'));
+    }
+    const ack = jest.fn();
+    await canvasservice.receiveTask(queuedCommand(), ack);
+    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.editorData.ackSaved).not.toHaveBeenCalled();
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+  });
+
+  test('caps infrastructure backoff beyond the HTTP retry limit', async () => {
+    docsCoServer.editorData.getdelSaved.mockRejectedValue(new Error('storage unavailable'));
+    const ack = jest.fn();
+    await canvasservice.receiveTask(queuedCommand({attempt: 100}), ack);
+    const [task, timeout] = docsCoServer.addDelayed.mock.calls[0];
+    const options = config.get('services.CoAuthoring.callbackBackoffOptions');
+    expect(task.getCmd().getAttempt()).toBe(101);
+    const retry = require('../../DocService/node_modules/retry');
+    expect(timeout).toBe(retry.createTimeout(options.retries, options.timeout));
+    expect(ack).toHaveBeenCalledTimes(1);
+  });
+
+  test('keeps shutdown bookkeeping pending while cleanup is deferred', async () => {
+    docsCoServer.getIsShutdown.mockReturnValue(true);
+    docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(false);
+    const removeShutdown = jest.spyOn(docsCoServer.editorStat, 'removeShutdown').mockResolvedValue(undefined);
+    await canvasservice.receiveTask(queuedCommand(), jest.fn());
+    expect(removeShutdown).not.toHaveBeenCalled();
+    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+  });
+
+  test('reschedules declined no-changes cleanup', async () => {
+    const cleanup = jest.spyOn(docsCoServer, 'cleanDocumentOnExitNoChangesPromise').mockResolvedValue(false);
+    const ack = jest.fn();
+    await canvasservice.receiveTask(queuedCommand({status_info: constants.EDITOR_CHANGES}), ack);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not retry failures from other converter commands', async () => {
+    taskResult.update.mockRejectedValue(new Error('SQL unavailable'));
+    const ack = jest.fn();
+    await canvasservice.receiveTask(queuedCommand({c: 'sfcm'}), ack);
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.addDelayed).not.toHaveBeenCalled();
+  });
+});
+
+describe('confirmed delayed-task persistence', () => {
+  test('rejects confirmed-only retries while disconnected instead of buffering them', async () => {
+    const queue = new TaskQueue();
+    await expect(queue.addDelayed({id: 'save'}, 1000, true)).rejects.toThrow('retry was not persisted');
+    expect(queue.addDelayedStore).toEqual([]);
+  });
+
+  test.each([null, new Error('broker rejected retry')])('waits for broker confirmation and propagates its result (%s)', async error => {
+    const queue = new TaskQueue();
+    let confirm;
+    queue.channelDelayed = {
+      sendToQueue: jest.fn((_name, _content, _options, callback) => {
+        confirm = callback;
+      })
+    };
+    let settled = false;
+    const persistence = queue.addDelayed({id: 'save'}, 1000, true);
+    persistence.then(
+      () => (settled = true),
+      () => (settled = true)
+    );
+    await new Promise(setImmediate);
+    expect(settled).toBe(false);
+    expect(queue.channelDelayed.sendToQueue.mock.calls[0][2]).toEqual({persistent: true, expiration: '1000'});
+    confirm(error);
+    if (error) {
+      await expect(persistence).rejects.toBe(error);
+    } else {
+      await expect(persistence).resolves.toBeUndefined();
+    }
   });
 });
 

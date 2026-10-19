@@ -1031,6 +1031,19 @@ function getSavedClaimId(cmd) {
   // manually-created tasks so a retry still addresses the same saved-state claim.
   return `fallback:${cmd.getOutputPath() || ''}:${cmd.getStatusInfoIn() || ''}:${cmd.getUserActionId() || cmd.getUserId() || ''}`;
 }
+function* scheduleSfcRetry(ctx, cmd) {
+  const options = ctx.getCfg('services.CoAuthoring.callbackBackoffOptions', cfgCallbackBackoffOptions);
+  const attempt = cmd.getAttempt() || 0;
+  cmd.setAttempt(attempt + 1);
+  const queueData = new commonDefines.TaskQueueData();
+  queueData.setCtx(ctx);
+  queueData.setCmd(cmd);
+  // Infrastructure failures may outlast the HTTP retry budget. Cap the delay,
+  // and require broker confirmation before releasing the original delivery.
+  const timeout = retry.createTimeout(Math.min(attempt, options.retries), options.timeout);
+  ctx.logger.debug('commandSfcCallback backoff timeout = %d', timeout);
+  yield* docsCoServer.addDelayed(queueData, timeout, undefined, true);
+}
 const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
@@ -1289,6 +1302,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
                 savedClaimed ? savedClaimId : undefined
               );
               savedOutcomeCompleted = cleanupResult === true;
+              needRetry = !savedOutcomeCompleted && !isEncrypted;
               if (cleanupResult === true && isOpenFromForgotten) {
                 //remove forgotten file in cache
                 yield cleanupCache(ctx, docId);
@@ -1337,6 +1351,9 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
         forgottenStored = true;
       } catch (err) {
         ctx.logger.error('Error storeForgotten: %s', err.stack);
+        if (!isSfcm) {
+          throw err;
+        }
       }
       if (!isSfcm && forgottenStored) {
         // Only remove cached files and changes when backend cleanup completes.
@@ -1354,6 +1371,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
           savedOutcomeCompleted = true;
         } else {
           ctx.logger.debug('storeForgotten skipped terminal cleanup while document is active');
+          needRetry = true;
         }
       }
     }
@@ -1361,14 +1379,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       yield* docsCoServer.setForceSave(ctx, docId, forceSave, cmd, isSfcmSuccess && !isError, outputSfc?.getUrl());
     }
     if (needRetry) {
-      const attempt = cmd.getAttempt() || 0;
-      cmd.setAttempt(attempt + 1);
-      const queueData = new commonDefines.TaskQueueData();
-      queueData.setCtx(ctx);
-      queueData.setCmd(cmd);
-      const timeout = retry.createTimeout(attempt, tenCallbackBackoffOptions.timeout);
-      ctx.logger.debug('commandSfcCallback backoff timeout = %d', timeout);
-      yield* docsCoServer.addDelayed(queueData, timeout);
+      yield* scheduleSfcRetry(ctx, cmd);
     }
     // Acknowledge only completed saves or preserved forgotten files after cleanup.
     // Retain claims on retries, declined cleanup, and terminal failures that skip
@@ -1379,14 +1390,18 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
     }
   } else {
     ctx.logger.debug('commandSfcCallback cleanDocumentOnExitNoChangesPromise');
-    yield docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId, undefined, userLastChangeIndex, true);
+    const cleanupResult = yield docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId, undefined, userLastChangeIndex, true);
+    if (cleanupResult !== true && !isEncrypted) {
+      needRetry = true;
+      yield* scheduleSfcRetry(ctx, cmd);
+    }
   }
 
   if (needUpdateVersionEvent && !needRetry) {
     yield docsCoServer.publish(ctx, {type: commonDefines.c_oPublishType.updateVersion, ctx, docId, success: isSfcSuccess});
   }
 
-  if ((docsCoServer.getIsShutdown() && !isSfcm) || cmd.getRedisKey()) {
+  if (!needRetry && ((docsCoServer.getIsShutdown() && !isSfcm) || cmd.getRedisKey())) {
     const keyRedis = cmd.getRedisKey() ? cmd.getRedisKey() : redisKeyShutdown;
     yield docsCoServer.editorStat.removeShutdown(keyRedis, docId);
   }
@@ -2033,8 +2048,10 @@ async function processWopiSaveAs(ctx, cmd) {
 exports.receiveTask = function (data, ack) {
   return co(function* () {
     const ctx = new operationContext.Context();
+    let task;
+    let shouldAck = true;
     try {
-      const task = new commonDefines.TaskQueueData(JSON.parse(data));
+      task = new commonDefines.TaskQueueData(JSON.parse(data));
       if (task) {
         const cmd = task.getCmd();
         ctx.initFromTaskQueueData(task);
@@ -2126,9 +2143,21 @@ exports.receiveTask = function (data, ack) {
       }
     } catch (err) {
       ctx.logger.error('receiveTask error: %s', err.stack);
+      const cmd = task && task.getCmd();
+      if (cmd && 'sfc' === cmd.getCommand()) {
+        shouldAck = false;
+        try {
+          yield* scheduleSfcRetry(ctx, cmd);
+          shouldAck = true;
+        } catch (retryError) {
+          ctx.logger.error('receiveTask retry scheduling error: %s', retryError.stack);
+        }
+      }
     } finally {
       ctx.logger.info('receiveTask end');
-      ack();
+      if (shouldAck) {
+        ack();
+      }
     }
   });
 };
