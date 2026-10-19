@@ -1074,6 +1074,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
     let storeForgotten = false;
     let savedClaimed = false;
     let savedClaimId;
+    let savedOutcomeCompleted = false;
     let statusOk;
     let statusErr;
     if (isSfcm) {
@@ -1285,6 +1286,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
                 callbackUserIndex,
                 savedClaimed ? savedClaimId : undefined
               );
+              savedOutcomeCompleted = cleanupResult === true;
               if (cleanupResult === true && isOpenFromForgotten) {
                 //remove forgotten file in cache
                 yield cleanupCache(ctx, docId);
@@ -1325,14 +1327,16 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       }
     }
     if (storeForgotten && !needRetry && !isEncrypted && (!isError || isErrorCorrupted)) {
+      let forgottenStored = false;
       try {
         ctx.logger.warn('storeForgotten');
         const forgottenName = tenForgottenFilesName + pathModule.extname(cmd.getOutputPath());
         yield storage.copyObject(ctx, savePathDoc, docId + '/' + forgottenName, undefined, tenForgottenFiles);
+        forgottenStored = true;
       } catch (err) {
         ctx.logger.error('Error storeForgotten: %s', err.stack);
       }
-      if (!isSfcm) {
+      if (!isSfcm && forgottenStored) {
         // Only remove cached files and changes when backend cleanup completes.
         const cleanupResult = yield docsCoServer.cleanDocumentOnExitPromise(
           ctx,
@@ -1345,6 +1349,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
           //cleanupRes can be false in case of simultaneous opening. it is OK
           const cleanupRes = yield cleanupCacheIf(ctx, updateMask);
           ctx.logger.debug('storeForgotten cleanupRes=%s', cleanupRes);
+          savedOutcomeCompleted = true;
         } else {
           ctx.logger.debug('storeForgotten skipped terminal cleanup while document is active');
         }
@@ -1363,11 +1368,11 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
       ctx.logger.debug('commandSfcCallback backoff timeout = %d', timeout);
       yield* docsCoServer.addDelayed(queueData, timeout);
     }
-    // A claim is retained through document cleanup so a worker crash can
-    // replay the same task.  Resolve it after saved-state work and retry
-    // scheduling for this callback are complete; version publication and
-    // shutdown bookkeeping below are outside this claim lifecycle.
-    if (savedClaimed && !needRetry) {
+    // Acknowledge only completed saves or preserved forgotten files after cleanup.
+    // Retain claims on retries, declined cleanup, and terminal failures that skip
+    // cleanup (conversion errors, encrypted saves, or missing output). An error
+    // notification alone does not complete the claimed outcome.
+    if (savedClaimed && savedOutcomeCompleted && !needRetry) {
       yield docsCoServer.editorData.ackSaved(ctx, docId, savedClaimId);
     }
   } else {

@@ -94,6 +94,10 @@ describe('final-save saved-state handling', () => {
     expect(docsCoServer.publish).toHaveBeenCalledWith(ctx, expect.objectContaining({success: status === '1'}));
     expect(storage.copyObject).toHaveBeenCalledTimes(status === '1' ? 0 : 1);
     expect(taskResult.removeIf).toHaveBeenCalledTimes(status === '1' ? 0 : 1);
+    if (status === '0') {
+      expect(storage.copyObject.mock.invocationCallOrder[0]).toBeLessThan(docsCoServer.cleanDocumentOnExitPromise.mock.invocationCallOrder[0]);
+      expect(taskResult.removeIf.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+    }
   });
 
   test.each(['1', '0'])('does not acknowledge status %s when cleanup throws', async status => {
@@ -161,19 +165,53 @@ describe('final-save saved-state handling', () => {
     expect(docsCoServer.publish).not.toHaveBeenCalled();
   });
 
-  test('keeps cache and changes when the backend declines forgotten-file cleanup', async () => {
-    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
-    jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
-    docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(false);
+  test.each([
+    ['1', false],
+    ['1', undefined],
+    ['0', false],
+    ['0', undefined]
+  ])('retains status %s when cleanup returns %s', async (status, cleanupResult) => {
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue(status);
+    const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
+    docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(cleanupResult);
     await canvasservice.commandSfcCallback(ctx, command(), false, false);
-    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledTimes(1);
+    expect(storage.copyObject).toHaveBeenCalledTimes(status === '0' ? 1 : 0);
     expect(taskResult.removeIf).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+  });
+
+  test('retains the claim and source files when forgotten-file preservation fails', async () => {
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
+    const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
+    storage.copyObject.mockRejectedValue(new Error('recovery storage unavailable'));
+
+    await canvasservice.commandSfcCallback(ctx, command(), false, false);
+
+    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.cleanDocumentOnExitPromise).not.toHaveBeenCalled();
+    expect(taskResult.removeIf).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+  });
+
+  test('does not acknowledge before forgotten-file cache cleanup completes', async () => {
+    const error = new Error('cache cleanup failed');
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
+    const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
+    taskResult.removeIf.mockRejectedValue(error);
+
+    await expect(canvasservice.commandSfcCallback(ctx, command(), false, false)).rejects.toBe(error);
+
+    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledTimes(1);
+    expect(ack).not.toHaveBeenCalled();
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
   });
 
   test.each([false, undefined, true])('reopened forgotten-document cache deletion requires completed cleanup (%s)', async cleanupResult => {
     storage.listObjects.mockResolvedValueOnce(['document/forgotten.docx']).mockResolvedValueOnce(['document/forgotten.txt']);
     jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1');
-    jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
+    const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
     docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(cleanupResult);
     const removeRow = jest.spyOn(taskResult, 'remove').mockResolvedValue({affectedRows: 1});
     const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
@@ -184,9 +222,12 @@ describe('final-save saved-state handling', () => {
     if (cleanupResult === true) {
       expect(removeRow).toHaveBeenCalledWith(ctx, 'document');
       expect(removeFiles).toHaveBeenCalledWith(ctx, 'document');
+      expect(ack).toHaveBeenCalledWith(ctx, 'document', 'save-key');
+      expect(removeFiles.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
     } else {
       expect(removeRow).not.toHaveBeenCalled();
       expect(removeFiles).not.toHaveBeenCalled();
+      expect(ack).not.toHaveBeenCalled();
     }
   });
 
@@ -203,7 +244,7 @@ describe('final-save saved-state handling', () => {
     ['conversion error', {statusInfo: constants.CONVERT_READ_FILE, encrypted: false}],
     ['encrypted save', {statusInfo: constants.NO_ERROR, encrypted: true}],
     ['missing output file', {statusInfo: constants.NO_ERROR, encrypted: false, missingFile: true}]
-  ])('acknowledges a saved status on the %s path', async (_scenario, options) => {
+  ])('retains an unhandled saved status on the %s path', async (_scenario, options) => {
     const read = jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
     if (options.missingFile) {
@@ -214,9 +255,30 @@ describe('final-save saved-state handling', () => {
 
     expect(read).toHaveBeenCalledTimes(1);
     expect(read).toHaveBeenCalledWith(ctx, 'document', 'save-key');
-    expect(ack).toHaveBeenCalledTimes(1);
-    expect(ack).toHaveBeenCalledWith(ctx, 'document', 'save-key');
-    expect(read.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+    expect(docsCoServer.cleanDocumentOnExitPromise).not.toHaveBeenCalled();
+    expect(storage.copyObject).not.toHaveBeenCalled();
+    expect(taskResult.removeIf).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+  });
+
+  test('retains saved state while scheduling a retryable callback failure', async () => {
+    docsCoServer.sendServerRequest.mockRejectedValue(Object.assign(new Error('callback unavailable'), {statusCode: 503}));
+    docsCoServer.parseReplyData.mockReturnValue(null);
+    jest.spyOn(docsCoServer, 'getIsShutdown').mockReturnValue(false);
+    const read = jest.spyOn(docsCoServer.editorData, 'getdelSaved');
+    const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
+    const delayed = jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* () {});
+    const cmd = command();
+
+    await canvasservice.commandSfcCallback(ctx, cmd, false, false);
+
+    expect(cmd.getAttempt()).toBe(1);
+    expect(delayed).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+    expect(docsCoServer.cleanDocumentOnExitPromise).not.toHaveBeenCalled();
+    expect(storage.copyObject).not.toHaveBeenCalled();
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
   });
 
   test('force-save callbacks do not consume or acknowledge final-save state', async () => {
