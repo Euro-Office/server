@@ -82,6 +82,9 @@ describe('final-save saved-state handling', () => {
   });
 
   test.each(['1', '0'])('acknowledges status %s only after its successful or forgotten-file cleanup', async status => {
+    if (status === '0') {
+      jest.spyOn(sqlBase, 'deleteChangesPromise').mockResolvedValue({affectedRows: 1});
+    }
     await docsCoServer.editorData.setSaved(ctx, 'document', status);
     const read = jest.spyOn(docsCoServer.editorData, 'getdelSaved');
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
@@ -117,6 +120,7 @@ describe('final-save saved-state handling', () => {
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
     jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockResolvedValue(true);
     jest.spyOn(taskResult, 'restoreInitialPassword').mockResolvedValue(undefined);
+    taskResult.removeIf.mockResolvedValue({affectedRows: 1});
     jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
     let completeDeletion;
     const started = new Promise(resolve => {
@@ -142,6 +146,21 @@ describe('final-save saved-state handling', () => {
       expect(ack).toHaveBeenCalledWith(ctx, 'document', 'save-key');
       expect(docsCoServer.publish).toHaveBeenCalledWith(ctx, expect.objectContaining({success: true}));
     }
+  });
+
+  test('retries SQL deletion after the task row was removed by a failed cleanup', async () => {
+    taskResult.removeIf.mockResolvedValueOnce({affectedRows: 1}).mockResolvedValueOnce({affectedRows: 0});
+    const error = new Error('SQL deletion failed');
+    const removeChanges = jest.spyOn(sqlBase, 'deleteChangesPromise')
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce({affectedRows: 1});
+
+    await expect(canvasservice.cleanupCacheIf(ctx, {key: 'document'})).rejects.toBe(error);
+
+    await expect(canvasservice.cleanupCacheIf(ctx, {key: 'document'})).resolves.toBe(false);
+    expect(removeChanges).toHaveBeenNthCalledWith(1, ctx, 'document', null);
+    expect(removeChanges).toHaveBeenNthCalledWith(2, ctx, 'document', null);
+    expect(taskResult.removeIf).toHaveBeenCalledTimes(2);
   });
 
   test.each([new Error('Redis unavailable'), Object.assign(new Error('unknown outcome'), {code: 'EDITOR_DATA_SAVED_UNKNOWN'})])(
