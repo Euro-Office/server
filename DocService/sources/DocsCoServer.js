@@ -94,6 +94,7 @@ const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
 const aiProxyHandler = require('./ai/aiProxyHandler');
+const {StartupRedisCancelledError, connectRedisForStartup} = require('./startupRedis');
 
 const cfgEditorDataStorage = config.get('services.CoAuthoring.server.editorDataStorage');
 const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatStorage');
@@ -159,11 +160,13 @@ if (process.env.REDIS_SERVER_DB_KEYS_NUM) {
 }
 const clientStatsD = statsDClient.getClient();
 let connections = []; // Active connections
+let io;
 const lockDocumentsTimerId = {}; //to drop connection that can't unlockDocument
 let pubsub;
 let queue;
 let shutdownFlag = false;
 let preStopFlag = false;
+let startupAbortController;
 const expDocumentsStep = gc.getCronStep(cfgExpDocumentsCron);
 
 const MIN_SAVE_EXPIRATION = 60000;
@@ -485,7 +488,7 @@ function addPresence(ctx, conn, updateCunters) {
 }
 async function updatePresence(ctx, conn) {
   if (editorData.updatePresence) {
-    return await editorData.updatePresence(ctx, conn.docId, conn.user.id);
+    return await editorData.updatePresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
   } else {
     //todo remove if after 7.6. code for backward compatibility, because redis in separate repo
     return await editorData.addPresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
@@ -493,7 +496,7 @@ async function updatePresence(ctx, conn) {
 }
 function removePresence(ctx, conn) {
   return co(function* () {
-    yield editorData.removePresence(ctx, conn.docId, conn.user.id);
+    yield editorData.removePresence(ctx, conn.docId, conn.user.id, conn.id);
     yield updatePresenceCounters(ctx, conn, -1);
   });
 }
@@ -640,17 +643,17 @@ function* updateEditUsers(ctx, licenseInfo, userId, anonym, isLiveViewer) {
     yield editorStat.addPresenceUniqueUsersOfMonth(ctx, userId, period, {anonym, firstOpenDate: now.toISOString()});
   }
 }
-function* getEditorsCount(ctx, docId, opt_hvals) {
+function* getEditorsCount(ctx, docId, opt_presenceEntries) {
   let elem,
     editorsCount = 0;
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    elem = JSON.parse(presenceEntries[i]);
     if (!elem.view && !elem.isCloseCoAuthoring) {
       editorsCount++;
       break;
@@ -658,8 +661,8 @@ function* getEditorsCount(ctx, docId, opt_hvals) {
   }
   return editorsCount;
 }
-function* hasEditors(ctx, docId, opt_hvals) {
-  const editorsCount = yield* getEditorsCount(ctx, docId, opt_hvals);
+function* hasEditors(ctx, docId, opt_presenceEntries) {
+  const editorsCount = yield* getEditorsCount(ctx, docId, opt_presenceEntries);
   return editorsCount > 0;
 }
 function* isUserReconnect(ctx, docId, userId, connectionId) {
@@ -931,6 +934,20 @@ async function getForceSaveUrl(ctx, baseUrl, convertInfo) {
   return null;
 }
 
+// checkAndStartForceSave returns undefined both when there is no winner and
+// when the force-save is already active. Form/Internal callers can report the
+// latter, so reread the authoritative state; backend errors must propagate.
+async function markForceSaveInProgress(ctx, docId, type, res) {
+  if (res.startedForceSave || (commonDefines.c_oAscForceSaveTypes.Form !== type && commonDefines.c_oAscForceSaveTypes.Internal !== type)) {
+    return;
+  }
+  const forceSave = await editorData.getForceSave(ctx, docId);
+  if (forceSave?.started && !forceSave.ended) {
+    res.ok = true;
+    res.inProgress = true;
+  }
+}
+
 async function applyForceSaveCache(
   ctx,
   docId,
@@ -980,6 +997,7 @@ async function applyForceSaveCache(
         await editorData.checkAndSetForceSave(ctx, docId, forceSave.time, forceSave.index, false, false, null);
         res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
         res.ok = !!res.startedForceSave;
+        await markForceSaveInProgress(ctx, docId, type, res);
       }
     } else {
       res.notModified = true;
@@ -1000,6 +1018,7 @@ async function applyForceSaveCache(
     }
     res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
     res.ok = !!res.startedForceSave;
+    await markForceSaveInProgress(ctx, docId, type, res);
     return res;
   } else if (commonDefines.c_oAscForceSaveTypes.Form === type || commonDefines.c_oAscForceSaveTypes.Internal === type) {
     res.ok = true;
@@ -1522,11 +1541,15 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
     }
   }
 });
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_cleanupOptions) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  yield editorData.cleanDocumentOnExit(ctx, docId);
+  const cleanupResult = yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId, {preserveSavedClaim});
+  if (cleanupResult !== true) {
+    return false;
+  }
   if (preStopFlag && editorStatProxy?.deleteKey) {
     yield editorStatProxy.deleteKey(docId);
   }
@@ -1538,6 +1561,17 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
     yield storage.deletePath(ctx, docId, tenForgottenFiles);
   }
   yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  return true;
+}
+/**
+ * Performs terminal cleanup after the final viewer leaves. Active saved-state
+ * claims are preserved so an in-flight callback can acknowledge its claim.
+ */
+function* cleanDocumentAfterFinalViewerExit(ctx, docId) {
+  // A viewer has no saved-state operation to acknowledge. Preserve a claim
+  // that may belong to a callback still completing; its lease will recover it
+  // if that callback is abandoned.
+  yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, {preserveSavedClaim: true});
 }
 function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges) {
   const userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
@@ -1545,7 +1579,7 @@ function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, op
   yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
   //if the user entered the document, the connection was broken, all information was deleted on the server,
   //when the connection is restored, the userIndex will be saved and it will match the userIndex of the next user
-  yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
+  return yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
 }
 
 function createSaveTimer(ctx, docId, opt_userId, opt_userIndex, opt_userLcid, opt_queue, opt_noDelay, opt_initShardKey) {
@@ -1689,16 +1723,16 @@ function getLicenseNowUtc() {
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds()) / 1000;
 }
-const getParticipantMap = co.wrap(function* (ctx, docId, opt_hvals) {
+const getParticipantMap = co.wrap(function* (ctx, docId, opt_presenceEntries) {
   const participantsMap = [];
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    const elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    const elem = JSON.parse(presenceEntries[i]);
     if (!elem.isCloseCoAuthoring) {
       participantsMap.push(elem);
     }
@@ -1815,7 +1849,25 @@ async function encryptPasswordParams(ctx, data) {
 exports.encryptPasswordParams = encryptPasswordParams;
 exports.getOpenFormatByEditor = getOpenFormatByEditor;
 exports.install = function (server, app, callbackFunction) {
-  const io = new Server(server, cfgSocketIoConnection);
+  startupAbortController?.abort();
+  const installAbortController = new AbortController();
+  startupAbortController = installAbortController;
+  let startupCallbackCalled = false;
+  const completeStartup = error => {
+    if (startupCallbackCalled) {
+      return;
+    }
+    startupCallbackCalled = true;
+    callbackFunction(error);
+  };
+  const notifyStartup = error => {
+    try {
+      completeStartup(error);
+    } catch (callbackError) {
+      operationContext.global.logger.error('Redis startup callback error: %s', callbackError.stack || callbackError.message || callbackError);
+    }
+  };
+  io = new Server(server, cfgSocketIoConnection);
 
   io.use((socket, next) => {
     co(function* () {
@@ -2064,7 +2116,8 @@ exports.install = function (server, app, callbackFunction) {
     if (null == docId) {
       return;
     }
-    let hvals;
+    let presenceEntries;
+    let localPresenceEmpty = false;
     let participantsTimestamp;
     const tmpUser = conn.user;
     const isView = tmpUser.view;
@@ -2081,9 +2134,10 @@ exports.install = function (server, app, callbackFunction) {
         ctx.logger.info('reconnected');
       } else {
         yield removePresence(ctx, conn);
-        hvals = yield editorData.getPresence(ctx, docId, connections);
+        presenceEntries = yield editorData.getPresence(ctx, docId, connections);
         participantsTimestamp = Date.now();
-        if (hvals.length <= 0) {
+        localPresenceEmpty = presenceEntries.length <= 0;
+        if (localPresenceEmpty) {
           yield editorData.removePresenceDocument(ctx, docId);
         }
       }
@@ -2106,7 +2160,7 @@ exports.install = function (server, app, callbackFunction) {
       //revert old view to send event
       const tmpView = tmpUser.view;
       tmpUser.view = isView;
-      const participants = yield getParticipantMap(ctx, docId, hvals);
+      const participants = yield getParticipantMap(ctx, docId, presenceEntries);
       if (!participantsTimestamp) {
         participantsTimestamp = Date.now();
       }
@@ -2123,7 +2177,7 @@ exports.install = function (server, app, callbackFunction) {
         // For this user, we remove the lock from saving
         yield editorData.unlockSave(ctx, docId, conn.user.id);
 
-        bHasEditors = yield* hasEditors(ctx, docId, hvals);
+        bHasEditors = yield* hasEditors(ctx, docId, presenceEntries);
         bHasChanges = yield hasChanges(ctx, docId);
 
         let needSendStatus = true;
@@ -2187,8 +2241,8 @@ exports.install = function (server, app, callbackFunction) {
           );
         }
       } else {
-        if (preStopFlag && hvals?.length <= 0 && editorStatProxy?.deleteKey) {
-          yield editorStatProxy.deleteKey(docId);
+        if (localPresenceEmpty) {
+          yield* cleanDocumentAfterFinalViewerExit(ctx, docId);
         }
       }
       const sessionType = isView ? 'view' : 'edit';
@@ -4311,20 +4365,37 @@ exports.install = function (server, app, callbackFunction) {
       Promise.all(requestPromises).then(
         checkResult => {
           if (checkResult.includes(false)) {
+            const error = new Error('Database schema is incompatible');
+            operationContext.global.logger.error('Database schema compatibility check failed');
+            notifyStartup(error);
             return;
           }
-          editorData
-            .connect()
-            .then(() => editorStat.connect())
-            .then(() => callbackFunction())
+          connectRedisForStartup({
+            editorData,
+            editorStat,
+            logger: operationContext.global.logger,
+            signal: installAbortController.signal
+          })
+            .then(() => notifyStartup())
             .catch(err => {
-              operationContext.global.logger.error('editorData error: %s', err.stack);
+              if (!(err instanceof StartupRedisCancelledError)) {
+                operationContext.global.logger.error('Redis startup error: %s', err.stack || err.message || err);
+                notifyStartup(err);
+              }
             });
         },
-        error => operationContext.global.logger.error('getTableColumns error: %s', error.stack)
+        error => {
+          operationContext.global.logger.error('getTableColumns error: %s', error.stack || error.message || error);
+          notifyStartup(error);
+        }
       );
     });
   });
+};
+exports.cancelStartup = function () {
+  const controller = startupAbortController;
+  startupAbortController = undefined;
+  controller?.abort();
 };
 exports.setLicenseInfo = async function (globalCtx, data, original) {
   tenantManager.setDefLicense(data, original);
@@ -4647,6 +4718,10 @@ exports.commandFromServer = function (req, res) {
       ctx.logger.info('commandFromServer end : %s', outputBuffer);
     }
   });
+};
+
+exports.close = function () {
+  return io?.close?.();
 };
 
 exports.shutdown = function (req, res) {
