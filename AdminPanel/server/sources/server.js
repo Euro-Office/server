@@ -181,7 +181,7 @@ app.use((err, req, res, _next) => {
 });
 
 process.on('uncaughtException', err => {
-  operationContext.global.logger.error('uncaughtException:%s', err.stack);
+  operationContext.global.logger.error('uncaughtException:', err);
   logger.shutdown(() => {
     process.exit(1);
   });

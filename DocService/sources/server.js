@@ -481,7 +481,7 @@ server.on('clientError', (err, socket) => {
 });
 
 process.on('uncaughtException', err => {
-  operationContext.global.logger.error('uncaughtException:%s', err.stack);
+  operationContext.global.logger.error('uncaughtException:', err);
   runtimeConfigManager.closeRuntimeConfigWatcher();
   logger.shutdown(() => {
     process.exit(1);
