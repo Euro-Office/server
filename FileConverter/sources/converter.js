@@ -525,7 +525,15 @@ function* downloadFile(ctx, uri, fileFrom, withAuthorization, isInJwtToken, opt_
         res = constants.NO_ERROR;
       } catch (err) {
         res = constants.CONVERT_DOWNLOAD;
-        ctx.logger.error('error downloadFile:url=%s;attempt=%d;code:%s;connect:%s %s', uri, downloadAttemptCount, err.code, err.connect, err.stack);
+        const isLastAttempt = downloadAttemptCount >= tenDownloadAttemptMaxCount || ['ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EMSGSIZE'].includes(err.code);
+        ctx.logger[isLastAttempt ? 'error' : 'warn'](
+          'error downloadFile:url=%s;attempt=%d;code:%s;connect:%s',
+          uri,
+          downloadAttemptCount,
+          err.code,
+          err.connect,
+          err
+        );
         //not continue attempts if timeout
         if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
           break;
@@ -800,7 +808,7 @@ function* streamCreateBin(ctx, changesDir, indexFile, opt_options) {
   const writeStream = yield utils.promiseCreateWriteStream(filePath, opt_options);
   writeStream.on('error', err => {
     //todo integrate error handle in main thread (probable: set flag here and check it in main thread)
-    ctx.logger.error('WriteStreamError %s', err.stack);
+    ctx.logger.error('WriteStreamError', err);
   });
   return {writeStream, filePath, isNoChangesInFile: true};
 }
@@ -932,7 +940,7 @@ function* streamCreate(ctx, changesDir, indexFile, opt_options) {
   const writeStream = yield utils.promiseCreateWriteStream(filePath, opt_options);
   writeStream.on('error', err => {
     //todo integrate error handle in main thread (probable: set flag here and check it in main thread)
-    ctx.logger.error('WriteStreamError %s', err.stack);
+    ctx.logger.error('WriteStreamError', err);
   });
   return {writeStream, filePath, isNoChangesInFile: true};
 }
@@ -1165,9 +1173,9 @@ function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, g
     childRes = yield spawnAsyncPromise;
   } catch (err) {
     if (null === err.status) {
-      ctx.logger.error('error spawnAsync %s', err.stack);
+      ctx.logger.error('error spawnAsync', err);
     } else {
-      ctx.logger.debug('error spawnAsync %s', err.stack);
+      ctx.logger.debug('error spawnAsync', err);
     }
     childRes = err;
   }
@@ -1319,7 +1327,7 @@ function ackTask(ctx, res, task, ack) {
         ctx.logger.info('ackTask addResponse');
       }
     } catch (err) {
-      ctx.logger.error('ackTask %s', err.stack);
+      ctx.logger.error('ackTask', err);
     } finally {
       ack();
       ctx.logger.info('ackTask ack');
@@ -1355,7 +1363,7 @@ function receiveTask(data, ack) {
         res = yield* ExecuteTask(ctx, task);
       }
     } catch (err) {
-      ctx.logger.error('receiveTask %s', err.stack);
+      ctx.logger.error('receiveTask', err);
     } finally {
       clearTimeout(timeoutId);
       if (!outParams.isAck) {
@@ -1390,7 +1398,7 @@ function run() {
   queue.on('task', receiveTask);
   queue.init(true, true, true, false, false, false, err => {
     if (null != err) {
-      operationContext.global.logger.error('createTaskQueue error: %s', err.stack);
+      operationContext.global.logger.error('createTaskQueue error:', err);
     }
   });
 }
