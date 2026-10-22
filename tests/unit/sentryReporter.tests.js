@@ -16,6 +16,8 @@ jest.mock('../../Common/node_modules/@sentry/node', () => ({
 
 const Sentry = require('../../Common/node_modules/@sentry/node');
 const levels = require('../../Common/node_modules/log4js/lib/levels');
+const layouts = require('../../Common/node_modules/log4js/lib/layouts');
+require('../../Common/sources/logger');
 const reporters = require('../../Common/sources/reporters');
 const reporter = require('../../Common/sources/reporters/sentry');
 
@@ -79,6 +81,15 @@ describe('sentry reporter', () => {
       err,
       expect.objectContaining({level: 'fatal', fingerprint: ['convert failed', '{{ default }}']})
     );
+  });
+
+  test('prints Error arguments as their stack, without enumerable properties', () => {
+    const err = Object.assign(new Error('Request failed'), {config: {headers: {Authorization: 'secret'}}});
+    appender(logEvent('ERROR', 'download error:', err));
+    expect(Sentry.captureException.mock.calls[0][1].extra.message).toBe(`download error: ${err.stack}`);
+
+    const layout = layouts.layout('patternWithTokens', {pattern: '%m'});
+    expect(layout({...logEvent('ERROR', 'download error:', err), context: {}})).toBe(`download error: ${err.stack}`);
   });
 
   test('uses default grouping when the first argument is an Error', () => {

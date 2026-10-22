@@ -190,7 +190,7 @@ router.post('/rotate-keys', validateJWT, express.json(), async (req, res) => {
 
     res.status(200).json(newConfig);
   } catch (error) {
-    ctx.logger.error('WOPI key rotation error: %s', error.stack);
+    ctx.logger.error('WOPI key rotation error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to rotate WOPI keys',

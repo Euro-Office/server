@@ -1094,7 +1094,7 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
         yield performCloudSigning(ctx, dataConvert.fileTo, dataConvert._cloudSigningCertPath, signingCfg);
         ctx.logger.debug('Cloud signing complete');
       } catch (cloudErr) {
-        ctx.logger.error('Cloud signing failed: %s', cloudErr.stack);
+        ctx.logger.error('Cloud signing failed:', cloudErr);
       }
     }
     //todo clarify calcChecksum conditions

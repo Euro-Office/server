@@ -60,6 +60,7 @@ log4js.addLayout('json', () => {
 
 /**
  * Custom pattern layout that supports %x{usid} using USERSESSIONID from context.
+ * Error arguments are printed as their stack: util.inspect would also dump enumerable properties such as axios request headers.
  * @param {object} cfg
  * @returns {function}
  */
@@ -72,7 +73,8 @@ log4js.addLayout('patternWithTokens', cfg => {
       return id ? ` [${id}]` : '';
     }
   });
-  return layouts.patternLayout(pattern, tokens);
+  const layout = layouts.patternLayout(pattern, tokens);
+  return ev => layout(Object.create(ev, {data: {value: ev.data.map(arg => (arg instanceof Error ? arg.stack : arg))}}));
 });
 
 const cachedLogConfig = JSON.parse(fs.readFileSync(logConfigPath, 'utf8'));

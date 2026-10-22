@@ -791,7 +791,7 @@ function parseUrl(ctx, callbackUrl) {
       href: parseObject.href
     };
   } catch (e) {
-    ctx.logger.error('error parseUrl %s: %s', callbackUrl, e.stack);
+    ctx.logger.error('error parseUrl %s:', callbackUrl, e);
     result = null;
   }
 
@@ -1328,7 +1328,7 @@ function handleDeadLetter(data, ack) {
       }
       ctx.logger.warn('handleDeadLetter end: requeue = %s', isRequeued);
     } catch (err) {
-      ctx.logger.error('handleDeadLetter error: %s', err.stack);
+      ctx.logger.error('handleDeadLetter error:', err);
     } finally {
       ack();
     }
@@ -1404,7 +1404,7 @@ async function sendStatusDocument(ctx, docId, bChangeBase, opt_userAction, opt_u
     replyData = await sendServerRequest(ctx, uri, sendData);
   } catch (err) {
     replyData = null;
-    ctx.logger.error('postData error: url = %s;data = %j %s', uri, sendData, err.stack);
+    ctx.logger.error('postData error: url = %s;data = %j', uri, sendData, err);
   }
   await onReplySendStatusDocument(ctx, docId, replyData);
   return sendData;
@@ -1415,7 +1415,7 @@ function parseReplyData(ctx, replyData) {
     try {
       res = JSON.parse(replyData);
     } catch (e) {
-      ctx.logger.error('error parseReplyData: data = %s %s', replyData, e.stack);
+      ctx.logger.error('error parseReplyData: data = %s', replyData, e);
       res = null;
     }
   }
@@ -1647,7 +1647,7 @@ function getRequestParams(ctx, req, _opt_isNotInBody) {
       try {
         res.params = JSON.parse(req.body.toString('utf8'));
       } catch (err) {
-        ctx.logger.debug('getRequestParams error parsing json body: %s', err.stack);
+        ctx.logger.debug('getRequestParams error parsing json body:', err);
       }
     }
     if (!res.params) {
@@ -1839,7 +1839,7 @@ exports.install = function (server, app, callbackFunction) {
           }
         }
       } catch (err) {
-        ctx.logger.error('io.use error: %s', err.stack);
+        ctx.logger.error('io.use error:', err);
       } finally {
         ctx.logger.info('io.use end');
         next(res);
@@ -1906,7 +1906,7 @@ exports.install = function (server, app, callbackFunction) {
                 try {
                   yield* auth(ctx, conn, data);
                 } catch (err) {
-                  ctx.logger.error('auth error: %s', err.stack);
+                  ctx.logger.error('auth error:', err);
                   sendDataDisconnectReason(ctx, conn, constants.ACCESS_DENIED_CODE, constants.ACCESS_DENIED_REASON);
                   conn.disconnect(true);
                   return;
@@ -1996,7 +1996,7 @@ exports.install = function (server, app, callbackFunction) {
               }
             }
           } catch (e) {
-            ctx.logger.error('error receiving response: type = %s %s', data && data.type ? data.type : 'null', e.stack);
+            ctx.logger.error('error receiving response: type = %s', data && data.type ? data.type : 'null', e);
           }
         });
       });
@@ -2008,14 +2008,14 @@ exports.install = function (server, app, callbackFunction) {
             yield ctx.initTenantCache();
             yield* closeDocument(ctx, conn, reason);
           } catch (err) {
-            ctx.logger.error('Error conn close: %s', err.stack);
+            ctx.logger.error('Error conn close:', err);
           }
         });
       });
 
       _checkLicense(ctx, conn);
     } catch (err) {
-      ctx.logger.error('connection error: %s', err.stack);
+      ctx.logger.error('connection error:', err);
       sendDataDisconnectReason(ctx, conn, constants.DROP_CODE, constants.DROP_REASON);
       conn.disconnect(true);
     }
@@ -2335,7 +2335,7 @@ exports.install = function (server, app, callbackFunction) {
           yield* checkEndAuthLock(ctx, true, false, docId, userId);
           yield* publishCloseUsersConnection(ctx, docId, [userId], false, constants.DROP_CODE, constants.DROP_REASON);
         } catch (e) {
-          ctx.logger.error('lockDocumentsTimerId error: %s', e.stack);
+          ctx.logger.error('lockDocumentsTimerId error:', e);
         }
       });
     }, 1000 * tenExpLockDoc);
@@ -3146,7 +3146,7 @@ exports.install = function (server, app, callbackFunction) {
               yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'Restore error. Document modified.', constants.RESTORE_CODE, true);
             }
           } catch (err) {
-            ctx.logger.error('DataBase error: %s', err.stack);
+            ctx.logger.error('DataBase error:', err);
             yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'DataBase error', constants.RESTORE_CODE, true);
           }
         } else {
@@ -3206,7 +3206,7 @@ exports.install = function (server, app, callbackFunction) {
       const userAction = new commonDefines.OutputAction(commonDefines.c_oAscUserAction.In, tmpUser.idOriginal);
       //make async request to speed up file opening
       sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, userIndex, documentCallback, conn.baseUrl).catch(err =>
-        ctx.logger.error('endAuth sendStatusDocument error: %s', err.stack)
+        ctx.logger.error('endAuth sendStatusDocument error:', err)
       );
       if (!bIsRestore) {
         //check forgotten file
@@ -3885,7 +3885,7 @@ exports.install = function (server, app, callbackFunction) {
         });
         ctx.logger.info('_checkLicense end');
       } catch (err) {
-        ctx.logger.error('_checkLicense error: %s', err.stack);
+        ctx.logger.error('_checkLicense error:', err);
       }
     });
   }
@@ -4122,7 +4122,7 @@ exports.install = function (server, app, callbackFunction) {
             ctx.logger.debug('pubsub unknown message type:%s', msg);
         }
       } catch (err) {
-        ctx.logger.error('pubsub message error: %s', err.stack);
+        ctx.logger.error('pubsub message error:', err);
       }
     });
   };
@@ -4238,7 +4238,7 @@ exports.install = function (server, app, callbackFunction) {
         }
         ctx.initDefault();
       } catch (err) {
-        ctx.logger.error('expireDoc error: %s', err.stack);
+        ctx.logger.error('expireDoc error:', err);
       } finally {
         setTimeout(expireDoc, expDocumentsStep);
       }
@@ -4277,7 +4277,7 @@ exports.install = function (server, app, callbackFunction) {
         ctx.initDefault();
         ctx.logger.info('refreshWopiLock end');
       } catch (err) {
-        ctx.logger.error('refreshWopiLock error:%s', err.stack);
+        ctx.logger.error('refreshWopiLock error:', err);
       } finally {
         setTimeout(refreshWopiLock, cfgRefreshLockInterval);
       }
@@ -4289,7 +4289,7 @@ exports.install = function (server, app, callbackFunction) {
   pubsub.on('message', pubsubOnMessage);
   pubsub.init(err => {
     if (null != err) {
-      operationContext.global.logger.error('createPubSub error: %s', err.stack);
+      operationContext.global.logger.error('createPubSub error:', err);
     }
 
     queue = new queueService();
@@ -4297,7 +4297,7 @@ exports.install = function (server, app, callbackFunction) {
     queue.on('response', canvasService.receiveTask);
     queue.init(true, true, false, true, true, true, err => {
       if (null != err) {
-        operationContext.global.logger.error('createTaskQueue error: %s', err.stack);
+        operationContext.global.logger.error('createTaskQueue error:', err);
       }
       gc.startGC();
 
@@ -4318,10 +4318,10 @@ exports.install = function (server, app, callbackFunction) {
             .then(() => editorStat.connect())
             .then(() => callbackFunction())
             .catch(err => {
-              operationContext.global.logger.error('editorData error: %s', err.stack);
+              operationContext.global.logger.error('editorData error:', err);
             });
         },
-        error => operationContext.global.logger.error('getTableColumns error: %s', error.stack)
+        error => operationContext.global.logger.error('getTableColumns error:', error)
       );
     });
   });
@@ -4389,7 +4389,7 @@ exports.healthCheck = function (req, res) {
       output = true;
       ctx.logger.info('healthCheck end');
     } catch (err) {
-      ctx.logger.error('healthCheck error %s', err.stack);
+      ctx.logger.error('healthCheck error', err);
     } finally {
       res.setHeader('Content-Type', 'text/plain');
       res.send(output.toString());
@@ -4633,7 +4633,7 @@ exports.commandFromServer = function (req, res) {
       }
     } catch (err) {
       output.error = commonDefines.c_oAscServerCommandErrors.UnknownError;
-      ctx.logger.error('Error commandFromServer: %s', err.stack);
+      ctx.logger.error('Error commandFromServer:', err);
     } finally {
       let outputBuffer;
       if (postRes) {
@@ -4659,7 +4659,7 @@ exports.shutdown = function (req, res) {
       ctx.logger.info('shutdown start');
       output = yield shutdown.shutdown(ctx, editorStat, req.method === 'PUT');
     } catch (err) {
-      ctx.logger.error('shutdown error %s', err.stack);
+      ctx.logger.error('shutdown error', err);
     } finally {
       res.setHeader('Content-Type', 'text/plain');
       res.send(output.toString());
@@ -4680,7 +4680,7 @@ exports.preStop = async function (req, res) {
     }
     output = true;
   } catch (err) {
-    ctx.logger.error('preStop error %s', err.stack);
+    ctx.logger.error('preStop error', err);
   } finally {
     res.setHeader('Content-Type', 'text/plain');
     res.send(output.toString());
@@ -4711,7 +4711,7 @@ exports.getShutdownStatus = function (req, res) {
       shutdown: getIsShutdown()
     });
   } catch (err) {
-    ctx.logger.error('getShutdownStatus error %s', err.stack);
+    ctx.logger.error('getShutdownStatus error', err);
     res.status(500).json({error: 'Internal server error'});
   }
 };
@@ -4728,7 +4728,7 @@ exports.getEditorConnectionsCount = function (req, res) {
     }
     ctx.logger.info('getConnectionsCount count=%d', count);
   } catch (err) {
-    ctx.logger.error('getConnectionsCount error %s', err.stack);
+    ctx.logger.error('getConnectionsCount error', err);
   } finally {
     res.setHeader('Content-Type', 'text/plain');
     res.send(count.toString());
