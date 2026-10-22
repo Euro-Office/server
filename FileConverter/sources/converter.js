@@ -1004,14 +1004,14 @@ function writeProcessOutputToLog(ctx, childRes, isDebug) {
       if (isDebug) {
         ctx.logger.debug('stdout:%s', childRes.stdout);
       } else {
-        ctx.logger.error('stdout:%s', childRes.stdout);
+        ctx.logger.warn('stdout:%s', childRes.stdout);
       }
     }
     if (undefined !== childRes.stderr) {
       if (isDebug) {
         ctx.logger.debug('stderr:%s', childRes.stderr);
       } else {
-        ctx.logger.error('stderr:%s', childRes.stderr);
+        ctx.logger.warn('stderr:%s', childRes.stderr);
       }
     }
   }
@@ -1037,7 +1037,18 @@ function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeou
       ctx.logger.debug('ExitCode (code=%d;signal=%s;error:%d)', exitCode, exitSignal, error);
     } else {
       writeProcessOutputToLog(ctx, childRes, false);
-      ctx.logger.error('ExitCode (code=%d;signal=%s;error:%d)', exitCode, exitSignal, error);
+      ctx.logger.addContext('X2T', {
+        exitCode,
+        signal: exitSignal,
+        error,
+        formatFrom: path.extname(dataConvert.fileFrom || '').substring(1),
+        formatTo: formatChecker.getStringFromFormat(dataConvert.formatTo)
+      });
+      try {
+        ctx.logger.error('ExitCode (code=%d;signal=%s;error:%d)', exitCode, exitSignal, error);
+      } finally {
+        ctx.logger.removeContext('X2T');
+      }
       yield* processUploadToStorageErrorFile(ctx, dataConvert, tempDirs, childRes, exitCode, exitSignal, error);
     }
   } else {
@@ -1165,7 +1176,7 @@ function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, g
     childRes = yield spawnAsyncPromise;
   } catch (err) {
     if (null === err.status) {
-      ctx.logger.error('error spawnAsync %s', err.stack);
+      ctx.logger.warn('error spawnAsync %s', err.stack);
     } else {
       ctx.logger.debug('error spawnAsync %s', err.stack);
     }
