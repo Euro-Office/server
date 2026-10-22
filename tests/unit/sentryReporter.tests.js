@@ -53,6 +53,27 @@ describe('sentry reporter', () => {
     expect(Sentry.captureMessage.mock.calls[1][1].tags).toEqual({logger: 'nodeJS', tenant: 'localhost'});
   });
 
+  test('tags referenceData, and sends user id and file name only with SENTRY_SEND_PII', () => {
+    const context = {DOCID: 'abc123', USERID: 'u1', REFERENCEDATA: {fileKey: '42', instanceId: 'oc1'}, FILENAME: 'report.docx'};
+    appender({...logEvent('ERROR', 'save error'), context});
+    const [, withoutPii] = Sentry.captureMessage.mock.calls[0];
+    expect(withoutPii.tags).toEqual({logger: 'nodeJS', docId: 'abc123', 'referenceData.fileKey': '42', 'referenceData.instanceId': 'oc1'});
+    expect(withoutPii.user).toBeUndefined();
+    expect(withoutPii.extra.fileName).toBeUndefined();
+
+    process.env.SENTRY_SEND_PII = 'true';
+    try {
+      appender({...logEvent('ERROR', 'save error'), context});
+      appender({...logEvent('ERROR', 'save error'), context: {USERID: 'userId'}});
+    } finally {
+      delete process.env.SENTRY_SEND_PII;
+    }
+    const [, withPii] = Sentry.captureMessage.mock.calls[1];
+    expect(withPii.user).toEqual({id: 'u1'});
+    expect(withPii.extra.fileName).toBe('report.docx');
+    expect(Sentry.captureMessage.mock.calls[2][1].user).toBeUndefined();
+  });
+
   test('ignores events below error', () => {
     appender(logEvent('WARN', 'warning %s', 'x'));
     expect(Sentry.captureMessage).not.toHaveBeenCalled();
