@@ -197,7 +197,7 @@ async function processImageOptimal(ctx, buffer) {
       return await pipeline.toBuffer();
     }
   } catch (e) {
-    ctx.logger.debug('processImageOptimal error: %s', e.stack);
+    ctx.logger.debug('processImageOptimal error:', e);
   }
 
   return buffer;

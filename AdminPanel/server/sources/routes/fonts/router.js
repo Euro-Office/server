@@ -241,7 +241,7 @@ router.get('/', requireAuth, (req, res) => {
     }
     res.json({fonts});
   } catch (err) {
-    ctx.logger.error('fonts list error: %s', err.stack);
+    ctx.logger.error('fonts list error:', err);
     res.status(500).json({error: 'Failed to list fonts'});
   }
 });
@@ -389,7 +389,7 @@ router.post('/', requireAuth, requireSameOrigin, express.raw({type: 'application
     ctx.logger.info('fonts upload: saved %s (%d bytes)', safeName, buf.length);
     res.status(201).json({name: safeName, size: buf.length});
   } catch (err) {
-    ctx.logger.error('fonts upload error: %s', err.stack);
+    ctx.logger.error('fonts upload error:', err);
     res.status(500).json({error: 'Failed to save font'});
   }
 });
@@ -426,7 +426,7 @@ router.delete('/:name', requireAuth, requireSameOrigin, (req, res) => {
     ctx.logger.info('fonts delete: removed %s', safeName);
     res.status(200).json({deleted: safeName});
   } catch (err) {
-    ctx.logger.error('fonts delete error: %s', err.stack);
+    ctx.logger.error('fonts delete error:', err);
     res.status(500).json({error: 'Failed to delete font'});
   }
 });
