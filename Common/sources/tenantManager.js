@@ -80,7 +80,7 @@ async function getAllTenants(ctx) {
       dirList = entitiesList.filter(direntObj => direntObj.isDirectory()).map(directory => directory.name);
     }
   } catch (error) {
-    ctx.logger.error('getAllTenants error: ', error);
+    ctx.logger.error('getAllTenants error:', error);
   }
   return dirList;
 }

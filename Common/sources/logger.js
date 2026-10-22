@@ -50,17 +50,13 @@ const dateToJSONWithTZ = function (d) {
 };
 
 log4js.addLayout('json', () => {
-  return function (logEvent) {
-    logEvent['startTime'] = dateToJSONWithTZ(logEvent['startTime']);
-    logEvent['message'] = util.format(...logEvent['data']);
-    delete logEvent['data'];
-    return JSON.stringify(logEvent);
-  };
+  // Copy instead of mutating: the event is shared with the appenders that run after this one
+  return logEvent =>
+    JSON.stringify({...logEvent, startTime: dateToJSONWithTZ(logEvent.startTime), message: util.format(...logEvent.data), data: undefined});
 });
 
 /**
  * Custom pattern layout that supports %x{usid} using USERSESSIONID from context.
- * Error arguments are printed as their stack: util.inspect would also dump enumerable properties such as axios request headers.
  * @param {object} cfg
  * @returns {function}
  */
@@ -73,8 +69,7 @@ log4js.addLayout('patternWithTokens', cfg => {
       return id ? ` [${id}]` : '';
     }
   });
-  const layout = layouts.patternLayout(pattern, tokens);
-  return ev => layout(Object.create(ev, {data: {value: ev.data.map(arg => (arg instanceof Error ? arg.stack : arg))}}));
+  return layouts.patternLayout(pattern, tokens);
 });
 
 const cachedLogConfig = JSON.parse(fs.readFileSync(logConfigPath, 'utf8'));
@@ -100,7 +95,32 @@ function configureLogger(options) {
 }
 configureLogger(logOptions);
 
-const logger = log4js.getLogger('nodeJS');
+/**
+ * Copies an Error argument with only name, message, stack and code. Layouts, cluster IPC and reporters would otherwise
+ * include every enumerable property, such as the request headers of axios errors.
+ */
+function leanError(arg) {
+  if (!(arg instanceof Error)) {
+    return arg;
+  }
+  const lean = new Error(arg.message);
+  Object.defineProperty(lean, 'name', {value: arg.name});
+  lean.stack = arg.stack ?? String(arg);
+  if (arg.code !== undefined) {
+    lean.code = arg.code;
+  }
+  return lean;
+}
+
+function withLeanErrors(instance) {
+  for (const level of ['trace', 'debug', 'info', 'warn', 'error', 'fatal']) {
+    const log = instance[level].bind(instance);
+    instance[level] = (...args) => log(...args.map(leanError));
+  }
+  return instance;
+}
+
+const logger = withLeanErrors(log4js.getLogger('nodeJS'));
 
 if (config.get('log.options.replaceConsole')) {
   console.log = logger.info.bind(logger);
@@ -110,7 +130,7 @@ if (config.get('log.options.replaceConsole')) {
   console.debug = logger.debug.bind(logger);
 }
 exports.getLogger = function () {
-  return log4js.getLogger.apply(log4js, Array.prototype.slice.call(arguments));
+  return withLeanErrors(log4js.getLogger.apply(log4js, Array.prototype.slice.call(arguments)));
 };
 exports.trace = function () {
   return logger.trace.apply(logger, Array.prototype.slice.call(arguments));

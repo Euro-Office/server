@@ -16,8 +16,7 @@ jest.mock('../../Common/node_modules/@sentry/node', () => ({
 
 const Sentry = require('../../Common/node_modules/@sentry/node');
 const levels = require('../../Common/node_modules/log4js/lib/levels');
-const layouts = require('../../Common/node_modules/log4js/lib/layouts');
-require('../../Common/sources/logger');
+const logger = require('../../Common/sources/logger');
 const reporters = require('../../Common/sources/reporters');
 const reporter = require('../../Common/sources/reporters/sentry');
 
@@ -83,13 +82,14 @@ describe('sentry reporter', () => {
     );
   });
 
-  test('prints Error arguments as their stack, without enumerable properties', () => {
-    const err = Object.assign(new Error('Request failed'), {config: {headers: {Authorization: 'secret'}}});
-    appender(logEvent('ERROR', 'download error:', err));
-    expect(Sentry.captureException.mock.calls[0][1].extra.message).toBe(`download error: ${err.stack}`);
-
-    const layout = layouts.layout('patternWithTokens', {pattern: '%m'});
-    expect(layout({...logEvent('ERROR', 'download error:', err), context: {}})).toBe(`download error: ${err.stack}`);
+  test('logger passes Errors on with only name, message, stack and code', () => {
+    logger.configureLogger({});
+    const err = Object.assign(new TypeError('Request failed'), {code: 'ECONNREFUSED', config: {headers: {Authorization: 'secret'}}});
+    logger.getLogger('nodeJS').error('download error:', err);
+    const [captured, {extra}] = Sentry.captureException.mock.calls[0];
+    expect(captured).toMatchObject({name: 'TypeError', message: 'Request failed', stack: err.stack, code: 'ECONNREFUSED'});
+    expect(captured.config).toBeUndefined();
+    expect(extra.message).not.toContain('secret');
   });
 
   test('uses default grouping when the first argument is an Error', () => {

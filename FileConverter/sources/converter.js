@@ -525,7 +525,9 @@ function* downloadFile(ctx, uri, fileFrom, withAuthorization, isInJwtToken, opt_
         res = constants.NO_ERROR;
       } catch (err) {
         res = constants.CONVERT_DOWNLOAD;
-        const isLastAttempt = downloadAttemptCount >= tenDownloadAttemptMaxCount || ['ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EMSGSIZE'].includes(err.code);
+        //not continue attempts if timeout or too large
+        const isRetryable = !['ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EMSGSIZE'].includes(err.code);
+        const isLastAttempt = !isRetryable || downloadAttemptCount >= tenDownloadAttemptMaxCount;
         ctx.logger[isLastAttempt ? 'error' : 'warn'](
           'error downloadFile:url=%s;attempt=%d;code:%s;connect:%s',
           uri,
@@ -534,15 +536,13 @@ function* downloadFile(ctx, uri, fileFrom, withAuthorization, isInJwtToken, opt_
           err.connect,
           err
         );
-        //not continue attempts if timeout
-        if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
-          break;
-        } else if (err.code === 'EMSGSIZE') {
+        if (err.code === 'EMSGSIZE') {
           res = constants.CONVERT_LIMITS;
-          break;
-        } else {
-          yield utils.sleep(tenDownloadAttemptDelay);
         }
+        if (!isRetryable) {
+          break;
+        }
+        yield utils.sleep(tenDownloadAttemptDelay);
       }
     }
     if (constants.NO_ERROR === res) {

@@ -61,7 +61,7 @@ function configure(config, layouts, findAppender, levels) {
     const [template] = logEvent.data;
     const error = logEvent.data.find(arg => arg instanceof Error);
     const stack = logEvent.data.find(arg => typeof arg === 'string' && /\n\s+at /.test(arg));
-    const message = util.format(...logEvent.data.map(arg => (arg instanceof Error ? arg.stack : arg)));
+    const message = util.format(...logEvent.data);
     const {TENANT, DOCID} = logEvent.context || {};
     const context = {
       level: logEvent.level.isGreaterThanOrEqualTo(levels.FATAL) ? 'fatal' : 'error',
