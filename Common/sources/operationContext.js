@@ -38,13 +38,15 @@ function Context() {
   this.logger = logger.getLogger('nodeJS');
   this.initDefault();
 }
-Context.prototype.init = function (tenant, docId, userId, opt_shardKey, opt_WopiSrc, opt_userSessionId) {
+Context.prototype.init = function (tenant, docId, userId, opt_shardKey, opt_WopiSrc, opt_userSessionId, opt_referenceData, opt_fileName) {
   this.setTenant(tenant);
   this.setDocId(docId);
   this.setUserId(userId);
   this.setShardKey(opt_shardKey);
   this.setWopiSrc(opt_WopiSrc);
   this.setUserSessionId(opt_userSessionId);
+  this.setReferenceData(opt_referenceData);
+  this.setFileName(opt_fileName);
 
   this.config = null;
   this.secret = null;
@@ -69,7 +71,7 @@ Context.prototype.initFromConnection = function (conn) {
   const shardKey = utils.getShardKeyByConnection(this, conn);
   const wopiSrc = utils.getWopiSrcByConnection(this, conn);
   const userSessionId = utils.getSessionIdByConnection(this, conn);
-  this.init(tenant, docId || this.docId, userId || this.userId, shardKey, wopiSrc, userSessionId);
+  this.init(tenant, docId || this.docId, userId || this.userId, shardKey, wopiSrc, userSessionId, conn.referenceData, conn.fileName);
 };
 Context.prototype.initFromConnectionRequest = function (req) {
   this.initFromRequest(req);
@@ -83,15 +85,15 @@ Context.prototype.initFromRequest = function (req) {
   const shardKey = utils.getShardKeyByRequest(this, req);
   const wopiSrc = utils.getWopiSrcByRequest(this, req);
   const userSessionId = utils.getSessionIdByRequest(this, req);
-  this.init(tenant, this.docId, this.userId, shardKey, wopiSrc, userSessionId);
+  this.init(tenant, this.docId, this.userId, shardKey, wopiSrc, userSessionId, this.referenceData, this.fileName);
 };
 Context.prototype.initFromTaskQueueData = function (task) {
   const ctx = task.getCtx();
-  this.init(ctx.tenant, ctx.docId, ctx.userId, ctx.shardKey, ctx.wopiSrc, ctx.userSessionId);
+  this.init(ctx.tenant, ctx.docId, ctx.userId, ctx.shardKey, ctx.wopiSrc, ctx.userSessionId, ctx.referenceData, ctx.fileName);
 };
 Context.prototype.initFromPubSub = function (data) {
   const ctx = data.ctx;
-  this.init(ctx.tenant, ctx.docId, ctx.userId, ctx.shardKey, ctx.wopiSrc, ctx.userSessionId);
+  this.init(ctx.tenant, ctx.docId, ctx.userId, ctx.shardKey, ctx.wopiSrc, ctx.userSessionId, ctx.referenceData, ctx.fileName);
 };
 Context.prototype.initTenantCache = async function () {
   if (!configCache) {
@@ -146,6 +148,17 @@ Context.prototype.setUserSessionId = function (userSessionId) {
     this.logger.addContext('USERSESSIONID', userSessionId);
   }
 };
+/**
+ * @param {object} [referenceData] - integrator file reference, e.g. Nextcloud {fileKey, instanceId}
+ */
+Context.prototype.setReferenceData = function (referenceData) {
+  this.referenceData = referenceData;
+  this.logger.addContext('REFERENCEDATA', referenceData);
+};
+Context.prototype.setFileName = function (fileName) {
+  this.fileName = fileName;
+  this.logger.addContext('FILENAME', fileName);
+};
 Context.prototype.toJSON = function () {
   return {
     tenant: this.tenant,
@@ -153,7 +166,9 @@ Context.prototype.toJSON = function () {
     userId: this.userId,
     userSessionId: this.userSessionId,
     shardKey: this.shardKey,
-    wopiSrc: this.wopiSrc
+    wopiSrc: this.wopiSrc,
+    referenceData: this.referenceData,
+    fileName: this.fileName
   };
 };
 Context.prototype.getCfg = function (property, defaultValue) {
