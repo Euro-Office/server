@@ -58,11 +58,11 @@ function createTransporter(ctx, host, port, auth, messageCommonParameters = {}) 
     smtpTransporters.set(`${host}:${auth.user}`, transporter);
   } catch (error) {
     ctx.logger.error(
-      'Mail service smtp transporter creation error: %o\nWith parameters: \n\thost - %s, \n\tport - %d, \n\tauth = %o',
-      error.stack,
+      'Mail service smtp transporter creation error with parameters: \n\thost - %s, \n\tport - %d, \n\tuser - %s\n',
       host,
       port,
-      auth
+      auth?.user,
+      error
     );
   }
 }

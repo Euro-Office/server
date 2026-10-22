@@ -52,7 +52,7 @@ config.util.extendDeep(connectionConfig, pgPoolExtraOptions);
 const pool = new pg.Pool(connectionConfig);
 //listen "error" event otherwise - unhandled exception(https://github.com/brianc/node-postgres/issues/2764#issuecomment-1163475426)
 pool.on('error', (err, _client) => {
-  operationContext.global.logger.error(`postgresql pool error %s`, err.stack);
+  operationContext.global.logger.error(`postgresql pool error`, err);
 });
 //todo datetime timezone
 pg.defaults.parseInputDatesAsUTC = true;
@@ -74,7 +74,7 @@ function sqlQuery(ctx, sqlCommand, callbackFunction, opt_noModifyRes, opt_noLog,
     } catch (err) {
       error = err;
       if (!opt_noLog) {
-        ctx.logger.warn('sqlQuery error sqlCommand: %s: %s', sqlCommand.slice(0, 50), err.stack);
+        ctx.logger.warn('sqlQuery error sqlCommand: %s:', sqlCommand.slice(0, 50), err);
       }
     } finally {
       if (callbackFunction) {

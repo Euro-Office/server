@@ -169,7 +169,7 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
     return output;
   } catch (error) {
     if (!noLog) {
-      ctx.logger.error(`sqlQuery() error while executing query: ${sqlCommand}\n${error.stack}`);
+      ctx.logger.error('sqlQuery() error while executing query: %s', sqlCommand, error);
     }
 
     throw error;
@@ -180,7 +180,7 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
         await connection.close();
       } catch (error) {
         if (!noLog) {
-          ctx.logger.error(`connection.close() error while executing query: ${sqlCommand}\n${error.stack}`);
+          ctx.logger.error('connection.close() error while executing query: %s', sqlCommand, error);
         }
       }
     }
@@ -225,7 +225,7 @@ async function executeBunch(ctx, sqlCommand, values = [], options, noLog = false
     return {affectedRows: result?.rowsAffected ?? 0};
   } catch (error) {
     if (!noLog) {
-      ctx.logger.error(`executeBunch() error while executing query: ${sqlCommand}\n${error.stack}`);
+      ctx.logger.error('executeBunch() error while executing query: %s', sqlCommand, error);
     }
 
     throw error;
@@ -235,7 +235,7 @@ async function executeBunch(ctx, sqlCommand, values = [], options, noLog = false
         await connection.close();
       } catch (error) {
         if (!noLog) {
-          ctx.logger.error(`connection.close() error while executing batched query: ${sqlCommand}\n${error.stack}`);
+          ctx.logger.error('connection.close() error while executing batched query: %s', sqlCommand, error);
         }
       }
     }

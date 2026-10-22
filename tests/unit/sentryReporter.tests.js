@@ -16,6 +16,7 @@ jest.mock('../../Common/node_modules/@sentry/node', () => ({
 
 const Sentry = require('../../Common/node_modules/@sentry/node');
 const levels = require('../../Common/node_modules/log4js/lib/levels');
+const logger = require('../../Common/sources/logger');
 const reporters = require('../../Common/sources/reporters');
 const reporter = require('../../Common/sources/reporters/sentry');
 
@@ -79,6 +80,16 @@ describe('sentry reporter', () => {
       err,
       expect.objectContaining({level: 'fatal', fingerprint: ['convert failed', '{{ default }}']})
     );
+  });
+
+  test('logger passes Errors on with only name, message, stack and code', () => {
+    logger.configureLogger({});
+    const err = Object.assign(new TypeError('Request failed'), {code: 'ECONNREFUSED', config: {headers: {Authorization: 'secret'}}});
+    logger.getLogger('nodeJS').error('download error:', err);
+    const [captured, {extra}] = Sentry.captureException.mock.calls[0];
+    expect(captured).toMatchObject({name: 'TypeError', message: 'Request failed', stack: err.stack, code: 'ECONNREFUSED'});
+    expect(captured.config).toBeUndefined();
+    expect(extra.message).not.toContain('secret');
   });
 
   test('uses default grouping when the first argument is an Error', () => {

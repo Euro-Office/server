@@ -128,7 +128,7 @@ exports.uploadImageFile = function (req, res) {
       }
     } catch (e) {
       httpStatus = 400;
-      ctx.logger.error('Error uploadImageFile:%s', e.stack);
+      ctx.logger.error('Error uploadImageFile:', e);
     } finally {
       try {
         if (200 === httpStatus) {
@@ -139,7 +139,7 @@ exports.uploadImageFile = function (req, res) {
         }
         ctx.logger.debug('End uploadImageFile: httpStatus = %d', httpStatus);
       } catch (e) {
-        ctx.logger.error('Error uploadImageFile:%s', e.stack);
+        ctx.logger.error('Error uploadImageFile:', e);
       }
     }
   });

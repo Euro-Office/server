@@ -268,7 +268,7 @@ async function buildLicenseInfoOutput(ctx, getConnections = null) {
     ctx.logger.debug('licenseInfo end');
   } catch (err) {
     isError = true;
-    ctx.logger.error('licenseInfo error %s', err.stack);
+    ctx.logger.error('licenseInfo error', err);
   }
 
   return {output, isError};

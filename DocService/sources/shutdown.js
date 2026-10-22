@@ -85,7 +85,7 @@ exports.shutdown = function (ctx, editorStat, status) {
       ctx.logger.debug('shutdown end');
     } catch (e) {
       res = false;
-      ctx.logger.error('shutdown error: %s', e.stack);
+      ctx.logger.error('shutdown error:', e);
     }
     return res;
   });
