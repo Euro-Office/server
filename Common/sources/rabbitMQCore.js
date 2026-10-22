@@ -38,11 +38,11 @@ function connetPromise(closeCallback) {
     function startConnect() {
       amqp.connect(cfgRabbitUrl, cfgRabbitSocketOptions, (err, conn) => {
         if (null != err) {
-          operationContext.global.logger.error('[AMQP] %s', err.stack);
+          operationContext.global.logger.error('[AMQP]', err);
           setTimeout(startConnect, RECONNECT_TIMEOUT);
         } else {
           conn.on('error', err => {
-            operationContext.global.logger.error('[AMQP] conn error', err.stack);
+            operationContext.global.logger.error('[AMQP] conn error', err);
           });
           const closeEventCallback = function () {
             //in some case receive multiple close events
