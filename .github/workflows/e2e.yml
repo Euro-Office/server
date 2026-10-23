@@ -56,10 +56,10 @@ jobs:
           path: documentserver
           ref: main
 
-      - name: Use Node.js 20
+      - name: Use Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Pull nightly image
         run: docker pull ${{ env.NIGHTLY_IMAGE }}
@@ -89,15 +89,15 @@ jobs:
           BUILD_ROOT: ${{ github.workspace }}/server/deploy
           PRODUCT_VERSION: ${{ steps.ver.outputs.product_version }}
         run: |
-          npm install -g @yao-pkg/pkg
+          npm install -g @yao-pkg/pkg@6.24.0
           sed -i "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" Common/sources/commondefines.js
           for d in Common DocService FileConverter Metrics; do
             ( cd "$d" && npm install )
           done
           mkdir -p "$BUILD_ROOT"
-          ( cd DocService    && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/docservice" )
-          ( cd FileConverter && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/fileconverter" )
-          ( cd Metrics       && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/metrics" )
+          ( cd DocService    && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/docservice" )
+          ( cd FileConverter && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/fileconverter" )
+          ( cd Metrics       && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/metrics" )
 
       - name: Build overlay image with fresh server binaries
         run: |
