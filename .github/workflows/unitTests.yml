@@ -5,6 +5,9 @@ on:
       - '**'
     paths:
       - '**.js'
+      - '**/package.json'
+      - '**/npm-shrinkwrap.json'
+      - '.github/workflows/unitTests.yml'
       - '!tests/integration/**'
       - '!DocService/sources/databaseConnectors/**'
 jobs:
