@@ -7,6 +7,9 @@ on:
       - 'tests/integration/databaseTests/**'
       - 'DocService/sources/databaseConnectors/baseConnector.js'
       - 'DocService/sources/databaseConnectors/oracleConnector.js'
+      - '**/package.json'
+      - '**/npm-shrinkwrap.json'
+      - '.github/workflows/oracleDatabaseTests.yml'
 jobs:
   oracle-tests:
     name: Oracle
