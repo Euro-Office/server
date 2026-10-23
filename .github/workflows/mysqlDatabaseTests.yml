@@ -8,6 +8,8 @@ on:
       - 'DocService/sources/databaseConnectors/baseConnector.js'
       - 'DocService/sources/databaseConnectors/mysqlConnector.js'
       - '.github/workflows/mysqlDatabaseTests.yml'
+      - '**/package.json'
+      - '**/npm-shrinkwrap.json'
 jobs:
   mysql-tests:
     name: MYSQL
