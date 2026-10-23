@@ -8,9 +8,9 @@
 FROM ubuntu:24.04 AS web-base
     RUN apt-get update && \
         apt-get install -y ca-certificates curl gnupg openjdk-21-jdk wget zip brotli bzip2 && \
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+        curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
         apt-get install -y nodejs && \
-        npm install -g @yao-pkg/pkg grunt-cli && \
+        npm install -g @yao-pkg/pkg@6.24.0 grunt-cli && \
         rm -rf /var/lib/apt/lists/*
 
 #### SERVER ####
@@ -55,13 +55,13 @@ FROM web-base AS server
         cd /server/Common && \
         sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i sources/commondefines.js && \
         cd /server/DocService && \
-        pkg . -t linux-"$TARGETARCH_PKG" --node-options="--max_old_space_size=4096" -o "${BUILD_ROOT}/docservice" && \
+        pkg . -t linux-"$TARGETARCH_PKG" --options max_old_space_size=4096 -o "${BUILD_ROOT}/docservice" && \
         cd /server/FileConverter && \
-        pkg . -t linux-"$TARGETARCH_PKG" --node-options="--max_old_space_size=4096" -o "${BUILD_ROOT}/fileconverter" && \
+        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/fileconverter" && \
         cd /server/Metrics && \
-        pkg . -t linux-"$TARGETARCH_PKG" --node-options="--max_old_space_size=4096" -o "${BUILD_ROOT}/metrics" && \
+        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/metrics" && \
         cd /server/AdminPanel/server && \
-        pkg . -t linux-"$TARGETARCH_PKG" --node-options="--max_old_space_size=4096" -o "${BUILD_ROOT}/adminpanel"
+        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/adminpanel"
 
     ENV APP_NAME=${COMPANY_NAME}
 
