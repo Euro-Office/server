@@ -43,7 +43,7 @@ jobs:
             -p 9001:9001 \
             -e "MINIO_ROOT_USER=minioadmin" \
             -e "MINIO_ROOT_PASSWORD=minioadmin" \
-            -d minio/minio server /data --console-address ":9001"
+            -d pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data --console-address ":9001"
 
           # Set host based on network configuration
           if [ -n "$JOB_NET" ]; then
