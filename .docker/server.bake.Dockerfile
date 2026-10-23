@@ -55,7 +55,7 @@ FROM web-base AS server
         cd /server/Common && \
         sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i sources/commondefines.js && \
         cd /server/DocService && \
-        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/docservice" && \
+        pkg . -t linux-"$TARGETARCH_PKG" --options max_old_space_size=4096 -o "${BUILD_ROOT}/docservice" && \
         cd /server/FileConverter && \
         pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/fileconverter" && \
         cd /server/Metrics && \
