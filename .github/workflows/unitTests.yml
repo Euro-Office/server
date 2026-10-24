@@ -5,6 +5,9 @@ on:
       - '**'
     paths:
       - '**.js'
+      - '**/package.json'
+      - '**/npm-shrinkwrap.json'
+      - '.github/workflows/unitTests.yml'
       - '!tests/integration/**'
       - '!DocService/sources/databaseConnectors/**'
 jobs:
@@ -19,7 +22,7 @@ jobs:
       - name: Caching dependencies
         uses: actions/setup-node@v3
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: |
             ./npm-shrinkwrap.json

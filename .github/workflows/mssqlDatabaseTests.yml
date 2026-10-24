@@ -7,6 +7,9 @@ on:
       - 'tests/integration/databaseTests/**'
       - 'DocService/sources/databaseConnectors/baseConnector.js'
       - 'DocService/sources/databaseConnectors/mssqlConnector.js'
+      - '**/package.json'
+      - '**/npm-shrinkwrap.json'
+      - '.github/workflows/mssqlDatabaseTests.yml'
 jobs:
   mssql-tests:
     name: MSSQL
@@ -22,7 +25,7 @@ jobs:
       - name: Caching dependencies
         uses: actions/setup-node@v3
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: |
             ./npm-shrinkwrap.json
