@@ -711,9 +711,9 @@ function* addResponse(data, opt_queue) {
   const realQueue = opt_queue ? opt_queue : queue;
   yield realQueue.addResponse(data);
 }
-function* addDelayed(data, ttl, opt_queue) {
+function* addDelayed(data, ttl, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addDelayed(data, ttl);
+  yield realQueue.addDelayed(data, ttl, opt_requireConfirm);
 }
 function* removeResponse(data) {
   yield queue.removeResponse(data);
@@ -1522,22 +1522,26 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
     }
   }
 });
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  yield editorData.cleanDocumentOnExit(ctx, docId);
+  const cleanupResult = yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
+  if (cleanupResult !== true) {
+    return false;
+  }
   if (preStopFlag && editorStatProxy?.deleteKey) {
     yield editorStatProxy.deleteKey(docId);
   }
   //remove changes
   if (deleteChanges) {
     yield taskResult.restoreInitialPassword(ctx, docId);
-    sqlBase.deleteChanges(ctx, docId, null);
+    yield sqlBase.deleteChangesPromise(ctx, docId, null);
     //delete forgotten after successful send on callbackUrl
     yield storage.deletePath(ctx, docId, tenForgottenFiles);
   }
   yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  return true;
 }
 function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges) {
   const userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
@@ -1545,7 +1549,7 @@ function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, op
   yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
   //if the user entered the document, the connection was broken, all information was deleted on the server,
   //when the connection is restored, the userIndex will be saved and it will match the userIndex of the next user
-  yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
+  return yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
 }
 
 function createSaveTimer(ctx, docId, opt_userId, opt_userIndex, opt_userLcid, opt_queue, opt_noDelay, opt_initShardKey) {
