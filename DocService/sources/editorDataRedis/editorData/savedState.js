@@ -9,6 +9,7 @@ const {randomUUID} = require('crypto');
 
 const {CLAIM_SAVED_SCRIPT, ACK_SAVED_SCRIPT} = require('../scripts');
 const {cfgExpSaved, cfgExpSavedClaim} = require('../editorDataSettings');
+const {encodePart} = require('../redisKeys');
 const {ttlSeconds, toRedisString} = require('../redisValueCodec');
 
 class SavedStateUnknownError extends Error {
@@ -20,6 +21,10 @@ class SavedStateUnknownError extends Error {
 }
 
 module.exports = function attachSavedState(EditorData) {
+  function callbackAcceptedKey(store, ctx, docId, operationId) {
+    return `${store._docBase(ctx, docId)}saved:callback-accepted:${encodePart(operationId || '__legacy__')}`;
+  }
+
   EditorData.prototype.setSaved = async function (ctx, docId, status) {
     const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.saved', cfgExpSaved);
     await this._command(['SET', this._docKeys(ctx, docId).saved, String(status), 'EX', String(ttl)]);
@@ -67,6 +72,20 @@ module.exports = function attachSavedState(EditorData) {
       throw new SavedStateUnknownError(docId);
     }
     return true;
+  };
+
+  EditorData.prototype.setSavedCallbackAccepted = async function (ctx, docId, operationId, accepted) {
+    const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.savedClaim', cfgExpSavedClaim);
+    await this._command(['SET', callbackAcceptedKey(this, ctx, docId, operationId), JSON.stringify(accepted), 'EX', String(ttl)]);
+  };
+
+  EditorData.prototype.getSavedCallbackAccepted = async function (ctx, docId, operationId) {
+    const value = await this._command(['GET', callbackAcceptedKey(this, ctx, docId, operationId)]);
+    return value === null ? undefined : JSON.parse(toRedisString(value));
+  };
+
+  EditorData.prototype.clearSavedCallbackAccepted = async function (ctx, docId, operationId) {
+    await this._command(['DEL', callbackAcceptedKey(this, ctx, docId, operationId)]);
   };
 };
 

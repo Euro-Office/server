@@ -290,7 +290,7 @@ EditorData.prototype.removeForceSave = async function (ctx, docId) {
   data.forceSave = undefined;
 };
 
-EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, _savedClaimId, _cleanupOptions) {
+EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, _savedClaimId) {
   const tenantData = this.data[ctx.tenant];
   if (tenantData) {
     delete tenantData[docId];

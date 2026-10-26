@@ -20,6 +20,17 @@ describe('editorDataRedis saved-state claims', () => {
     await Promise.all(stores.map(store => store.close()));
   });
 
+  test('shares callback acceptance across Redis-backed instances until it is cleared', async () => {
+    const ctx = context('saved-callback-accepted');
+    const accepted = {url: 'https://callback.example.test/save', openFromForgotten: false};
+
+    await stores[0].setSavedCallbackAccepted(ctx, 'document', 'operation-a', accepted);
+    assert.deepEqual(await stores[1].getSavedCallbackAccepted(ctx, 'document', 'operation-a'), accepted);
+    assert.equal(await stores[1].getSavedCallbackAccepted(ctx, 'document', 'operation-b'), undefined);
+    await stores[1].clearSavedCallbackAccepted(ctx, 'document', 'operation-a');
+    assert.equal(await stores[0].getSavedCallbackAccepted(ctx, 'document', 'operation-a'), undefined);
+  });
+
   test('claims and acknowledges a saved value while preserving normal string results', async () => {
     const ctx = context('saved-claim-normal');
     const docId = 'document';

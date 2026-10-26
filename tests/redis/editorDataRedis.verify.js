@@ -37,6 +37,7 @@ async function verify() {
       'checkAndSetForceSave',
       'checkAndStartForceSave',
       'cleanDocumentOnExit',
+      'clearSavedCallbackAccepted',
       'close',
       'connect',
       'getDocumentPresenceExpired',
@@ -45,6 +46,7 @@ async function verify() {
       'getLocks',
       'getMessages',
       'getPresence',
+      'getSavedCallbackAccepted',
       'ackSaved',
       'getdelSaved',
       'healthCheck',
@@ -60,6 +62,7 @@ async function verify() {
       'removePresenceDocument',
       'setForceSave',
       'setSaved',
+      'setSavedCallbackAccepted',
       'unlockAuth',
       'unlockSave',
       'updatePresence'

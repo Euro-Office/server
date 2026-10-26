@@ -1552,7 +1552,9 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
   const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  const cleanupResult = yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId, {preserveSavedClaim});
+  const cleanupResult = preserveSavedClaim
+    ? yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId, {preserveSavedClaim: true})
+    : yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
   if (cleanupResult !== true) {
     return false;
   }
