@@ -76,12 +76,14 @@ describe('canvasservice saved-state decision', () => {
 const {EditorData} = require('../../DocService/sources/editorDataMemory');
 
 describe('memory saved-state contract', () => {
-  test('normalizes absence and consumes a saved status once', async () => {
+  test('normalizes absence and retains a claimed status until acknowledgement', async () => {
     const store = new EditorData();
     const ctx = {tenant: 'tenant'};
     assert.equal(await store.getdelSaved(ctx, 'document', 'save-key'), null);
     await store.setSaved(ctx, 'document', '0');
     assert.deepEqual(await consumeSavedState(store, ctx, 'document', 'save-key'), {success: false, claimed: true});
+    assert.equal(await store.getdelSaved(ctx, 'document', 'save-key'), '0');
+    assert.equal(await store.ackSaved(ctx, 'document', 'save-key'), true);
     assert.equal(await store.getdelSaved(ctx, 'document', 'save-key'), null);
     await store.setSaved(ctx, 'document', '1');
     assert.deepEqual(await consumeSavedState(store, ctx, 'document', 'next-save'), {success: true, claimed: true});
@@ -97,5 +99,17 @@ describe('memory saved-state contract', () => {
     assert.equal(await store.ackSaved(ctx, 'document', 'save-key'), true);
     assert.equal(Object.hasOwn(store.data[ctx.tenant], 'document'), false);
     assert.deepEqual(await store.getForceSaveTimer(2), []);
+  });
+
+  test('retains callback acceptance until the saved-state claim is acknowledged', async () => {
+    const store = new EditorData();
+    const ctx = {tenant: 'tenant'};
+    await store.setSavedCallbackAccepted(ctx, 'document', 'save-key', {url: 'https://callback.example.test/save'});
+    assert.deepEqual(await store.getSavedCallbackAccepted(ctx, 'document', 'save-key'), {url: 'https://callback.example.test/save'});
+    await store.cleanDocumentOnExit(ctx, 'document', 'save-key');
+    assert.deepEqual(await store.getSavedCallbackAccepted(ctx, 'document', 'save-key'), {url: 'https://callback.example.test/save'});
+    await store.ackSaved(ctx, 'document', 'save-key');
+    await store.clearSavedCallbackAccepted(ctx, 'document', 'save-key');
+    assert.equal(await store.getSavedCallbackAccepted(ctx, 'document', 'save-key'), undefined);
   });
 });

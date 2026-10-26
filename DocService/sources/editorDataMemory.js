@@ -94,6 +94,8 @@ EditorCommon.prototype._checkAndUnlock = function (ctx, name, docId, fencingToke
 function EditorData() {
   EditorCommon.call(this);
   this.forceSaveTimer = {};
+  this.savedClaims = {};
+  this.savedCallbackAccepted = {};
 }
 EditorData.prototype = Object.create(EditorCommon.prototype);
 EditorData.prototype.constructor = EditorData;
@@ -191,14 +193,68 @@ EditorData.prototype.setSaved = async function (ctx, docId, status) {
   const data = this._getDocumentData(ctx, docId);
   data.saved = status;
 };
-EditorData.prototype.getdelSaved = async function (ctx, docId, _operationId) {
+EditorData.prototype.getdelSaved = async function (ctx, docId, operationId) {
+  // Saved results are claimed per operation and acknowledged explicitly.  A
+  // retry therefore sees the same value instead of consuming the result again.
   const data = this._getDocumentData(ctx, docId);
-  const res = data.saved;
+  const operation = operationId || '__legacy__';
+  const tenantClaims = this.savedClaims[ctx.tenant];
+  const documentClaims = tenantClaims && tenantClaims[docId];
+  if (documentClaims && Object.hasOwn(documentClaims, operation)) {
+    return documentClaims[operation];
+  }
+  if (data.saved === null || data.saved === undefined) {
+    return null;
+  }
+  const claims = tenantClaims || (this.savedClaims[ctx.tenant] = {});
+  const documentClaim = documentClaims || (claims[docId] = {});
+  documentClaim[operation] = data.saved;
   data.saved = null;
-  return res ?? null;
+  return documentClaim[operation];
 };
-EditorData.prototype.ackSaved = async function (_ctx, _docId, _operationId) {
+EditorData.prototype.ackSaved = async function (ctx, docId, operationId) {
+  // Release only this operation's claim; another concurrent save may still be
+  // using a different claim for the same document.
+  const tenantClaims = this.savedClaims[ctx.tenant];
+  const documentClaims = tenantClaims && tenantClaims[docId];
+  if (documentClaims) {
+    delete documentClaims[operationId || '__legacy__'];
+    if (Object.keys(documentClaims).length === 0) {
+      delete tenantClaims[docId];
+    }
+  }
   return true;
+};
+EditorData.prototype.setSavedCallbackAccepted = async function (ctx, docId, operationId, accepted) {
+  // This in-memory marker closes the same-worker redelivery gap while the
+  // durable task-row acceptance marker is being written.
+  let tenantAccepted = this.savedCallbackAccepted[ctx.tenant];
+  if (!tenantAccepted) {
+    this.savedCallbackAccepted[ctx.tenant] = tenantAccepted = {};
+  }
+  let documentAccepted = tenantAccepted[docId];
+  if (!documentAccepted) {
+    tenantAccepted[docId] = documentAccepted = {};
+  }
+  documentAccepted[operationId || '__legacy__'] = accepted;
+};
+EditorData.prototype.getSavedCallbackAccepted = async function (ctx, docId, operationId) {
+  const tenantAccepted = this.savedCallbackAccepted[ctx.tenant];
+  const documentAccepted = tenantAccepted && tenantAccepted[docId];
+  return documentAccepted && documentAccepted[operationId || '__legacy__'];
+};
+EditorData.prototype.clearSavedCallbackAccepted = async function (ctx, docId, operationId) {
+  const tenantAccepted = this.savedCallbackAccepted[ctx.tenant];
+  const documentAccepted = tenantAccepted && tenantAccepted[docId];
+  if (documentAccepted) {
+    delete documentAccepted[operationId || '__legacy__'];
+    if (Object.keys(documentAccepted).length === 0) {
+      delete tenantAccepted[docId];
+    }
+    if (Object.keys(tenantAccepted).length === 0) {
+      delete this.savedCallbackAccepted[ctx.tenant];
+    }
+  }
 };
 EditorData.prototype.setForceSave = async function (ctx, docId, time, index, baseUrl, changeInfo, convertInfo) {
   const data = this._getDocumentData(ctx, docId);

@@ -46,29 +46,34 @@ afterEach(async () => {
 });
 
 describe('conditional document cleanup ownership', () => {
-  test.each(['reopened', 'newer save', 'missing row'])(
-    'preserves changes and cache when the original task no longer owns cleanup (%s)',
-    async scenario => {
-      const mask = await fixture();
-      const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
-      if (scenario === 'missing row') {
-        await taskResult.remove(ctx, docId);
-      } else {
-        await taskResult.update(ctx, {
-          tenant: ctx.tenant,
-          key: docId,
-          status: scenario === 'reopened' ? commonDefines.FileStatus.Ok : commonDefines.FileStatus.SaveVersion,
-          statusInfo: scenario === 'reopened' ? 0 : 13
-        });
-      }
+  test.each(['reopened', 'newer save'])('preserves changes and cache when the original task no longer owns cleanup (%s)', async scenario => {
+    const mask = await fixture();
+    const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+    await taskResult.update(ctx, {
+      tenant: ctx.tenant,
+      key: docId,
+      status: scenario === 'reopened' ? commonDefines.FileStatus.Ok : commonDefines.FileStatus.SaveVersion,
+      statusInfo: scenario === 'reopened' ? 0 : 13
+    });
 
-      await expect(canvasservice.cleanupCacheIf(ctx, mask)).resolves.toBe(false);
+    await expect(canvasservice.cleanupCacheIf(ctx, mask)).resolves.toBe(false);
 
-      expect(await sqlBase.getChangesPromise(ctx, docId)).toHaveLength(1);
-      expect(removeFiles).not.toHaveBeenCalled();
-      expect(await taskResult.select(ctx, docId)).toHaveLength(scenario === 'missing row' ? 0 : 1);
-    }
-  );
+    expect(await sqlBase.getChangesPromise(ctx, docId)).toHaveLength(1);
+    expect(removeFiles).not.toHaveBeenCalled();
+    expect(await taskResult.select(ctx, docId)).toHaveLength(1);
+  });
+
+  test('treats a missing task row as completed cleanup', async () => {
+    const mask = await fixture();
+    const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+    await taskResult.remove(ctx, docId);
+
+    await expect(canvasservice.cleanupCacheIf(ctx, mask)).resolves.toBe(true);
+
+    expect(await sqlBase.getChangesPromise(ctx, docId)).toHaveLength(1);
+    expect(removeFiles).not.toHaveBeenCalled();
+    expect(await taskResult.select(ctx, docId)).toHaveLength(0);
+  });
 
   test('rechecks ownership inside SQL deletion when the session changes after cleanup begins', async () => {
     const mask = await fixture();
