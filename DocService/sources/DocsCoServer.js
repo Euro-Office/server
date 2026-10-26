@@ -1516,11 +1516,17 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
   const getRes = yield getCallback(ctx, docId, opt_userIndex);
   if (getRes && getRes.wopiParams && getRes.wopiParams.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
     const unlockRes = yield wopiClient.unlock(ctx, getRes.wopiParams);
+    // unlock() reports request failures as false.  Propagate that result so a
+    // callback save remains retryable instead of being acknowledged early.
+    if (unlockRes !== true) {
+      return false;
+    }
     const unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
-    if (unlockInfo && unlockRes) {
+    if (unlockInfo) {
       yield canvasService.commandOpenStartPromise(ctx, docId, undefined, unlockInfo);
     }
   }
+  return true;
 });
 function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
@@ -1540,7 +1546,10 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
     //delete forgotten after successful send on callbackUrl
     yield storage.deletePath(ctx, docId, tenForgottenFiles);
   }
-  yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  const unlockResult = yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  if (unlockResult !== true) {
+    return false;
+  }
   return true;
 }
 function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges) {
@@ -3053,6 +3062,7 @@ exports.install = function (server, app, callbackFunction) {
           commonDefines.FileStatus.SaveVersion === status ||
           (!bIsRestore &&
             commonDefines.FileStatus.UpdateVersion === status &&
+            result[0]['status_info'] >= 0 &&
             Date.now() - result[0]['status_info'] * 60000 > tenExpUpdateVersionStatus)
         ) {
           let newStatus = commonDefines.FileStatus.Ok;
