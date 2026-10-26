@@ -114,16 +114,19 @@ describe('conditional document cleanup ownership', () => {
   test('preserves a session opened between change deletion and conditional task removal', async () => {
     const mask = await fixture();
     const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
-    const query = sqlBase.sqlQuery;
-    jest.spyOn(sqlBase, 'sqlQuery').mockImplementationOnce(async (...args) => {
-      await taskResult.update(ctx, {tenant: ctx.tenant, key: docId, status: commonDefines.FileStatus.Ok, statusInfo: 0});
-      await sqlBase.insertChangesPromise(ctx, [{change: 'new session edit', time: new Date()}], docId, 0, {
-        id: 'new-user',
-        idOriginal: 'new-user',
-        username: 'New User'
+    const select = taskResult.select;
+    jest
+      .spyOn(taskResult, 'select')
+      .mockImplementationOnce((...args) => select(...args))
+      .mockImplementationOnce(async (...args) => {
+        await taskResult.update(ctx, {tenant: ctx.tenant, key: docId, status: commonDefines.FileStatus.Ok, statusInfo: 0});
+        await sqlBase.insertChangesPromise(ctx, [{change: 'new session edit', time: new Date()}], docId, 0, {
+          id: 'new-user',
+          idOriginal: 'new-user',
+          username: 'New User'
+        });
+        return select(...args);
       });
-      query(...args);
-    });
 
     await expect(canvasservice.cleanupCacheIf(ctx, mask)).resolves.toBe(false);
 
