@@ -1,0 +1,10 @@
+{
+  "name": "negation-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "scripts": [
+      "./sources/existing.js",
+      "!./sources/ignore-me.js"
+    ]
+  }
+}
