@@ -82,8 +82,9 @@ function shutdown() {
   return co(function* () {
     let res = true;
     const ctx = new operationContext.Context();
+    let editorStat;
     try {
-      const editorStat = editorStatStorage.EditorStat ? new editorStatStorage.EditorStat() : new editorStatStorage();
+      editorStat = editorStatStorage.EditorStat ? new editorStatStorage.EditorStat() : new editorStatStorage();
       ctx.logger.debug('shutdown start:' + EXEC_TIMEOUT);
 
       //redisKeyShutdown is not a simple counter, so it doesn't get decremented by a build that started before Shutdown started
@@ -179,6 +180,15 @@ function shutdown() {
     } catch (e) {
       res = false;
       ctx.logger.error('shutdown error:\r\n%s', e.stack);
+    } finally {
+      if (editorStat?.close) {
+        try {
+          yield editorStat.close();
+        } catch (e) {
+          res = false;
+          ctx.logger.error('editorStat close error:\r\n%s', e.stack);
+        }
+      }
     }
     process.exit(0);
     return res;

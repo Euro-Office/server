@@ -109,6 +109,10 @@ function InputCommand(data, copyExplicit) {
       this['builderParams'] = data['builderParams'];
       this['userconnectiondocid'] = data['userconnectiondocid'];
       this['originformat'] = data['originformat'];
+      this['callbackAccepted'] = data['callbackAccepted'];
+      this['callbackUrl'] = data['callbackUrl'];
+      this['savedState'] = data['savedState'];
+      this['openFromForgotten'] = data['openFromForgotten'];
     }
   } else {
     this['c'] = undefined; //string command
@@ -456,6 +460,30 @@ InputCommand.prototype = {
   },
   setAttempt(data) {
     this['attempt'] = data;
+  },
+  getCallbackAccepted() {
+    return this['callbackAccepted'];
+  },
+  setCallbackAccepted(data) {
+    this['callbackAccepted'] = data;
+  },
+  getCallbackUrl() {
+    return this['callbackUrl'];
+  },
+  setCallbackUrl(data) {
+    this['callbackUrl'] = data;
+  },
+  getSavedState() {
+    return this['savedState'];
+  },
+  setSavedState(data) {
+    this['savedState'] = data;
+  },
+  getOpenFromForgotten() {
+    return this['openFromForgotten'];
+  },
+  setOpenFromForgotten(data) {
+    this['openFromForgotten'] = data;
   },
   getWithAuthorization() {
     return this['withAuthorization'];
@@ -1214,6 +1242,11 @@ const FileStatus = {
   UpdateVersion: 8,
   NeedPassword: 9
 };
+// Negative status_info values reserve the task row after the integrator accepts
+// a final-save callback.  They distinguish pending cleanup from normal minute
+// timestamps, so retries and stale broker deliveries can share one guard.
+const CALLBACK_ACCEPTED_STATUS_INFO = -1;
+const CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO = -2;
 
 const buildVersion = '4.1.2';
 const buildNumber = 37;
@@ -1241,5 +1274,7 @@ exports.c_oAscSecretType = c_oAscSecretType;
 exports.c_oAscQueueType = c_oAscQueueType;
 exports.c_oAscUnlockRes = c_oAscUnlockRes;
 exports.FileStatus = FileStatus;
+exports.CALLBACK_ACCEPTED_STATUS_INFO = CALLBACK_ACCEPTED_STATUS_INFO;
+exports.CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO = CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO;
 exports.buildVersion = buildVersion;
 exports.buildNumber = buildNumber;
