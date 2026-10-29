@@ -711,9 +711,9 @@ function* addResponse(data, opt_queue) {
   const realQueue = opt_queue ? opt_queue : queue;
   yield realQueue.addResponse(data);
 }
-function* addDelayed(data, ttl, opt_queue) {
+function* addDelayed(data, ttl, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addDelayed(data, ttl);
+  yield realQueue.addDelayed(data, ttl, opt_requireConfirm);
 }
 function* removeResponse(data) {
   yield queue.removeResponse(data);
@@ -1516,28 +1516,41 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
   const getRes = yield getCallback(ctx, docId, opt_userIndex);
   if (getRes && getRes.wopiParams && getRes.wopiParams.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
     const unlockRes = yield wopiClient.unlock(ctx, getRes.wopiParams);
+    // unlock() reports request failures as false.  Propagate that result so a
+    // callback save remains retryable instead of being acknowledged early.
+    if (unlockRes !== true) {
+      return false;
+    }
     const unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
-    if (unlockInfo && unlockRes) {
+    if (unlockInfo) {
       yield canvasService.commandOpenStartPromise(ctx, docId, undefined, unlockInfo);
     }
   }
+  return true;
 });
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  yield editorData.cleanDocumentOnExit(ctx, docId);
+  const cleanupResult = yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
+  if (cleanupResult !== true) {
+    return false;
+  }
   if (preStopFlag && editorStatProxy?.deleteKey) {
     yield editorStatProxy.deleteKey(docId);
   }
   //remove changes
   if (deleteChanges) {
     yield taskResult.restoreInitialPassword(ctx, docId);
-    sqlBase.deleteChanges(ctx, docId, null);
+    yield sqlBase.deleteChangesPromise(ctx, docId, null);
     //delete forgotten after successful send on callbackUrl
     yield storage.deletePath(ctx, docId, tenForgottenFiles);
   }
-  yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  const unlockResult = yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  if (unlockResult !== true) {
+    return false;
+  }
+  return true;
 }
 function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges) {
   const userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
@@ -1545,7 +1558,7 @@ function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, op
   yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
   //if the user entered the document, the connection was broken, all information was deleted on the server,
   //when the connection is restored, the userIndex will be saved and it will match the userIndex of the next user
-  yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
+  return yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
 }
 
 function createSaveTimer(ctx, docId, opt_userId, opt_userIndex, opt_userLcid, opt_queue, opt_noDelay, opt_initShardKey) {
@@ -3049,6 +3062,7 @@ exports.install = function (server, app, callbackFunction) {
           commonDefines.FileStatus.SaveVersion === status ||
           (!bIsRestore &&
             commonDefines.FileStatus.UpdateVersion === status &&
+            result[0]['status_info'] >= 0 &&
             Date.now() - result[0]['status_info'] * 60000 > tenExpUpdateVersionStatus)
         ) {
           let newStatus = commonDefines.FileStatus.Ok;
