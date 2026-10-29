@@ -53,6 +53,16 @@ describe('sentry reporter', () => {
     expect(Sentry.captureMessage.mock.calls[1][1].tags).toEqual({logger: 'nodeJS', tenant: 'localhost'});
   });
 
+  test('tags x2t failures and groups them by exit code, signal and error', () => {
+    const X2T = {exitCode: 139, signal: null, error: -80, formatFrom: 'docx', formatTo: ''};
+    appender({...logEvent('ERROR', 'ExitCode (code=%d;signal=%s;error:%d)', 139, null, -80), context: {X2T}});
+    const [, context] = Sentry.captureMessage.mock.calls[0];
+    expect(context.tags).toEqual({logger: 'nodeJS', 'x2t.exitCode': '139', 'x2t.error': '-80', 'x2t.formatFrom': 'docx'});
+    expect(context.fingerprint).toEqual(['ExitCode (code=%d;signal=%s;error:%d)', 'exitCode:139', 'signal:null', 'error:-80']);
+    appender({...logEvent('ERROR', new Error('boom')), context: {X2T}});
+    expect(Sentry.captureException.mock.calls[0][1].fingerprint).toBeUndefined();
+  });
+
   test('ignores events below error', () => {
     appender(logEvent('WARN', 'warning %s', 'x'));
     expect(Sentry.captureMessage).not.toHaveBeenCalled();

@@ -62,7 +62,7 @@ function configure(config, layouts, findAppender, levels) {
     const error = logEvent.data.find(arg => arg instanceof Error);
     const stack = logEvent.data.find(arg => typeof arg === 'string' && /\n\s+at /.test(arg));
     const message = util.format(...logEvent.data);
-    const {TENANT, DOCID} = logEvent.context || {};
+    const {TENANT, DOCID, X2T} = logEvent.context || {};
     const context = {
       level: logEvent.level.isGreaterThanOrEqualTo(levels.FATAL) ? 'fatal' : 'error',
       tags: {logger: logEvent.categoryName},
@@ -76,6 +76,16 @@ function configure(config, layouts, findAppender, levels) {
     }
     if (typeof template === 'string') {
       context.fingerprint = error ? [template, '{{ default }}'] : stack ? [template, stack.split('\n')[0]] : [template];
+    }
+    if (X2T) {
+      for (const [key, value] of Object.entries(X2T)) {
+        if (value !== null && value !== undefined && value !== '') {
+          context.tags[`x2t.${key}`] = String(value);
+        }
+      }
+      if (context.fingerprint) {
+        context.fingerprint.push(`exitCode:${X2T.exitCode}`, `signal:${X2T.signal}`, `error:${X2T.error}`);
+      }
     }
     if (error) {
       Sentry.captureException(error, context);
