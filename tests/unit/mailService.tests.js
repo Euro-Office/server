@@ -1,33 +1,59 @@
-const {describe, test, expect, afterAll} = require('@jest/globals');
-const nodemailer = require('../../Common/node_modules/nodemailer');
+const {describe, test, expect, beforeAll, afterAll} = require('@jest/globals');
+const net = require('net');
 
 const operationContext = require('../../Common/sources/operationContext');
 const mailService = require('../../Common/sources/mailService');
 
 const ctx = new operationContext.Context();
-const defaultTestSMTPServer = {
-  host: 'smtp.ethereal.email',
-  port: 587
-};
+const host = '127.0.0.1';
 const testTimeout = 1000 * 10;
+
+// Minimal SMTP server: accepts any AUTH PLAIN credentials and every message.
+const smtpServer = net.createServer(socket => {
+  let buffer = '';
+  let inData = false;
+  socket.write('220 localhost ESMTP\r\n');
+  socket.on('data', chunk => {
+    buffer += chunk;
+    let lineEnd;
+    while ((lineEnd = buffer.indexOf('\r\n')) !== -1) {
+      const line = buffer.slice(0, lineEnd);
+      buffer = buffer.slice(lineEnd + 2);
+      if (inData) {
+        if (line === '.') {
+          inData = false;
+          socket.write('250 OK\r\n');
+        }
+      } else if (/^EHLO/i.test(line)) {
+        socket.write('250-localhost\r\n250 AUTH PLAIN\r\n');
+      } else if (/^AUTH/i.test(line)) {
+        socket.write('235 Authenticated\r\n');
+      } else if (/^DATA/i.test(line)) {
+        inData = true;
+        socket.write('354 End data with <CR><LF>.<CR><LF>\r\n');
+      } else if (/^QUIT/i.test(line)) {
+        socket.end('221 Bye\r\n');
+      } else {
+        socket.write('250 OK\r\n');
+      }
+    }
+  });
+});
+
+beforeAll(() => new Promise(resolve => smtpServer.listen(0, host, resolve)));
 
 afterAll(() => {
   mailService.transportersRelease();
+  smtpServer.close();
 });
 
 describe('Mail service', () => {
   describe('SMTP', () => {
-    const {host, port} = defaultTestSMTPServer;
-
     test(
       'Transporters life cycle',
       async () => {
-        // Accounts created at https://ethereal.email/, all messages in tests goes here: https://ethereal.email/messages
-        // Ethereial is a special SMTP sever for mailing tests in collaboration with Nodemailer.
-        const accounts = await Promise.all([nodemailer.createTestAccount(), nodemailer.createTestAccount(), nodemailer.createTestAccount()]);
-        const auth = accounts.map(account => {
-          return {user: account.user, pass: account.pass};
-        });
+        const {port} = smtpServer.address();
+        const auth = [1, 2, 3].map(i => ({user: `user${i}`, pass: 'pass'}));
         auth.forEach(credential => mailService.createTransporter(ctx, host, port, credential, {from: 'some.mail@ethereal.com'}));
 
         for (let i = 0; i < auth.length; i++) {
