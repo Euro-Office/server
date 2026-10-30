@@ -17,6 +17,9 @@
     "allowedCorsOrigins": ["https://onlyoffice.github.io", "https://onlyoffice-plugins.github.io"],
     "proxy": ""
   },
+  "security": {
+    "allowLocalNetworkAccessIframes": false
+  },
   "log": {
     "filePath": "",
     "options": {
