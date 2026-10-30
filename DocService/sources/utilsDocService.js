@@ -266,7 +266,9 @@ const c_oAscPrintTypeEntireWorkbook = 1;
 
 /**
  * JsonParams of a spreadsheet conversion. `spreadsheetLayout.entireWorkbook: true` asks for every
- * sheet instead of the active one, which the editor reads as `adjustOptions.printType`.
+ * sheet instead of the active one, which the editor reads as `adjustOptions.printType`. Sheets
+ * print at 100% unless the layout sets `fitToWidth`, `fitToHeight` or `scale`; setting one of them
+ * leaves the others to the editor.
  * @param {object} spreadsheetLayout The `spreadsheetLayout` of the conversion request.
  * @returns {object} JsonParams to merge into the command's.
  */
@@ -281,6 +283,10 @@ function getSpreadsheetJsonParams(spreadsheetLayout) {
   const jsonParams = {spreadsheetLayout: layout};
   if (true === entireWorkbook) {
     jsonParams.adjustOptions = {printType: c_oAscPrintTypeEntireWorkbook};
+    //with any layout the editor fits every sheet onto few pages, unless it is told how to scale
+    if (null == layout.fitToWidth && null == layout.fitToHeight && null == layout.scale) {
+      Object.assign(layout, {fitToWidth: 0, fitToHeight: 0, scale: 100});
+    }
   }
   return jsonParams;
 }
