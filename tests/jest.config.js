@@ -30,6 +30,18 @@
 
 const path = require('path');
 
+// The services' sources. Coverage includes the files no test loads (as 0%), so that a PR's changes
+// to them count in the coverage check (.github/workflows/unitTests.yml). AdminPanel's React client is
+// left out: it would need a browser environment.
+const sources = [
+  'Common/sources',
+  'DocService/sources',
+  'FileConverter/sources',
+  'SpellChecker/sources',
+  'Metrics/sources',
+  'AdminPanel/server/sources'
+];
+
 module.exports = {
   // All imported modules in your tests should be mocked automatically
   // automock: false,
@@ -52,9 +64,7 @@ module.exports = {
   // collectCoverage: false,
 
   // An array of glob patterns indicating a set of files for which coverage information should be collected
-  // The services the unit tests cover, also files no test loads (as 0%), so that a PR's changes to
-  // them count in the coverage check (.github/workflows/unitTests.yml)
-  collectCoverageFrom: ['Common/sources/**/*.js', 'DocService/sources/**/*.js', 'FileConverter/sources/**/*.js'],
+  collectCoverageFrom: sources.map(dir => `${dir}/**/*.js`),
 
   // The directory where Jest should output its coverage files
   coverageDirectory: '<rootDir>/coverage',
@@ -158,7 +168,7 @@ module.exports = {
 
   // A list of paths to directories that Jest should use to search for files in
   // The tests, and the sources for collectCoverageFrom, which finds files only within roots
-  roots: ['<rootDir>/tests', '<rootDir>/Common/sources', '<rootDir>/DocService/sources', '<rootDir>/FileConverter/sources'],
+  roots: ['<rootDir>/tests', ...sources.map(dir => `<rootDir>/${dir}`)],
 
   // Allows you to use a custom runner instead of Jest's default test runner
   // runner: "jest-runner",
