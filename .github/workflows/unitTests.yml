@@ -1,7 +1,7 @@
 name: Service unit tests
-# On pull requests also checks how much of the changed lines in Common, DocService and FileConverter
-# the tests cover. The database connectors and storages are left out: the database and storage
-# workflows test them.
+# On pull requests also checks how much of the changed lines in the services' sources the tests
+# cover (see tests/jest.config.js). The database connectors and storages are left out: the database
+# and storage workflows test them.
 on:
   pull_request:
     paths:
@@ -40,6 +40,9 @@ jobs:
             ./Common/npm-shrinkwrap.json
             ./DocService/npm-shrinkwrap.json
             ./FileConverter/npm-shrinkwrap.json
+            ./SpellChecker/npm-shrinkwrap.json
+            ./Metrics/npm-shrinkwrap.json
+            ./AdminPanel/server/package-lock.json
 
       - name: Install modules
         run: |
@@ -47,6 +50,11 @@ jobs:
           npm --prefix Common ci
           npm --prefix DocService ci
           npm --prefix FileConverter ci
+          npm --prefix Metrics ci
+          npm --prefix AdminPanel/server ci
+          # Without nodehun's native build, which fails from its git source:
+          # tests mock it (jest.mock('nodehun', factory, {virtual: true}))
+          npm --prefix SpellChecker ci --ignore-scripts
 
       - name: Run Jest
         run: npm run "unit tests" -- --coverage
