@@ -80,7 +80,7 @@ async function getAllTenants(ctx) {
       dirList = entitiesList.filter(direntObj => direntObj.isDirectory()).map(directory => directory.name);
     }
   } catch (error) {
-    ctx.logger.error('getAllTenants error: ', error.stack);
+    ctx.logger.error('getAllTenants error:', error);
   }
   return dirList;
 }
@@ -107,7 +107,7 @@ async function getTenantConfig(ctx) {
         res = config.util.parseString(cfgString, path.extname(configPath).substring(1));
         ctx.logger.debug('getTenantConfig from %s', configPath);
       } catch (e) {
-        ctx.logger.debug('getTenantConfig error: %s', e.stack);
+        ctx.logger.debug('getTenantConfig error:', e);
       } finally {
         ctx.cleanTenantConfigCache(ctx.tenant);
         nodeCache.set(configPath, res);
@@ -197,7 +197,7 @@ function getTenantSecret(ctx, type) {
           ctx.logger.debug('getTenantSecret from %s', secretPath);
         } catch (e) {
           res = undefined;
-          ctx.logger.warn('getTenantConfig error: %s', e.stack);
+          ctx.logger.warn('getTenantConfig error:', e);
         } finally {
           nodeCache.set(secretPath, res);
         }

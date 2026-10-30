@@ -122,7 +122,7 @@ const updateLicense = async () => {
     await docsCoServer.setLicenseInfo(operationContext.global, licenseInfo, licenseOriginal);
     operationContext.global.logger.info('End updateLicense');
   } catch (err) {
-    operationContext.global.logger.error('updateLicense error: %s', err.stack);
+    operationContext.global.logger.error('updateLicense error:', err);
   }
 };
 
@@ -150,8 +150,8 @@ try {
   fs.watch(pluginsPath, updatePlugins);
 } catch (e) {
   operationContext.global.logger.warn(
-    'Failed to subscribe to plugin folder updates. When changing the list of plugins, you must restart the server. https://nodejs.org/docs/latest/api/fs.html#fs_availability. %s',
-    e.stack
+    'Failed to subscribe to plugin folder updates. When changing the list of plugins, you must restart the server. https://nodejs.org/docs/latest/api/fs.html#fs_availability.',
+    e
   );
 }
 
@@ -196,7 +196,7 @@ docsCoServer.install(server, app, () => {
         output += `. Multitenancy: ${multitenancy}. Alias: ${alias}`;
         res.send(output);
       } catch (err) {
-        ctx.logger.error('index.html error: %s', err.stack);
+        ctx.logger.error('index.html error:', err);
         res.sendStatus(400);
       }
     });
@@ -253,7 +253,7 @@ docsCoServer.install(server, app, () => {
       // yield ctx.initTenantCache();
       res.send(utils.getBaseUrlByRequest(ctx, req));
     } catch (err) {
-      ctx.logger.error('baseurl error: %s', err.stack);
+      ctx.logger.error('baseurl error:', err);
     }
   });
 
@@ -290,7 +290,7 @@ docsCoServer.install(server, app, () => {
         }
       })
       .catch(err => {
-        ctx.logger.error('checkWopiEnable error: %s', err.stack);
+        ctx.logger.error('checkWopiEnable error:', err);
         res.sendStatus(404);
       });
   }
@@ -310,7 +310,7 @@ docsCoServer.install(server, app, () => {
         }
       })
       .catch(err => {
-        ctx.logger.error('checkWopiDummyEnable error: %s', err.stack);
+        ctx.logger.error('checkWopiDummyEnable error:', err);
         res.sendStatus(404);
       });
   }
@@ -429,7 +429,7 @@ docsCoServer.install(server, app, () => {
                   const text = new TextDecoder('utf-8', {ignoreBOM: false}).decode(data);
                   themes.push(JSON.parse(text));
                 } catch (err) {
-                  ctx.logger.error('themes.json file:%s error:%s', themesList[j], err.stack);
+                  ctx.logger.error('themes.json file:%s error:', themesList[j], err);
                 }
               }
             }
@@ -437,7 +437,7 @@ docsCoServer.install(server, app, () => {
           }
         }
       } catch (err) {
-        ctx.logger.error('themes.json error:%s', err.stack);
+        ctx.logger.error('themes.json error:', err);
       } finally {
         if (themes.length > 0) {
           res.setHeader('Content-Type', 'application/json');
@@ -462,7 +462,7 @@ docsCoServer.install(server, app, () => {
   app.use((err, req, res, _next) => {
     const ctx = new operationContext.Context();
     ctx.initFromRequest(req);
-    ctx.logger.error('default error handler:%s', err.stack);
+    ctx.logger.error('default error handler:', err);
     res.sendStatus(500);
   });
 });
@@ -481,7 +481,7 @@ server.on('clientError', (err, socket) => {
 });
 
 process.on('uncaughtException', err => {
-  operationContext.global.logger.error('uncaughtException:%s', err.stack);
+  operationContext.global.logger.error('uncaughtException:', err);
   runtimeConfigManager.closeRuntimeConfigWatcher();
   logger.shutdown(() => {
     process.exit(1);
@@ -490,7 +490,7 @@ process.on('uncaughtException', err => {
 
 //Initialize watch here to avoid circular import with operationContext
 runtimeConfigManager.initRuntimeConfigWatcher(operationContext.global).catch(err => {
-  operationContext.global.logger.warn('initRuntimeConfigWatcher error: %s', err.stack);
+  operationContext.global.logger.warn('initRuntimeConfigWatcher error:', err);
 });
 //after all required modules in all files
 moduleReloader.finalizeConfigWithRuntime();

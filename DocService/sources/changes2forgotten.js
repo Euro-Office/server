@@ -178,7 +178,7 @@ function shutdown() {
       ctx.logger.debug('shutdown end');
     } catch (e) {
       res = false;
-      ctx.logger.error('shutdown error:\r\n%s', e.stack);
+      ctx.logger.error('shutdown error:\r\n', e);
     }
     process.exit(0);
     return res;
