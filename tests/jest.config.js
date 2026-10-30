@@ -28,6 +28,8 @@
  * https://jestjs.io/docs/configuration
  */
 
+const path = require('path');
+
 module.exports = {
   // All imported modules in your tests should be mocked automatically
   // automock: false,
@@ -50,10 +52,12 @@ module.exports = {
   // collectCoverage: false,
 
   // An array of glob patterns indicating a set of files for which coverage information should be collected
-  // collectCoverageFrom: undefined,
+  // The services the unit tests cover, also files no test loads (as 0%), so that a PR's changes to
+  // them count in the coverage check (.github/workflows/unitTests.yml)
+  collectCoverageFrom: ['Common/sources/**/*.js', 'DocService/sources/**/*.js', 'FileConverter/sources/**/*.js'],
 
   // The directory where Jest should output its coverage files
-  // coverageDirectory: undefined,
+  coverageDirectory: '<rootDir>/coverage',
 
   // An array of regexp pattern strings used to skip coverage collection
   // coveragePathIgnorePatterns: [
@@ -64,12 +68,8 @@ module.exports = {
   coverageProvider: 'v8',
 
   // A list of reporter names that Jest uses when writing coverage reports
-  // coverageReporters: [
-  //   "json",
-  //   "text",
-  //   "lcov",
-  //   "clover"
-  // ],
+  // lcov.info for the coverage check, its paths relative to the repository (Jest runs in DocService)
+  coverageReporters: ['text-summary', ['lcov', {projectRoot: path.resolve(__dirname, '..')}]],
 
   // An object that configures minimum threshold enforcement for coverage results
   // coverageThreshold: undefined,
@@ -153,16 +153,18 @@ module.exports = {
   // restoreMocks: false,
 
   // The root directory that Jest should scan for tests and modules within
-  // rootDir: undefined,
+  // The repository, so that coverage covers the services' sources
+  rootDir: '..',
 
   // A list of paths to directories that Jest should use to search for files in
-  // roots: ["<rootDir>"],
+  // The tests, and the sources for collectCoverageFrom, which finds files only within roots
+  roots: ['<rootDir>/tests', '<rootDir>/Common/sources', '<rootDir>/DocService/sources', '<rootDir>/FileConverter/sources'],
 
   // Allows you to use a custom runner instead of Jest's default test runner
   // runner: "jest-runner",
 
   // The paths to modules that run some code to configure or set up the testing environment before each test
-  setupFiles: ['./env-setup.js'],
+  setupFiles: ['<rootDir>/tests/env-setup.js'],
 
   // A list of paths to modules that run some code to configure or set up the testing framework before each test
   // setupFilesAfterEnv: [],
