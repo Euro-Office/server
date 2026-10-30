@@ -298,9 +298,24 @@ describe('utilsDocService image processing', () => {
       expect(utilsDocService.getSpreadsheetJsonParams({entireWorkbook: false})).toEqual({spreadsheetLayout: {}});
     });
 
-    test('entireWorkbook asks the editor to print every sheet and is not passed on as layout', () => {
+    test('entireWorkbook asks the editor to print every sheet at 100% and is not passed on as layout', () => {
       const jsonParams = utilsDocService.getSpreadsheetJsonParams({entireWorkbook: true, orientation: 'landscape'});
-      expect(jsonParams).toEqual({spreadsheetLayout: {orientation: 'landscape'}, adjustOptions: {printType: 1}});
+      expect(jsonParams).toEqual({
+        spreadsheetLayout: {orientation: 'landscape', fitToWidth: 0, fitToHeight: 0, scale: 100},
+        adjustOptions: {printType: 1}
+      });
+    });
+
+    test('entireWorkbook keeps the fit or scale of the request', () => {
+      for (const layout of [{fitToWidth: 1}, {fitToHeight: 2}, {fitToWidth: 0, fitToHeight: 0}, {scale: 50}]) {
+        const jsonParams = utilsDocService.getSpreadsheetJsonParams({entireWorkbook: true, ...layout});
+        expect(jsonParams).toEqual({spreadsheetLayout: layout, adjustOptions: {printType: 1}});
+      }
+    });
+
+    test('entireWorkbook treats null like a missing fit or scale', () => {
+      const jsonParams = utilsDocService.getSpreadsheetJsonParams({entireWorkbook: true, fitToWidth: null, scale: null});
+      expect(jsonParams.spreadsheetLayout).toEqual({fitToWidth: 0, fitToHeight: 0, scale: 100});
     });
 
     test('passes anything but an object on as it is', () => {
