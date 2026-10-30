@@ -330,9 +330,7 @@ function convertRequest(req, res, isJson) {
       if (params.documentLayout) {
         jsonParams['documentLayout'] = params.documentLayout;
       }
-      if (params.spreadsheetLayout) {
-        jsonParams['spreadsheetLayout'] = params.spreadsheetLayout;
-      }
+      Object.assign(jsonParams, utilsDocService.getSpreadsheetJsonParams(params.spreadsheetLayout));
       if (params.pdfLayout) {
         jsonParams['pdfLayout'] = params.pdfLayout;
       }

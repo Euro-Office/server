@@ -286,4 +286,30 @@ describe('utilsDocService image processing', () => {
       expect(result.length).toBeLessThan(100000); // Should be well compressed
     });
   });
+
+  describe('getSpreadsheetJsonParams', () => {
+    test('is empty without a layout', () => {
+      expect(utilsDocService.getSpreadsheetJsonParams(undefined)).toEqual({});
+    });
+
+    test('keeps the active sheet and the layout as they are by default', () => {
+      const layout = {ignorePrintArea: true, fitToWidth: 1};
+      expect(utilsDocService.getSpreadsheetJsonParams(layout)).toEqual({spreadsheetLayout: layout});
+      expect(utilsDocService.getSpreadsheetJsonParams({entireWorkbook: false})).toEqual({spreadsheetLayout: {}});
+    });
+
+    test('entireWorkbook asks the editor to print every sheet and is not passed on as layout', () => {
+      const jsonParams = utilsDocService.getSpreadsheetJsonParams({entireWorkbook: true, orientation: 'landscape'});
+      expect(jsonParams).toEqual({spreadsheetLayout: {orientation: 'landscape'}, adjustOptions: {printType: 1}});
+    });
+
+    test('passes anything but an object on as it is', () => {
+      expect(utilsDocService.getSpreadsheetJsonParams('x')).toEqual({spreadsheetLayout: 'x'});
+      expect(utilsDocService.getSpreadsheetJsonParams([1])).toEqual({spreadsheetLayout: [1]});
+    });
+
+    test('only the boolean true counts', () => {
+      expect(utilsDocService.getSpreadsheetJsonParams({entireWorkbook: 'true'}).adjustOptions).toBeUndefined();
+    });
+  });
 });
