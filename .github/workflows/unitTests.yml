@@ -40,7 +40,6 @@ jobs:
             ./Common/npm-shrinkwrap.json
             ./DocService/npm-shrinkwrap.json
             ./FileConverter/npm-shrinkwrap.json
-            ./SpellChecker/npm-shrinkwrap.json
             ./Metrics/npm-shrinkwrap.json
             ./AdminPanel/server/package-lock.json
 
@@ -52,9 +51,6 @@ jobs:
           npm --prefix FileConverter ci
           npm --prefix Metrics ci
           npm --prefix AdminPanel/server ci
-          # Without nodehun's native build, which fails from its git source:
-          # tests mock it (jest.mock('nodehun', factory, {virtual: true}))
-          npm --prefix SpellChecker ci --ignore-scripts
 
       - name: Run Jest
         run: npm run "unit tests" -- --coverage

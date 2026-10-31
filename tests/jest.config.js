@@ -31,16 +31,10 @@
 const path = require('path');
 
 // The services' sources. Coverage includes the files no test loads (as 0%), so that a PR's changes
-// to them count in the coverage check (.github/workflows/unitTests.yml). AdminPanel's React client is
-// left out: it would need a browser environment.
-const sources = [
-  'Common/sources',
-  'DocService/sources',
-  'FileConverter/sources',
-  'SpellChecker/sources',
-  'Metrics/sources',
-  'AdminPanel/server/sources'
-];
+// to them count in the coverage check (.github/workflows/unitTests.yml). Left out: AdminPanel's React
+// client, which would need a browser environment, and SpellChecker, which nothing builds: its
+// dependencies don't install (nodehun from git, a version 1 lockfile that npm 11 rejects).
+const sources = ['Common/sources', 'DocService/sources', 'FileConverter/sources', 'Metrics/sources', 'AdminPanel/server/sources'];
 
 module.exports = {
   // All imported modules in your tests should be mocked automatically
