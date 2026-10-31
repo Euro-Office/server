@@ -322,7 +322,7 @@ describe('HTTP Request Unit Tests', () => {
       const result = await utils.downloadUrlPromise(
         ctx,
         `${BASE_URL}/api/slow-headers`,
-        {connectionAndInactivity: '300ms'}, // connectionAndInactivity longer than the server delay (200ms)
+        {connectionAndInactivity: '1s'}, // connectionAndInactivity well above the server delay (200ms)
         1024 * 1024,
         null,
         false,
@@ -376,7 +376,7 @@ describe('HTTP Request Unit Tests', () => {
       const result = await utils.downloadUrlPromise(
         ctx,
         `${BASE_URL}/api/slow-body`,
-        {connectionAndInactivity: '250ms'}, // connectionAndInactivity longer than the longest delay (2s)
+        {connectionAndInactivity: '1s'}, // connectionAndInactivity well above the longest delay (200ms)
         1024 * 1024,
         null,
         false,
