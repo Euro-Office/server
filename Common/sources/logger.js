@@ -59,7 +59,7 @@ log4js.addLayout('json', () => {
 });
 
 /**
- * Custom pattern layout that supports %x{usid} using USERSESSIONID from context.
+ * Custom pattern layout that supports %x{usid} using USERSESSIONID and %x{ref} using REFERENCEDATA from context.
  * @param {object} cfg
  * @returns {function}
  */
@@ -70,6 +70,10 @@ log4js.addLayout('patternWithTokens', cfg => {
     usid(ev) {
       const id = ev && ev.context && ev.context.USERSESSIONID;
       return id ? ` [${id}]` : '';
+    },
+    ref(ev) {
+      const referenceData = ev?.context?.REFERENCEDATA;
+      return referenceData ? ` [${Object.values(referenceData).join('/')}]` : '';
     }
   });
   return layouts.patternLayout(pattern, tokens);
