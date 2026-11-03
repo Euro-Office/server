@@ -525,6 +525,8 @@ function fillJwtByConnection(ctx, conn) {
     doc.key = conn.docId;
     doc.permissions = conn.permissions;
     doc.ds_encrypted = conn.encrypted;
+    doc.referenceData = conn.referenceData;
+    doc.title = conn.fileName;
     const edit = payload.editorConfig;
     //todo
     //edit.callbackUrl = callbackUrl;
@@ -2666,6 +2668,16 @@ exports.install = function (server, app, callbackFunction) {
     }
     return res;
   }
+  /**
+   * @param {object} [referenceData] - integrator file reference, its structure differs per integrator
+   * @returns {object|undefined} the primitive fields only
+   */
+  function pickReferenceData(referenceData) {
+    const fields = Object.entries(referenceData instanceof Object ? referenceData : {}).filter(
+      ([, value]) => typeof value === 'string' || typeof value === 'number'
+    );
+    return fields.length > 0 ? Object.fromEntries(fields) : undefined;
+  }
   function fillDataFromJwt(ctx, decoded, data) {
     let res = true;
     const openCmd = data.openCmd;
@@ -2688,6 +2700,8 @@ exports.install = function (server, app, callbackFunction) {
         //not '=' because if it jwt from previous version, we must use values from data
         Object.assign(data.permissions, doc.permissions);
       }
+      data.referenceData = pickReferenceData(doc.referenceData);
+      data.fileName = doc.title;
       if (openCmd) {
         if (null != doc.fileType) {
           openCmd.format = doc.fileType;
@@ -2806,6 +2820,9 @@ exports.install = function (server, app, callbackFunction) {
     //TODO: Do authorization etc. check md5 or query db
     ctx.logger.debug('auth time: %d', data.time);
     if (data.token && data.user) {
+      // only taken from a validated token, never from the client message
+      delete data.referenceData;
+      delete data.fileName;
       ctx.setUserId(data.user.id);
       const [licenseInfo] = yield tenantManager.getTenantLicense(ctx);
       let isDecoded = false;
@@ -2857,6 +2874,8 @@ exports.install = function (server, app, callbackFunction) {
         }
       }
       ctx.setUserId(data.user.id);
+      ctx.setReferenceData(data.referenceData);
+      ctx.setFileName(data.fileName);
 
       const docId = data.docid;
       const user = data.user;
@@ -2960,6 +2979,8 @@ exports.install = function (server, app, callbackFunction) {
       const curUserId = curUserIdOriginal + curIndexUser;
       conn.tenant = tenantManager.getTenantByConnection(ctx, conn);
       conn.docId = data.docid;
+      conn.referenceData = data.referenceData;
+      conn.fileName = data.fileName;
       conn.permissions = data.permissions;
       conn.user = {
         id: curUserId,

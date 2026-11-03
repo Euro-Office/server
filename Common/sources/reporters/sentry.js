@@ -62,7 +62,7 @@ function configure(config, layouts, findAppender, levels) {
     const error = logEvent.data.find(arg => arg instanceof Error);
     const stack = logEvent.data.find(arg => typeof arg === 'string' && /\n\s+at /.test(arg));
     const message = util.format(...logEvent.data);
-    const {TENANT, DOCID} = logEvent.context || {};
+    const {TENANT, DOCID, USERID, REFERENCEDATA, FILENAME} = logEvent.context || {};
     const context = {
       level: logEvent.level.isGreaterThanOrEqualTo(levels.FATAL) ? 'fatal' : 'error',
       tags: {logger: logEvent.categoryName},
@@ -73,6 +73,17 @@ function configure(config, layouts, findAppender, levels) {
     }
     if (DOCID && DOCID !== constants.DEFAULT_DOC_ID) {
       context.tags.docId = DOCID;
+    }
+    for (const [key, value] of Object.entries(REFERENCEDATA || {})) {
+      context.tags[`referenceData.${key}`] = value;
+    }
+    if (process.env.SENTRY_SEND_PII === 'true') {
+      if (USERID && USERID !== constants.DEFAULT_USER_ID) {
+        context.user = {id: USERID};
+      }
+      if (FILENAME) {
+        context.extra.fileName = FILENAME;
+      }
     }
     if (typeof template === 'string') {
       context.fingerprint = error ? [template, '{{ default }}'] : stack ? [template, stack.split('\n')[0]] : [template];
