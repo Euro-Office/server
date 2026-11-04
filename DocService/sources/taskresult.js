@@ -54,6 +54,7 @@ function TaskResultData() {
   this.additional = null;
 
   this.innerPasswordChange = null; //not a DB field
+  this.replaceAdditional = false; //not a DB field: overwrite `additional` instead of appending
 }
 TaskResultData.prototype.completeDefaults = function () {
   if (!this.tenant) {
@@ -153,15 +154,6 @@ function toUpdateArray(task, updateTime, isMask, values, setPassword) {
   if (updateTime) {
     const sqlParam = addSqlParam(new Date(), values);
     res.push(`last_open_date=${sqlParam}`);
-  } else if (isMask) {
-    // Cleanup uses last_open_date as part of its ownership condition.  Include
-    // it in the WHERE clause without refreshing it as a side effect of the
-    // conditional update.
-    const lastOpenDate = task.lastOpenDate !== undefined ? task.lastOpenDate : task.last_open_date;
-    if (lastOpenDate !== undefined && lastOpenDate !== null) {
-      const sqlParam = addSqlParam(lastOpenDate, values);
-      res.push(`last_open_date=${sqlParam}`);
-    }
   }
   if (null != task.indexUser) {
     const sqlParam = addSqlParam(task.indexUser, values);
@@ -197,7 +189,9 @@ function toUpdateArray(task, updateTime, isMask, values, setPassword) {
   }
   if (null != task.additional) {
     const sqlParam = addSqlParam(task.additional, values);
-    res.push(`additional=${concatParams('additional', sqlParam)}`);
+    // replaceAdditional rewrites the column (used to prune old entries);
+    // otherwise the value is appended.
+    res.push(task.replaceAdditional ? `additional=${sqlParam}` : `additional=${concatParams('additional', sqlParam)}`);
   }
   return res;
 }
@@ -227,10 +221,10 @@ function update(ctx, task, setPassword) {
   });
 }
 
-function updateIf(ctx, task, mask, optUpdateTime = true) {
+function updateIf(ctx, task, mask, optUpdateTime = true, optSetPassword = false) {
   return new Promise((resolve, reject) => {
     const values = [];
-    const commandArg = toUpdateArray(task, optUpdateTime, false, values, false);
+    const commandArg = toUpdateArray(task, optUpdateTime, false, values, optSetPassword);
     const commandArgMask = toUpdateArray(mask, false, true, values, false);
     commandArgMask.push('tenant=' + addSqlParam(mask.tenant, values));
     commandArgMask.push('id=' + addSqlParam(mask.key, values));
@@ -254,13 +248,14 @@ function updateIf(ctx, task, mask, optUpdateTime = true) {
   });
 }
 function claimIf(ctx, task, mask) {
-  // Normal updates refresh activity timestamps; a cleanup claim must leave
-  // the timestamp unchanged so later ownership checks remain valid.
-  // Claiming must not refresh last_open_date: the caller uses that value as
-  // part of the cleanup ownership condition.
+  // Normal updates refresh last_open_date.  A cleanup claim is not document
+  // activity, so it leaves the timestamp (and with it GC expiry) unchanged.
   return updateIf(ctx, task, mask, false);
 }
-function restoreInitialPassword(ctx, docId) {
+// opt_mask: restore only while the row still matches it (the caller's status),
+// so that a session that took the row over keeps its password.
+function restoreInitialPassword(ctx, docId, opt_mask) {
+  const write = updateTask => (opt_mask ? updateIf(ctx, updateTask, opt_mask, true, true) : update(ctx, updateTask, true));
   return select(ctx, docId).then(selectRes => {
     if (selectRes.length > 0) {
       const row = selectRes[0];
@@ -272,10 +267,10 @@ function restoreInitialPassword(ctx, docId) {
         const documentPassword = new sqlBase.DocumentPassword();
         documentPassword.fromValues(docPassword.initial);
         updateTask.password = documentPassword.toSQLInsert();
-        return update(ctx, updateTask, true);
+        return write(updateTask);
       } else if (docPassword.current) {
         updateTask.password = null;
-        return update(ctx, updateTask, true);
+        return write(updateTask);
       }
     }
   });
@@ -368,20 +363,26 @@ function remove(ctx, docId) {
     );
   });
 }
-async function removeIf(ctx, mask, opt_deleteChanges, opt_keepTaskResult) {
-  const values = [];
+function getMaskCondition(mask, values) {
   const commandArgMask = toUpdateArray(mask, false, true, values, false);
   commandArgMask.push('tenant=' + addSqlParam(mask.tenant, values));
   commandArgMask.push('id=' + addSqlParam(mask.key, values));
-  const sqlWhere = commandArgMask.join(' AND ');
-  if (opt_deleteChanges) {
-    // Keep the task row on failure so a callback retry retains its metadata.
-    // Check ownership inside DELETE; a stale cleanup must not delete new edits.
-    await sqlBase.deleteChangesPromise(ctx, mask.key, null, {sql: sqlWhere, values});
-  }
-  if (opt_keepTaskResult) {
-    return {affectedRows: 1};
-  }
+  return commandArgMask.join(' AND ');
+}
+/**
+ * Deletes the document's changes only while its task row matches `mask`.  The
+ * ownership check runs inside the DELETE, so a stale cleanup cannot delete a
+ * newer session's edits.  The task row itself is kept.
+ * @returns {Promise<object>} the result of the changes DELETE
+ */
+function deleteChangesIf(ctx, mask) {
+  const values = [];
+  const sqlWhere = getMaskCondition(mask, values);
+  return sqlBase.deleteChangesPromise(ctx, mask.key, null, {sql: sqlWhere, values});
+}
+function removeIf(ctx, mask) {
+  const values = [];
+  const sqlWhere = getMaskCondition(mask, values);
   return new Promise((resolve, reject) => {
     const sqlCommand = `DELETE FROM ${cfgTableResult} WHERE ${sqlWhere};`;
     sqlBase.sqlQuery(
@@ -412,4 +413,5 @@ exports.restoreInitialPassword = restoreInitialPassword;
 exports.addRandomKeyTask = addRandomKeyTask;
 exports.remove = remove;
 exports.removeIf = removeIf;
+exports.deleteChangesIf = deleteChangesIf;
 exports.getExpired = sqlBase.getExpired;

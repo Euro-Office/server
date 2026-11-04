@@ -110,7 +110,11 @@ function InputCommand(data, copyExplicit) {
       this['userconnectiondocid'] = data['userconnectiondocid'];
       this['originformat'] = data['originformat'];
       this['callbackAccepted'] = data['callbackAccepted'];
-      this['callbackUrl'] = data['callbackUrl'];
+      this['callbackDeclined'] = data['callbackDeclined'];
+      this['callbackAttempt'] = data['callbackAttempt'];
+      this['sfcStatusInfo'] = data['sfcStatusInfo'];
+      this['closeStatusSent'] = data['closeStatusSent'];
+      this['updateVersionPending'] = data['updateVersionPending'];
       this['savedState'] = data['savedState'];
       this['openFromForgotten'] = data['openFromForgotten'];
     }
@@ -467,11 +471,41 @@ InputCommand.prototype = {
   setCallbackAccepted(data) {
     this['callbackAccepted'] = data;
   },
-  getCallbackUrl() {
-    return this['callbackUrl'];
+  getCallbackDeclined() {
+    return this['callbackDeclined'];
   },
-  setCallbackUrl(data) {
-    this['callbackUrl'] = data;
+  setCallbackDeclined(data) {
+    this['callbackDeclined'] = data;
+  },
+  // HTTP callback attempts only; `attempt` counts every final-save retry.
+  getCallbackAttempt() {
+    return this['callbackAttempt'];
+  },
+  setCallbackAttempt(data) {
+    this['callbackAttempt'] = data;
+  },
+  // status_info this final save last wrote with UpdateVersion; a retry takes
+  // over only a row that still carries it.
+  getSfcStatusInfo() {
+    return this['sfcStatusInfo'];
+  },
+  setSfcStatusInfo(data) {
+    this['sfcStatusInfo'] = data;
+  },
+  // The "closed without changes" status was sent; retries skip it.
+  getCloseStatusSent() {
+    return this['closeStatusSent'];
+  },
+  setCloseStatusSent(data) {
+    this['closeStatusSent'] = data;
+  },
+  // The save is done except for its updateVersion event (the success value to
+  // publish); a retry only publishes it.
+  getUpdateVersionPending() {
+    return this['updateVersionPending'];
+  },
+  setUpdateVersionPending(data) {
+    this['updateVersionPending'] = data;
   },
   getSavedState() {
     return this['savedState'];
@@ -1242,11 +1276,21 @@ const FileStatus = {
   UpdateVersion: 8,
   NeedPassword: 9
 };
-// Negative status_info values reserve the task row after the integrator accepts
-// a final-save callback.  They distinguish pending cleanup from normal minute
-// timestamps, so retries and stale broker deliveries can share one guard.
-const CALLBACK_ACCEPTED_STATUS_INFO = -1;
-const CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO = -2;
+// A final save that is still pending (its callback accepted, or its
+// forgotten-file cleanup claimed) keeps the task row at UpdateVersion with a
+// status_info of FINAL_SAVE_PENDING_STATUS_INFO or more instead of a minute.
+// Versions that do not know these values read them as a minute far in the
+// future, so during a rolling upgrade they keep such a row view-only instead
+// of taking it over.  All values fit a signed 32-bit status_info column.
+const FINAL_SAVE_PENDING_STATUS_INFO = 2000000000;
+// An open (or a final save giving up) taking over an abandoned save's row
+// holds it with this value while it decides how to continue.
+const FINAL_SAVE_TAKEOVER_STATUS_INFO = FINAL_SAVE_PENDING_STATUS_INFO;
+const CALLBACK_ACCEPTED_STATUS_INFO = FINAL_SAVE_PENDING_STATUS_INFO + 1;
+const CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO = FINAL_SAVE_PENDING_STATUS_INFO + 2;
+function isFinalSavePendingStatusInfo(statusInfo) {
+  return statusInfo >= FINAL_SAVE_PENDING_STATUS_INFO;
+}
 
 const buildVersion = '4.1.2';
 const buildNumber = 37;
@@ -1274,6 +1318,9 @@ exports.c_oAscSecretType = c_oAscSecretType;
 exports.c_oAscQueueType = c_oAscQueueType;
 exports.c_oAscUnlockRes = c_oAscUnlockRes;
 exports.FileStatus = FileStatus;
+exports.FINAL_SAVE_PENDING_STATUS_INFO = FINAL_SAVE_PENDING_STATUS_INFO;
+exports.isFinalSavePendingStatusInfo = isFinalSavePendingStatusInfo;
+exports.FINAL_SAVE_TAKEOVER_STATUS_INFO = FINAL_SAVE_TAKEOVER_STATUS_INFO;
 exports.CALLBACK_ACCEPTED_STATUS_INFO = CALLBACK_ACCEPTED_STATUS_INFO;
 exports.CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO = CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO;
 exports.buildVersion = buildVersion;

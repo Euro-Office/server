@@ -175,7 +175,7 @@ function deleteChangesCallback(ctx, docId, deleteIndex, callback, opt_taskResult
   const values = opt_taskResultCondition ? [...opt_taskResultCondition.values] : [];
   const conditions = [];
   if (opt_taskResultCondition) {
-    conditions.push(`EXISTS (SELECT 1 FROM ${cfgTableResult} WHERE ${opt_taskResultCondition.sql})`);
+    conditions.push(`EXISTS (${getOwnershipCheck(cfgTableResult, opt_taskResultCondition.sql)})`);
   }
   const p1 = addSqlParameter(ctx.tenant, values);
   const p2 = addSqlParameter(docId, values);
@@ -455,6 +455,24 @@ function getNotEmptyConditionFallback(fieldName) {
   // Default implementation for most databases: check both NULL and empty string
   return `${fieldName} IS NOT NULL AND ${fieldName} != ''`;
 }
+
+/**
+ * The ownership check of a conditional change deletion: a subquery that reads
+ * the task row.  It has to lock that row until the deletion commits, so that
+ * an UPDATE of the row (a takeover's hold) waits for a deletion in flight, and
+ * a deletion that starts during such an UPDATE sees its result.  With a
+ * snapshot read both go ahead: the takeover still sees the changes that are
+ * being deleted.  MySQL and MariaDB lock the rows a DML subquery reads, so the
+ * plain subquery is enough there.  Oracle cannot lock in a subquery: there the
+ * gap remains.  Connectors that need a locking clause override this.
+ * @param {string} table - The task table
+ * @param {string} where - The ownership condition
+ * @returns {string} SQL subquery
+ */
+function getOwnershipCheckFallback(table, where) {
+  return `SELECT 1 FROM ${table} WHERE ${where}`;
+}
+const getOwnershipCheck = dbInstance.getOwnershipCheck || getOwnershipCheckFallback;
 
 module.exports = {
   insertChangesPromise,

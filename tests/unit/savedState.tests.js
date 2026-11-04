@@ -57,6 +57,11 @@ describe('canvasservice saved-state decision', () => {
     assert.equal(acknowledged, false);
   });
 
+  test('treats an undefined saved state as absent, like null', async () => {
+    const editorData = {getdelSaved: async () => undefined};
+    assert.deepEqual(await consumeSavedState(editorData, {tenant: 'tenant'}, 'document', 'save-key'), {success: true, claimed: false});
+  });
+
   test('propagates unknown or Redis errors so cleanup cannot proceed', async () => {
     for (const error of [Object.assign(new Error('saved state unknown'), {code: 'EDITOR_DATA_SAVED_UNKNOWN'}), new Error('Redis unavailable')]) {
       const editorData = {
@@ -111,5 +116,28 @@ describe('memory saved-state contract', () => {
     await store.ackSaved(ctx, 'document', 'save-key');
     await store.clearSavedCallbackAccepted(ctx, 'document', 'save-key');
     assert.equal(await store.getSavedCallbackAccepted(ctx, 'document', 'save-key'), undefined);
+  });
+
+  test('claim-less cleanup drops claims and acceptance markers that saves left behind', async () => {
+    const store = new EditorData();
+    const ctx = {tenant: 'tenant'};
+    await store.setSaved(ctx, 'document', '0');
+    await store.getdelSaved(ctx, 'document', 'abandoned-save');
+    await store.setSavedCallbackAccepted(ctx, 'document', 'abandoned-save', {url: 'https://callback.example.test/save'});
+    await store.setSavedCallbackAccepted(ctx, 'other-document', 'save-key', {url: 'https://callback.example.test/save'});
+    assert.equal(await store.cleanDocumentOnExit(ctx, 'document'), true);
+    assert.equal(await store.getdelSaved(ctx, 'document', 'abandoned-save'), null);
+    assert.equal(await store.getSavedCallbackAccepted(ctx, 'document', 'abandoned-save'), undefined);
+    assert.deepEqual(await store.getSavedCallbackAccepted(ctx, 'other-document', 'save-key'), {url: 'https://callback.example.test/save'});
+    assert.deepEqual(store.savedClaims, {});
+  });
+
+  test('acknowledging the last claim of a tenant removes the tenant entry', async () => {
+    const store = new EditorData();
+    const ctx = {tenant: 'tenant'};
+    await store.setSaved(ctx, 'document', '1');
+    await store.getdelSaved(ctx, 'document', 'save-key');
+    await store.ackSaved(ctx, 'document', 'save-key');
+    assert.deepEqual(store.savedClaims, {});
   });
 });
