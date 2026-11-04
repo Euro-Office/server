@@ -95,6 +95,7 @@ jobs:
             ( cd "$d" && npm install )
           done
           mkdir -p "$BUILD_ROOT"
+          cp Common/config/default.json "$BUILD_ROOT/default.json"
           ( cd DocService    && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/docservice" )
           ( cd FileConverter && pkg . -t linux-x64 -o "$BUILD_ROOT/fileconverter" )
           ( cd Metrics       && pkg . -t linux-x64 -o "$BUILD_ROOT/metrics" )
@@ -105,7 +106,7 @@ jobs:
           cat > overlay.Dockerfile <<'EOF'
           ARG NIGHTLY_IMAGE
           FROM ${NIGHTLY_IMAGE}
-          COPY docservice fileconverter metrics /tmp/srv/
+          COPY docservice fileconverter metrics default.json /tmp/srv/
           # The install path is brand-derived (/var/www/<brand>/documentserver);
           # locate it via the sdkjs dir, then replace the service binaries.
           RUN set -eux; \
@@ -114,6 +115,7 @@ jobs:
               install -m0755 /tmp/srv/docservice    "$root/server/DocService/docservice"; \
               install -m0755 /tmp/srv/fileconverter "$root/server/FileConverter/converter"; \
               install -m0755 /tmp/srv/metrics       "$root/server/Metrics/metrics"; \
+              install -m0644 /tmp/srv/default.json  "/etc/${root#/var/www/}/default.json"; \
               rm -rf /tmp/srv
           EOF
           docker build \
