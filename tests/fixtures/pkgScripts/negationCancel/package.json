@@ -1,0 +1,10 @@
+{
+  "name": "negation-cancel-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "scripts": [
+      "./sources/x.js",
+      "!./sources/x.js"
+    ]
+  }
+}

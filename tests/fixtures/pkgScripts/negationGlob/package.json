@@ -1,0 +1,10 @@
+{
+  "name": "negation-glob-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "scripts": [
+      "./sources/keep.js",
+      "!./sources/*.tmp.js"
+    ]
+  }
+}
