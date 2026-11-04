@@ -5,14 +5,23 @@
 
 'use strict';
 
-// getdelSaved returns null for absence, a string status otherwise, and throws
-// when the outcome is unknown. Backends may consume immediately or retain a
-// claim under operationId; callers acknowledge a value after cleanup succeeds.
+// Final-save contract that every editorData backend must implement (memory
+// and Redis both do):
+// - getdelSaved(ctx, docId, operationId) claims the saved status for one
+//   operation.  It returns null (or undefined) when there is none, the status string
+//   otherwise, and throws when the outcome is unknown.  A retry of the same
+//   operation gets the same value until ackSaved(ctx, docId, operationId).
+// - get/set/clearSavedCallbackAccepted(ctx, docId, operationId[, accepted])
+//   keep the accepted-callback marker for the same operation.  canvasservice
+//   calls them on editorData directly.
+// - cleanDocumentOnExit(ctx, docId, savedClaimId) resolves to true only once
+//   the backend cleanup has completed.  Any other value defers the save.
+
 async function consumeSavedState(editorData, ctx, docId, operationId) {
   // Claim once and keep the value until ackSaved.  Post-callback failures can
   // then retry cleanup without losing the result that must be acknowledged.
   const savedValue = await editorData.getdelSaved(ctx, docId, operationId);
-  if (savedValue === null) {
+  if (savedValue === null || savedValue === undefined) {
     return {success: true, claimed: false};
   }
   if (savedValue !== '1') {
@@ -21,25 +30,4 @@ async function consumeSavedState(editorData, ctx, docId, operationId) {
   return {success: true, claimed: true};
 }
 
-async function getSavedCallbackAccepted(editorData, ctx, docId, operationId) {
-  if (typeof editorData.getSavedCallbackAccepted !== 'function') {
-    return null;
-  }
-  return editorData.getSavedCallbackAccepted(ctx, docId, operationId);
-}
-
-async function setSavedCallbackAccepted(editorData, ctx, docId, operationId, accepted) {
-  if (typeof editorData.setSavedCallbackAccepted !== 'function') {
-    return;
-  }
-  await editorData.setSavedCallbackAccepted(ctx, docId, operationId, accepted);
-}
-
-async function clearSavedCallbackAccepted(editorData, ctx, docId, operationId) {
-  if (typeof editorData.clearSavedCallbackAccepted !== 'function') {
-    return;
-  }
-  await editorData.clearSavedCallbackAccepted(ctx, docId, operationId);
-}
-
-module.exports = {clearSavedCallbackAccepted, consumeSavedState, getSavedCallbackAccepted, setSavedCallbackAccepted};
+module.exports = {consumeSavedState};

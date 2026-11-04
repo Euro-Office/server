@@ -335,6 +335,13 @@ async function insertChangesAsync(ctx, tableChanges, startIndex, objChanges, doc
   return result;
 }
 
+// See baseConnector getOwnershipCheckFallback: a READ COMMITTED read releases
+// its lock at once and, with READ_COMMITTED_SNAPSHOT, takes none.
+// REPEATABLEREAD holds it until the deletion commits.
+function getOwnershipCheck(table, where) {
+  return `SELECT 1 FROM ${table} WITH (REPEATABLEREAD) WHERE ${where}`;
+}
+
 module.exports = {
   sqlQuery,
   closePool,
@@ -344,5 +351,6 @@ module.exports = {
   getDocumentsWithChanges,
   getExpired,
   upsert,
-  insertChanges
+  insertChanges,
+  getOwnershipCheck
 };

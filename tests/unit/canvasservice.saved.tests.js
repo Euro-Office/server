@@ -52,7 +52,8 @@ describe('final-save saved-state handling', () => {
       callback: 'https://callback.example.test/save',
       baseurl: 'https://storage.example.test',
       status: commonDefines.FileStatus.SaveVersion,
-      status_info: 12
+      status_info: 12,
+      additional: null
     };
     jest.spyOn(taskResult, 'select').mockResolvedValue([selectedRow]);
     jest.spyOn(taskResult, 'updateIf').mockResolvedValue({affectedRows: 1});
@@ -62,6 +63,7 @@ describe('final-save saved-state handling', () => {
       return {affectedRows: 1};
     });
     jest.spyOn(taskResult, 'removeIf').mockResolvedValue({affectedRows: 1});
+    jest.spyOn(taskResult, 'deleteChangesIf').mockResolvedValue({affectedRows: 1});
     jest.spyOn(sqlBase.UserCallback.prototype, 'getCallbackByUserIndex').mockReturnValue('https://callback.example.test/save');
     jest.spyOn(storage, 'listObjects').mockResolvedValue([]);
     jest.spyOn(storage, 'getObject').mockResolvedValue(Buffer.from('{}'));
@@ -77,13 +79,52 @@ describe('final-save saved-state handling', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  // Conditional updates, claims and removals applied to selectedRow, as the SQL does.
+  function useRowModel() {
+    let removed = false;
+    const matches = mask =>
+      !removed &&
+      (mask.status === undefined || mask.status === null || selectedRow.status === mask.status) &&
+      (mask.statusInfo === undefined || mask.statusInfo === null || selectedRow.status_info === mask.statusInfo);
+    const update = async (_ctx, task, mask) => {
+      if (!matches(mask)) {
+        return {affectedRows: 0};
+      }
+      if (task.status !== undefined && task.status !== null) {
+        selectedRow.status = task.status;
+      }
+      if (task.statusInfo !== undefined && task.statusInfo !== null) {
+        selectedRow.status_info = task.statusInfo;
+      }
+      return {affectedRows: 1};
+    };
+    taskResult.select.mockImplementation(async () => (removed ? [] : [{...selectedRow}]));
+    taskResult.updateIf.mockImplementation(update);
+    taskResult.claimIf.mockImplementation(update);
+    taskResult.removeIf.mockImplementation(async (_ctx, mask) => {
+      if (!matches(mask)) {
+        return {affectedRows: 0};
+      }
+      removed = true;
+      return {affectedRows: 1};
+    });
+    jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+  }
+
   test('a normal save succeeds with the real memory backend and no saved status', async () => {
     const previous = docsCoServer.editorData;
     docsCoServer.editorData = new EditorData();
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
     try {
       await expect(canvasservice.commandSfcCallback(ctx, command(), false, false)).resolves.toBe('{"error":0}');
-      expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, 'document', true, 1, undefined);
+      expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(
+        ctx,
+        'document',
+        true,
+        1,
+        undefined,
+        expect.objectContaining({status: commonDefines.FileStatus.UpdateVersion, statusInfo: commonDefines.CALLBACK_ACCEPTED_STATUS_INFO})
+      );
       expect(docsCoServer.publish).toHaveBeenCalledWith(ctx, expect.objectContaining({success: true}));
       expect(storage.copyObject).not.toHaveBeenCalled();
       expect(ack).not.toHaveBeenCalled();
@@ -93,42 +134,36 @@ describe('final-save saved-state handling', () => {
   });
 
   test.each(['1', '0'])('acknowledges status %s only after its successful or forgotten-file cleanup', async status => {
-    if (status === '0') {
-      jest.spyOn(sqlBase, 'deleteChangesPromise').mockResolvedValue({affectedRows: 1});
-      taskResult.select.mockReset();
-      taskResult.select
-        .mockResolvedValueOnce([
-          {
-            callback: 'https://callback.example.test/save',
-            baseurl: 'https://storage.example.test',
-            status: commonDefines.FileStatus.SaveVersion,
-            status_info: 12
-          }
-        ])
-        .mockResolvedValue([
-          {
-            callback: 'https://callback.example.test/save',
-            baseurl: 'https://storage.example.test',
-            status: commonDefines.FileStatus.UpdateVersion,
-            status_info: commonDefines.CALLBACK_ACCEPTED_STATUS_INFO
-          }
-        ]);
-    }
+    useRowModel();
     await docsCoServer.editorData.setSaved(ctx, 'document', status);
     const read = jest.spyOn(docsCoServer.editorData, 'getdelSaved');
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
     await canvasservice.commandSfcCallback(ctx, command(), false, false);
     expect(read).toHaveBeenCalledWith(ctx, 'document', 'save-key');
-    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, 'document', status === '1', 1, 'save-key');
+    if (status === '1') {
+      expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, 'document', true, 1, 'save-key', expect.anything());
+    } else {
+      // Reported unsaved: the save continues as a declined one and keeps its claim.
+      expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(
+        ctx,
+        'document',
+        false,
+        1,
+        'save-key',
+        expect.objectContaining({status: commonDefines.FileStatus.SaveVersion, statusInfo: 12})
+      );
+    }
     expect(ack).toHaveBeenCalledWith(ctx, 'document', 'save-key');
     expect(docsCoServer.cleanDocumentOnExitPromise.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
     expect(ack.mock.invocationCallOrder[0]).toBeLessThan(docsCoServer.publish.mock.invocationCallOrder[0]);
     expect(docsCoServer.publish).toHaveBeenCalledWith(ctx, expect.objectContaining({success: status === '1'}));
     expect(storage.copyObject).toHaveBeenCalledTimes(status === '1' ? 0 : 1);
+    expect(taskResult.deleteChangesIf).toHaveBeenCalledTimes(status === '1' ? 0 : 1);
+    // A declined save's row is removed, as main does.
     expect(taskResult.removeIf).toHaveBeenCalledTimes(status === '1' ? 0 : 1);
     if (status === '0') {
       expect(storage.copyObject.mock.invocationCallOrder[0]).toBeLessThan(docsCoServer.cleanDocumentOnExitPromise.mock.invocationCallOrder[0]);
-      expect(taskResult.removeIf.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+      expect(taskResult.deleteChangesIf.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
     }
   });
 
@@ -144,7 +179,9 @@ describe('final-save saved-state handling', () => {
   });
 
   test.each([null, new Error('SQL deletion failed')])('waits for SQL deletion before acknowledging a claim: %s', async error => {
+    useRowModel();
     docsCoServer.cleanDocumentOnExitPromise.mockRestore();
+    taskResult.deleteChangesIf.mockRestore();
     jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1');
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
     jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockResolvedValue(true);
@@ -179,6 +216,7 @@ describe('final-save saved-state handling', () => {
 
   test('keeps the task row until SQL deletion succeeds so cleanup can be retried', async () => {
     taskResult.removeIf.mockRestore();
+    taskResult.deleteChangesIf.mockRestore();
     const error = new Error('SQL deletion failed');
     const removeChanges = jest.spyOn(sqlBase, 'deleteChangesPromise').mockRejectedValueOnce(error).mockResolvedValueOnce({affectedRows: 1});
     const removeRow = jest.spyOn(sqlBase, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => callback(null, {affectedRows: 1}));
@@ -220,20 +258,20 @@ describe('final-save saved-state handling', () => {
       );
       return {affectedRows: 1};
     });
-    const removeRow = jest.spyOn(taskResult, 'removeIf').mockImplementation(async (_ctx, _mask, _deleteChanges, keepTaskResult) => {
-      if (!keepTaskResult) {
-        rowPresent = false;
-      }
+    const removeRow = jest.spyOn(taskResult, 'removeIf').mockImplementation(async () => {
+      rowPresent = false;
       return {affectedRows: 1};
     });
     const removeFiles = jest.spyOn(storage, 'deletePath').mockRejectedValueOnce(error).mockResolvedValueOnce(undefined);
 
     await expect(canvasservice.cleanupCacheIf(ctx, mask)).rejects.toBe(error);
-    expect(removeRow).toHaveBeenCalledTimes(1);
+    expect(taskResult.deleteChangesIf).toHaveBeenCalledTimes(1);
+    expect(removeRow).not.toHaveBeenCalled();
 
     await expect(canvasservice.cleanupCacheIf(ctx, mask)).resolves.toBe(true);
     expect(removeFiles).toHaveBeenCalledTimes(2);
-    expect(removeRow).toHaveBeenCalledTimes(3);
+    expect(taskResult.deleteChangesIf).toHaveBeenCalledTimes(2);
+    expect(removeRow).toHaveBeenCalledTimes(1);
   });
 
   test('does not delete cache when ownership changes before conditional removal', async () => {
@@ -289,14 +327,15 @@ describe('final-save saved-state handling', () => {
 
     expect(claimIf).toHaveBeenCalledTimes(1);
     expect(saveAttempt).toHaveBeenCalledTimes(1);
-    expect(removeIf).toHaveBeenCalledWith(ctx, expect.objectContaining({status: commonDefines.FileStatus.UpdateVersion}), true, true);
+    expect(taskResult.deleteChangesIf).toHaveBeenCalledWith(ctx, expect.objectContaining({status: commonDefines.FileStatus.UpdateVersion}));
+    expect(removeIf).toHaveBeenCalledWith(ctx, expect.objectContaining({status: commonDefines.FileStatus.UpdateVersion}));
     expect(storage.deletePath).toHaveBeenCalledTimes(1);
   });
 
   test('reports incomplete cache cleanup when the final conditional removal loses ownership', async () => {
     const mask = {tenant: ctx.tenant, key: 'document', status: commonDefines.FileStatus.UpdateVersion, statusInfo: 12};
     taskResult.select.mockResolvedValue([{status: commonDefines.FileStatus.UpdateVersion, status_info: 12, last_open_date: null}]);
-    const removeIf = jest.spyOn(taskResult, 'removeIf').mockResolvedValueOnce({affectedRows: 1}).mockResolvedValueOnce({affectedRows: 0});
+    const removeIf = jest.spyOn(taskResult, 'removeIf').mockResolvedValueOnce({affectedRows: 0});
     taskResult.claimIf.mockImplementation(async (_ctx, update) => {
       taskResult.select.mockResolvedValue([{status: update.status, status_info: update.statusInfo, last_open_date: null}]);
       return {affectedRows: 1};
@@ -305,8 +344,9 @@ describe('final-save saved-state handling', () => {
 
     await expect(canvasservice.cleanupCacheIf(ctx, mask)).resolves.toBe(false);
 
-    expect(removeIf).toHaveBeenNthCalledWith(1, ctx, expect.objectContaining({status: commonDefines.FileStatus.UpdateVersion}), true, true);
-    expect(removeIf).toHaveBeenNthCalledWith(2, ctx, expect.objectContaining({status: commonDefines.FileStatus.UpdateVersion}));
+    expect(taskResult.deleteChangesIf).toHaveBeenCalledWith(ctx, expect.objectContaining({status: commonDefines.FileStatus.UpdateVersion}));
+    expect(removeIf).toHaveBeenCalledTimes(1);
+    expect(removeIf).toHaveBeenCalledWith(ctx, expect.objectContaining({status: commonDefines.FileStatus.UpdateVersion}));
     expect(removeFiles).toHaveBeenCalledTimes(1);
   });
 
@@ -314,7 +354,9 @@ describe('final-save saved-state handling', () => {
     taskResult.select.mockResolvedValue([]);
     const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
 
-    await expect(canvasservice.cleanupCache(ctx, 'document')).resolves.toBe(true);
+    // GC's cleanupCache (as on main) reports that it removed nothing.
+    jest.spyOn(taskResult, 'remove').mockResolvedValue({affectedRows: 0});
+    await expect(canvasservice.cleanupCache(ctx, 'document')).resolves.toBe(false);
     await expect(
       canvasservice.cleanupCacheIf(ctx, {
         tenant: ctx.tenant,
@@ -382,27 +424,10 @@ describe('final-save saved-state handling', () => {
 
   test('does not acknowledge before forgotten-file cache cleanup completes', async () => {
     const error = new Error('cache cleanup failed');
+    useRowModel();
     jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
-    taskResult.removeIf.mockRejectedValue(error);
-    taskResult.select.mockReset();
-    taskResult.select
-      .mockResolvedValueOnce([
-        {
-          callback: 'https://callback.example.test/save',
-          baseurl: 'https://storage.example.test',
-          status: commonDefines.FileStatus.SaveVersion,
-          status_info: 12
-        }
-      ])
-      .mockResolvedValue([
-        {
-          callback: 'https://callback.example.test/save',
-          baseurl: 'https://storage.example.test',
-          status: commonDefines.FileStatus.UpdateVersion,
-          status_info: commonDefines.CALLBACK_ACCEPTED_STATUS_INFO
-        }
-      ]);
+    taskResult.deleteChangesIf.mockRejectedValue(error);
 
     await expect(canvasservice.commandSfcCallback(ctx, command(), false, false)).rejects.toBe(error);
 
@@ -413,23 +438,24 @@ describe('final-save saved-state handling', () => {
   });
 
   test.each([false, undefined, true])('reopened forgotten-document cache deletion requires completed cleanup (%s)', async cleanupResult => {
+    useRowModel();
     storage.listObjects.mockResolvedValueOnce(['document/forgotten.docx']).mockResolvedValueOnce(['document/forgotten.txt']);
     jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1');
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved').mockResolvedValue(true);
     docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(cleanupResult);
-    const removeRow = jest.spyOn(taskResult, 'remove').mockResolvedValue({affectedRows: 1});
-    const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
+    const removeFiles = storage.deletePath;
 
     await expect(canvasservice.commandSfcCallback(ctx, command(), false, false)).resolves.toBe('{"error":0}');
 
-    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, 'document', true, 1, 'save-key');
+    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, 'document', true, 1, 'save-key', expect.anything());
     if (cleanupResult === true) {
-      expect(removeRow).not.toHaveBeenCalled();
-      expect(removeFiles).toHaveBeenCalledWith(ctx, 'document');
+      // At completion, after the claim is acknowledged: cache, then the row.
       expect(ack).toHaveBeenCalledWith(ctx, 'document', 'save-key');
-      expect(removeFiles.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+      expect(removeFiles).toHaveBeenCalledWith(ctx, 'document');
+      expect(ack.mock.invocationCallOrder[0]).toBeLessThan(removeFiles.mock.invocationCallOrder[0]);
+      expect(taskResult.removeIf).toHaveBeenCalledTimes(1);
     } else {
-      expect(removeRow).not.toHaveBeenCalled();
+      expect(taskResult.removeIf).not.toHaveBeenCalled();
       expect(removeFiles).not.toHaveBeenCalled();
       expect(ack).not.toHaveBeenCalled();
     }
@@ -517,6 +543,7 @@ describe('final-save queue recovery', () => {
       baseurl: 'https://storage.example.test',
       status: commonDefines.FileStatus.SaveVersion,
       status_info: 12,
+      additional: null,
       removed: false
     };
     jest.spyOn(operationContext.Context.prototype, 'initTenantCache').mockResolvedValue(undefined);
@@ -530,10 +557,16 @@ describe('final-save queue recovery', () => {
       if (row.removed || row.status !== mask.status || row.status_info !== mask.statusInfo) {
         return {affectedRows: 0};
       }
-      row.status = update.status;
-      row.status_info = update.statusInfo;
+      // Like the SQL, leave fields the update does not set unchanged.
+      if (update.status !== undefined && update.status !== null) {
+        row.status = update.status;
+      }
+      if (update.statusInfo !== undefined && update.statusInfo !== null) {
+        row.status_info = update.statusInfo;
+      }
       if (update.additional !== undefined && update.additional !== null) {
-        row.additional = update.additional;
+        // Like the SQL: additional = COALESCE(additional, '') || $n
+        row.additional = (row.additional || '') + update.additional;
       }
       return {affectedRows: 1};
     });
@@ -546,7 +579,10 @@ describe('final-save queue recovery', () => {
       return {affectedRows: 1};
     });
     jest.spyOn(taskResult, 'removeIf').mockResolvedValue({affectedRows: 0});
+    jest.spyOn(taskResult, 'deleteChangesIf').mockResolvedValue({affectedRows: 1});
     jest.spyOn(sqlBase, 'deleteChangesPromise').mockResolvedValue({affectedRows: 1});
+    // The session's changes are still in the database.
+    jest.spyOn(sqlBase, 'getChangesIndexPromise').mockResolvedValue([{change_id: 3}]);
     jest.spyOn(sqlBase.UserCallback.prototype, 'getCallbackByUserIndex').mockReturnValue(row.callback);
     jest.spyOn(storage, 'listObjects').mockResolvedValue([]);
     jest.spyOn(storage, 'getObject').mockResolvedValue(Buffer.from('{}'));
@@ -565,6 +601,14 @@ describe('final-save queue recovery', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  // Millisecond backoff delays, so that tests can wait out in-process retries.
+  function useFastBackoff() {
+    const options = config.get('services.CoAuthoring.callbackBackoffOptions');
+    const fast = {...options, timeout: {...options.timeout, minTimeout: 1}};
+    operationContext.Context.prototype.getCfg.mockImplementation((path, fallback) =>
+      path === 'services.CoAuthoring.callbackBackoffOptions' ? fast : fallback
+    );
+  }
   function queuedCommand(overrides = {}) {
     const task = new commonDefines.TaskQueueData();
     task.setCtx({tenant: 'queue-recovery', docId: 'document', userId: 'user'});
@@ -616,26 +660,42 @@ describe('final-save queue recovery', () => {
     }
   );
 
-  test('leaves the broker delivery unacknowledged if retry persistence fails', async () => {
-    docsCoServer.editorData.getdelSaved.mockRejectedValue(new Error('storage unavailable'));
-    docsCoServer.addDelayed.mockImplementation(function* () {
-      yield Promise.reject(new Error('broker unavailable'));
-    });
+  test('keeps the broker delivery until a retry whose publication failed is confirmed', async () => {
+    useFastBackoff();
+    docsCoServer.editorData.getdelSaved.mockRejectedValueOnce(new Error('storage unavailable'));
     const ack = jest.fn();
+    let confirmed;
+    docsCoServer.addDelayed
+      .mockImplementationOnce(function* () {
+        yield Promise.reject(new Error('broker unavailable'));
+      })
+      .mockImplementationOnce(function* () {
+        yield Promise.reject(new Error('broker unavailable'));
+      })
+      .mockImplementationOnce(function* (task) {
+        expect(ack).not.toHaveBeenCalled();
+        confirmed = new commonDefines.TaskQueueData(JSON.parse(JSON.stringify(task)));
+        yield Promise.resolve();
+      });
     await canvasservice.receiveTask(queuedCommand(), ack);
-    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
-    expect(ack).not.toHaveBeenCalled();
+    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(3);
+    expect(ack).toHaveBeenCalledTimes(1);
     expect(docsCoServer.publish).not.toHaveBeenCalled();
+    // The confirmed retry keeps this attempt's state and counts the failed publications.
+    expect(confirmed.getCmd().getAttempt()).toBe(3);
+    expect(confirmed.getCmd().getCallbackAccepted()).toBe(true);
   });
 
-  test('does not resend an accepted callback on broker redelivery after retry persistence fails', async () => {
+  test('does not resend an accepted callback on broker redelivery after a worker restart', async () => {
     docsCoServer.cleanDocumentOnExitPromise.mockRejectedValueOnce(new Error('cleanup unavailable')).mockResolvedValueOnce(true);
+    // The worker dies before the retry is confirmed, so the broker redelivers.
     docsCoServer.addDelayed.mockImplementationOnce(function* () {
-      yield Promise.reject(new Error('broker unavailable'));
+      yield new Promise(() => {});
     });
     const original = queuedCommand();
     const firstAck = jest.fn();
-    await canvasservice.receiveTask(original, firstAck);
+    void canvasservice.receiveTask(original, firstAck);
+    await new Promise(setImmediate);
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
     expect(row.status_info).toBe(commonDefines.CALLBACK_ACCEPTED_STATUS_INFO);
     expect(firstAck).not.toHaveBeenCalled();
@@ -675,8 +735,9 @@ describe('final-save queue recovery', () => {
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
     expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
     expect(docsCoServer.editorData.ackSaved).toHaveBeenCalledWith(expect.anything(), 'document', 'save-key');
-    expect(row.status_info).not.toBe(commonDefines.CALLBACK_ACCEPTED_STATUS_INFO);
-    expect(row.additional).toContain('"completed":true');
+    // Completed: the pending status is released and the accepted marker stays.
+    expect(row.status_info).toBeLessThan(commonDefines.FINAL_SAVE_PENDING_STATUS_INFO);
+    expect(row.additional).toContain('"phase":"accepted"');
     expect(redeliveryAck).toHaveBeenCalledTimes(1);
   });
 
@@ -699,12 +760,8 @@ describe('final-save queue recovery', () => {
     expect(redeliveryAck).toHaveBeenCalledTimes(1);
   });
 
-  test('retries forgotten-file cache deletion before acknowledging saved state', async () => {
+  test('retries the forgotten-file cache deletion at completion without resending the callback', async () => {
     storage.listObjects.mockResolvedValueOnce(['document/forgotten.docx']).mockResolvedValueOnce(['document/forgotten.txt']);
-    const removeRow = jest.spyOn(taskResult, 'remove').mockImplementation(async () => {
-      row.removed = true;
-      return {affectedRows: 1};
-    });
     const removeFiles = jest
       .spyOn(storage, 'deletePath')
       .mockRejectedValueOnce(new Error('cache storage unavailable'))
@@ -713,9 +770,12 @@ describe('final-save queue recovery', () => {
 
     await canvasservice.receiveTask(queuedCommand(), firstAck);
 
+    // As on main, the cache and row of a session opened from the forgotten file
+    // go, at completion: storage first, while the row keeps opens out.
+    expect(row.status_info).toBe(commonDefines.CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO);
     expect(removeFiles).toHaveBeenCalledTimes(1);
-    expect(removeRow).not.toHaveBeenCalled();
-    expect(docsCoServer.editorData.ackSaved).not.toHaveBeenCalled();
+    expect(removeFiles).toHaveBeenCalledWith(expect.anything(), 'document');
+    expect(taskResult.removeIf).not.toHaveBeenCalled();
     expect(firstAck).toHaveBeenCalledTimes(1);
 
     const retryTask = docsCoServer.addDelayed.mock.calls[0][0];
@@ -723,18 +783,18 @@ describe('final-save queue recovery', () => {
     await canvasservice.receiveTask(JSON.stringify(retryTask), retryAck);
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
     expect(removeFiles).toHaveBeenCalledTimes(2);
-    expect(removeRow).not.toHaveBeenCalled();
+    expect(taskResult.removeIf).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({statusInfo: commonDefines.CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO})
+    );
     expect(docsCoServer.editorData.ackSaved).toHaveBeenCalledWith(expect.anything(), 'document', 'save-key');
     expect(retryAck).toHaveBeenCalledTimes(1);
   });
 
-  test('retains the forgotten cleanup tombstone across publication retry', async () => {
+  test('an accepted save reported unsaved stores the forgotten file as a declined save, across a publication retry', async () => {
     docsCoServer.editorData.getdelSaved.mockResolvedValue('0');
-    storage.listObjects.mockResolvedValueOnce(['document/forgotten.docx']).mockResolvedValueOnce(['document/forgotten.txt']);
-    const removeIf = jest.spyOn(taskResult, 'removeIf').mockImplementation(async (_ctx, _mask, _deleteChanges, keepTaskResult) => {
-      if (!keepTaskResult) {
-        row.removed = true;
-      }
+    const removeIf = jest.spyOn(taskResult, 'removeIf').mockImplementation(async () => {
+      row.removed = true;
       return {affectedRows: 1};
     });
     docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable')).mockResolvedValue(undefined);
@@ -743,8 +803,13 @@ describe('final-save queue recovery', () => {
     const original = queuedCommand();
     await canvasservice.receiveTask(original, firstAck);
 
+    // The integrator's file lacks the changes: forgotten file first, then the
+    // declined cleanup removes the row, as main does.
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    expect(storage.copyObject.mock.invocationCallOrder[0]).toBeLessThan(taskResult.deleteChangesIf.mock.invocationCallOrder[0]);
     expect(removeIf).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.editorData.ackSaved).toHaveBeenCalledWith(expect.anything(), 'document', 'save-key');
     expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
     expect(firstAck).toHaveBeenCalledTimes(1);
 
@@ -753,12 +818,9 @@ describe('final-save queue recovery', () => {
     await canvasservice.receiveTask(JSON.stringify(retryTask), retryAck);
 
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
-    expect(row.removed).toBe(false);
-    expect(row.status_info).not.toBe(commonDefines.CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO);
-    expect(row.additional).toContain('sfcCallbackAcceptance');
     expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
     expect(docsCoServer.publish).toHaveBeenCalledTimes(2);
-    expect(docsCoServer.editorData.ackSaved).toHaveBeenCalledWith(expect.anything(), 'document', 'save-key');
+    expect(docsCoServer.publish).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({success: false}));
     expect(retryAck).toHaveBeenCalledTimes(1);
 
     const redeliveryAck = jest.fn();
@@ -822,7 +884,7 @@ describe('final-save queue recovery', () => {
     expect(retryAck).toHaveBeenCalledTimes(1);
   });
 
-  test('retries WOPI unlock after an accepted callback without resending PutFile', async () => {
+  test('a failed WOPI unlock after an accepted callback does not hold back completion', async () => {
     docsCoServer.cleanDocumentOnExitPromise.mockRestore();
     jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockResolvedValue(true);
     jest.spyOn(taskResult, 'restoreInitialPassword').mockResolvedValue(undefined);
@@ -851,21 +913,18 @@ describe('final-save queue recovery', () => {
 
     await canvasservice.receiveTask(queuedCommand(), firstAck);
 
+    // Unlock is best effort: its failure is logged by wopiClient and the save
+    // completes without a retry (a retry would only get 409 or 401 again).
     expect(wopiClient.putFile).toHaveBeenCalledTimes(1);
     expect(unlock).toHaveBeenCalledTimes(1);
     expect(await unlock.mock.results[0].value).toBe(false);
     expect(utils.postRequestPromise).toHaveBeenCalledTimes(1);
-    expect(docsCoServer.editorData.ackSaved).not.toHaveBeenCalled();
-    expect(firstAck).toHaveBeenCalledTimes(1);
-
-    const retryTask = docsCoServer.addDelayed.mock.calls[0][0];
-    const retryAck = jest.fn();
-    await canvasservice.receiveTask(JSON.stringify(retryTask), retryAck);
-
-    expect(wopiClient.putFile).toHaveBeenCalledTimes(1);
-    expect(utils.postRequestPromise).toHaveBeenCalledTimes(2);
+    expect(canvasservice.commandOpenStartPromise).not.toHaveBeenCalled();
+    expect(docsCoServer.addDelayed).not.toHaveBeenCalled();
     expect(docsCoServer.editorData.ackSaved).toHaveBeenCalledWith(expect.anything(), 'document', 'save-key');
-    expect(retryAck).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.publish).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({success: true}));
+    expect(row.status_info).toBeLessThan(commonDefines.FINAL_SAVE_PENDING_STATUS_INFO);
+    expect(firstAck).toHaveBeenCalledTimes(1);
   });
 
   test('retries update-version publication after an accepted callback without resending it', async () => {
@@ -914,7 +973,7 @@ describe('final-save queue recovery', () => {
     jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockResolvedValue(true);
     jest.spyOn(taskResult, 'restoreInitialPassword').mockResolvedValue(undefined);
     jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
-    sqlBase.deleteChangesPromise.mockRejectedValueOnce(new Error('SQL unavailable'));
+    taskResult.deleteChangesIf.mockRejectedValueOnce(new Error('SQL unavailable'));
     const ack = jest.fn();
     await canvasservice.receiveTask(queuedCommand(), ack);
     expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
@@ -930,14 +989,15 @@ describe('final-save queue recovery', () => {
     await canvasservice.receiveTask(JSON.stringify(retryTask), retryAck);
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
     expect(read).toHaveBeenCalledTimes(1);
-    expect(sqlBase.deleteChangesPromise).toHaveBeenCalledTimes(2);
+    expect(taskResult.deleteChangesIf).toHaveBeenCalledTimes(2);
     expect(storage.deletePath).toHaveBeenCalledTimes(1);
     expect(savedAck).toHaveBeenCalledWith(expect.anything(), 'document', 'save-key');
     expect(docsCoServer.publish).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({success: true}));
     expect(retryAck).toHaveBeenCalledTimes(1);
   });
 
-  test('does not accept a retry buffered only in process memory', async () => {
+  test('never buffers a retry in process memory, and gives up within the retry budget', async () => {
+    useFastBackoff();
     const queue = new TaskQueue();
     docsCoServer.editorData.getdelSaved.mockRejectedValue(new Error('storage unavailable'));
     docsCoServer.addDelayed.mockRestore();
@@ -947,9 +1007,18 @@ describe('final-save queue recovery', () => {
     });
     const ack = jest.fn();
     await canvasservice.receiveTask(queuedCommand(), ack);
-    expect(ack).not.toHaveBeenCalled();
+    const budget = config.get('services.CoAuthoring.callbackBackoffOptions').infraRetries;
+    expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(budget);
     expect(queue.addDelayedStore).toEqual([]);
-    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledTimes(1);
+    // Given up after acceptance with the changes still there and the saved state
+    // never read: the session is left to resume, and editors are told.
+    expect(row.status).toBe(commonDefines.FileStatus.SaveVersion);
+    expect(row.status_info).toBe(12);
+    expect(docsCoServer.publish).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({type: commonDefines.c_oPublishType.updateVersion, success: false})
+    );
   });
 
   test.each(['declined cleanup', 'forgotten copy'])('reschedules %s without completing the claim', async scenario => {
@@ -970,10 +1039,10 @@ describe('final-save queue recovery', () => {
   test('caps infrastructure backoff beyond the HTTP retry limit', async () => {
     docsCoServer.editorData.getdelSaved.mockRejectedValue(new Error('storage unavailable'));
     const ack = jest.fn();
-    await canvasservice.receiveTask(queuedCommand({attempt: 100}), ack);
+    await canvasservice.receiveTask(queuedCommand({attempt: 10}), ack);
     const [task, timeout] = docsCoServer.addDelayed.mock.calls[0];
     const options = config.get('services.CoAuthoring.callbackBackoffOptions');
-    expect(task.getCmd().getAttempt()).toBe(101);
+    expect(task.getCmd().getAttempt()).toBe(11);
     const retry = require('../../DocService/node_modules/retry');
     expect(timeout).toBe(retry.createTimeout(options.retries, options.timeout));
     expect(ack).toHaveBeenCalledTimes(1);
@@ -1012,6 +1081,13 @@ describe('confirmed delayed-task persistence', () => {
     const queue = new TaskQueue();
     await expect(queue.addDelayed({id: 'save'}, 1000, true)).rejects.toThrow('retry was not persisted');
     expect(queue.addDelayedStore).toEqual([]);
+  });
+
+  test('rejects a confirmed-only response while disconnected instead of dropping it', async () => {
+    // handleDeadLetter returns a delayed retry this way before it acknowledges the dead letter.
+    const queue = new TaskQueue();
+    await expect(queue.addResponse({id: 'save'}, true)).rejects.toThrow('response was not persisted');
+    await expect(queue.addResponse({id: 'save'})).resolves.toBeUndefined();
   });
 
   test.each([null, new Error('broker rejected retry')])('waits for broker confirmation and propagates its result (%s)', async error => {
@@ -1145,6 +1221,24 @@ describe('SQL deletion critical section', () => {
     callbacks[2](null, {affectedRows: 2});
     await expect(second).resolves.toEqual({affectedRows: 2});
     expect(sqlBase.isLockCriticalSection('document')).toBe(false);
+  });
+
+  test('the ownership check of a conditional deletion locks the task row until the deletion commits', async () => {
+    const query = jest.spyOn(sqlConnector, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => callback(null, {affectedRows: 0}));
+    await taskResult.deleteChangesIf(ctx, {tenant: ctx.tenant, key: 'document', status: 3, statusInfo: 2000000001});
+    const sql = query.mock.calls[0][1];
+    expect(sql).toMatch(/^DELETE FROM \w+ WHERE EXISTS \(SELECT 1 FROM \w+/);
+    // A snapshot read lets a takeover's hold land during the deletion (Postgres,
+    // MSSQL with READ_COMMITTED_SNAPSHOT); MySQL and MariaDB lock DML subquery
+    // reads by themselves; Oracle cannot lock in a subquery.
+    const lock = {postgreConnector: / FOR SHARE\)/, mssqlConnector: / WITH \(REPEATABLEREAD\) WHERE /}[sqlConnectorName];
+    if (lock) {
+      expect(sql).toMatch(lock);
+    }
+    const postgre = require('../../DocService/sources/databaseConnectors/postgreConnector');
+    const mssql = require('../../DocService/sources/databaseConnectors/mssqlConnector');
+    expect(postgre.getOwnershipCheck('t', 'c')).toBe('SELECT 1 FROM t WHERE c FOR SHARE');
+    expect(mssql.getOwnershipCheck('t', 'c')).toBe('SELECT 1 FROM t WITH (REPEATABLEREAD) WHERE c');
   });
 
   test('rejects synchronous SQL errors and releases the critical section', async () => {

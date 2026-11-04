@@ -193,68 +193,69 @@ EditorData.prototype.setSaved = async function (ctx, docId, status) {
   const data = this._getDocumentData(ctx, docId);
   data.saved = status;
 };
+// Saved-state claims and accepted callbacks are kept per tenant, document and
+// final-save operation.
+function operationKey(operationId) {
+  return operationId || '__legacy__';
+}
+function getDocumentEntries(store, ctx, docId) {
+  return store[ctx.tenant]?.[docId];
+}
+function setOperationEntry(store, ctx, docId, operationId, value) {
+  const tenantEntries = store[ctx.tenant] || (store[ctx.tenant] = {});
+  const documentEntries = tenantEntries[docId] || (tenantEntries[docId] = {});
+  documentEntries[operationKey(operationId)] = value;
+}
+// Without opt_operationId (undefined) every entry of the document goes; null
+// addresses the legacy operation.
+function deleteDocumentEntries(store, ctx, docId, opt_operationId) {
+  const tenantEntries = store[ctx.tenant];
+  const documentEntries = tenantEntries?.[docId];
+  if (!documentEntries) {
+    return;
+  }
+  if (opt_operationId !== undefined) {
+    delete documentEntries[operationKey(opt_operationId)];
+  }
+  if (opt_operationId === undefined || Object.keys(documentEntries).length === 0) {
+    delete tenantEntries[docId];
+  }
+  if (Object.keys(tenantEntries).length === 0) {
+    delete store[ctx.tenant];
+  }
+}
 EditorData.prototype.getdelSaved = async function (ctx, docId, operationId) {
   // Saved results are claimed per operation and acknowledged explicitly.  A
   // retry therefore sees the same value instead of consuming the result again.
   const data = this._getDocumentData(ctx, docId);
-  const operation = operationId || '__legacy__';
-  const tenantClaims = this.savedClaims[ctx.tenant];
-  const documentClaims = tenantClaims && tenantClaims[docId];
-  if (documentClaims && Object.hasOwn(documentClaims, operation)) {
-    return documentClaims[operation];
+  const documentClaims = getDocumentEntries(this.savedClaims, ctx, docId);
+  if (documentClaims && Object.hasOwn(documentClaims, operationKey(operationId))) {
+    return documentClaims[operationKey(operationId)];
   }
   if (data.saved === null || data.saved === undefined) {
     return null;
   }
-  const claims = tenantClaims || (this.savedClaims[ctx.tenant] = {});
-  const documentClaim = documentClaims || (claims[docId] = {});
-  documentClaim[operation] = data.saved;
+  const saved = data.saved;
+  setOperationEntry(this.savedClaims, ctx, docId, operationId, saved);
   data.saved = null;
-  return documentClaim[operation];
+  return saved;
 };
 EditorData.prototype.ackSaved = async function (ctx, docId, operationId) {
   // Release only this operation's claim; another concurrent save may still be
   // using a different claim for the same document.
-  const tenantClaims = this.savedClaims[ctx.tenant];
-  const documentClaims = tenantClaims && tenantClaims[docId];
-  if (documentClaims) {
-    delete documentClaims[operationId || '__legacy__'];
-    if (Object.keys(documentClaims).length === 0) {
-      delete tenantClaims[docId];
-    }
-  }
+  deleteDocumentEntries(this.savedClaims, ctx, docId, operationId ?? null);
   return true;
 };
 EditorData.prototype.setSavedCallbackAccepted = async function (ctx, docId, operationId, accepted) {
   // This in-memory marker closes the same-worker redelivery gap while the
   // durable task-row acceptance marker is being written.
-  let tenantAccepted = this.savedCallbackAccepted[ctx.tenant];
-  if (!tenantAccepted) {
-    this.savedCallbackAccepted[ctx.tenant] = tenantAccepted = {};
-  }
-  let documentAccepted = tenantAccepted[docId];
-  if (!documentAccepted) {
-    tenantAccepted[docId] = documentAccepted = {};
-  }
-  documentAccepted[operationId || '__legacy__'] = accepted;
+  setOperationEntry(this.savedCallbackAccepted, ctx, docId, operationId, accepted);
 };
 EditorData.prototype.getSavedCallbackAccepted = async function (ctx, docId, operationId) {
-  const tenantAccepted = this.savedCallbackAccepted[ctx.tenant];
-  const documentAccepted = tenantAccepted && tenantAccepted[docId];
-  return documentAccepted && documentAccepted[operationId || '__legacy__'];
+  return getDocumentEntries(this.savedCallbackAccepted, ctx, docId)?.[operationKey(operationId)];
 };
 EditorData.prototype.clearSavedCallbackAccepted = async function (ctx, docId, operationId) {
-  const tenantAccepted = this.savedCallbackAccepted[ctx.tenant];
-  const documentAccepted = tenantAccepted && tenantAccepted[docId];
-  if (documentAccepted) {
-    delete documentAccepted[operationId || '__legacy__'];
-    if (Object.keys(documentAccepted).length === 0) {
-      delete tenantAccepted[docId];
-    }
-    if (Object.keys(tenantAccepted).length === 0) {
-      delete this.savedCallbackAccepted[ctx.tenant];
-    }
-  }
+  deleteDocumentEntries(this.savedCallbackAccepted, ctx, docId, operationId ?? null);
 };
 EditorData.prototype.setForceSave = async function (ctx, docId, time, index, baseUrl, changeInfo, convertInfo) {
   const data = this._getDocumentData(ctx, docId);
@@ -290,7 +291,7 @@ EditorData.prototype.removeForceSave = async function (ctx, docId) {
   data.forceSave = undefined;
 };
 
-EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, _savedClaimId) {
+EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId) {
   const tenantData = this.data[ctx.tenant];
   if (tenantData) {
     delete tenantData[docId];
@@ -298,6 +299,15 @@ EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, _savedCla
   const tenantTimer = this.forceSaveTimer[ctx.tenant];
   if (tenantTimer) {
     delete tenantTimer[docId];
+  }
+  if (savedClaimId === undefined || savedClaimId === null) {
+    // Claim-less terminal cleanup also drops claims and acceptance markers
+    // that saves left behind without completing (as the Redis backend
+    // recovers abandoned claims), so that they do not accumulate.  An owner
+    // passes its claim id and acknowledges it itself; a retry keeps the
+    // claimed value in its command and does not need the entry again.
+    deleteDocumentEntries(this.savedClaims, ctx, docId);
+    deleteDocumentEntries(this.savedCallbackAccepted, ctx, docId);
   }
   return true;
 };

@@ -480,11 +480,20 @@ function checkAndInvalidateCache(ctx, docId, fileInfo) {
             const cacheModified = commonInfo.fileInfo.LastModifiedTime;
             ctx.logger.debug('wopiEditor version fileInfo=%s; cache=%s', fileInfoVersion, cacheVersion);
             ctx.logger.debug('wopiEditor LastModifiedTime fileInfo=%s; cache=%s', fileInfoModified, cacheModified);
-            if (fileInfoVersion !== cacheVersion || fileInfoModified !== cacheModified) {
+            if (isUpdateVersion && canvasService.isFinalSaveInProgress(ctx, row)) {
+              // A final save is still sending or completing (its PutFile is what
+              // changed the version), its cleanup is running, or an open is
+              // taking its row over.  Leave the row: the open is view-only until
+              // the save is done or its status expires.
+              ctx.logger.debug('wopiEditor skips the cache check while a final save is pending');
+            } else if (fileInfoVersion !== cacheVersion || fileInfoModified !== cacheModified) {
+              // Clean up the row as it was read: a row that changed meanwhile
+              // belongs to someone else.
               const mask = new taskResult.TaskResultData();
               mask.tenant = ctx.tenant;
               mask.key = docId;
-              mask.last_open_date = row.last_open_date;
+              mask.status = row.status;
+              mask.statusInfo = row.status_info;
               //cleanupRes can be false in case of simultaneous opening. it is OK
               const cleanupRes = yield canvasService.cleanupCacheIf(ctx, mask);
               ctx.logger.debug('wopiEditor cleanupRes=%s', cleanupRes);
