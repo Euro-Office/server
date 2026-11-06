@@ -29,7 +29,7 @@ router.get('/', validateJWT, async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.json(filteredConfig);
   } catch (error) {
-    ctx.logger.error('Config get error: %s', error.stack);
+    ctx.logger.error('Config get error:', error);
     res.status(500).json({error: 'Internal server error'});
   } finally {
     ctx.logger.info('config get end');
@@ -63,7 +63,7 @@ router.patch('/', validateJWT, rawFileParser, async (req, res) => {
 
     res.status(200).json(utils.deepMergeObjects(filteredConfig, newConfig));
   } catch (error) {
-    ctx.logger.error('Configuration save error: %s', error.stack);
+    ctx.logger.error('Configuration save error:', error);
     res.status(500).json({error: 'Internal server error', details: error.message});
   } finally {
     ctx.logger.info('config patch end');
@@ -127,7 +127,7 @@ router.post('/reset', validateJWT, rawFileParser, async (req, res) => {
     ctx.logger.info('Configuration reset successfully');
     res.status(200).json({message: 'Configuration reset successfully'});
   } catch (error) {
-    ctx.logger.error('Configuration reset error: %s', error.stack);
+    ctx.logger.error('Configuration reset error:', error);
     res.status(500).json({error: 'Internal server error', details: error.message});
   } finally {
     ctx.logger.info('config reset end');

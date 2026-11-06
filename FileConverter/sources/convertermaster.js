@@ -75,13 +75,12 @@ if (cluster.isMaster) {
   converter.run();
   //Initialize watch here to avoid circular import with operationContext
   runtimeConfigManager.initRuntimeConfigWatcher(operationContext.global).catch(err => {
-    operationContext.global.logger.warn('initRuntimeConfigWatcher error: %s', err.stack);
+    operationContext.global.logger.warn('initRuntimeConfigWatcher error:', err);
   });
 }
 
 process.on('uncaughtException', err => {
-  operationContext.global.logger.error(new Date().toUTCString() + ' uncaughtException:', err.message);
-  operationContext.global.logger.error(err.stack);
+  operationContext.global.logger.error('uncaughtException:', err);
   logger.shutdown(() => {
     process.exit(1);
   });

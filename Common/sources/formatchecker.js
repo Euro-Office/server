@@ -646,7 +646,7 @@ exports.getImageFormat = function (ctx, buffer) {
     //signature
     format = getImageFormatBySignature(buffer);
   } catch (e) {
-    ctx.logger.error('error getImageFormat: %s', e.stack);
+    ctx.logger.error('error getImageFormat:', e);
   }
   return format;
 };

@@ -61,7 +61,7 @@ function connetPromise(closeCallback) {
         }
       });
       conn.on('disconnected', context => {
-        operationContext.global.logger.error('[AMQP] disconnected %s', context.error && context.error.stack);
+        operationContext.global.logger.error('[AMQP] disconnected', context.error);
         if (onDisconnected) {
           onDisconnected();
           onDisconnected = null;

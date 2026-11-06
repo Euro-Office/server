@@ -430,7 +430,7 @@ function convertRequest(req, res, isJson) {
         utils.fillResponse(req, res, new commonDefines.ConvertStatus(constants.UNKNOWN), isJson);
       }
     } catch (e) {
-      ctx.logger.error('convertRequest error: %s', e.stack);
+      ctx.logger.error('convertRequest error:', e);
       utils.fillResponse(req, res, new commonDefines.ConvertStatus(constants.UNKNOWN), isJson);
     } finally {
       ctx.logger.info('convertRequest end');
@@ -506,7 +506,7 @@ function builderRequest(req, res) {
       ctx.logger.debug('End builderRequest request: urls = %j end = %s error = %s', urls, end, error);
       utils.fillResponseBuilder(res, docId, urls, end, error);
     } catch (e) {
-      ctx.logger.error('Error builderRequest: %s', e.stack);
+      ctx.logger.error('Error builderRequest:', e);
       utils.fillResponseBuilder(res, undefined, undefined, undefined, constants.UNKNOWN);
     } finally {
       ctx.logger.info('builderRequest end');
@@ -638,7 +638,7 @@ function convertTo(req, res) {
         res.sendStatus(400);
       }
     } catch (err) {
-      ctx.logger.error('convert-to error:%s', err.stack);
+      ctx.logger.error('convert-to error:', err);
       res.sendStatus(400);
     } finally {
       ctx.logger.info('convert-to end');
@@ -682,7 +682,7 @@ function convertAndEdit(ctx, wopiParams, filetypeFrom, filetypeTo) {
       yield* convertByCmd(ctx, cmd, async, fileTo);
       return docId;
     } catch (err) {
-      ctx.logger.error('convert-and-edit error:%s', err.stack);
+      ctx.logger.error('convert-and-edit error:', err);
     } finally {
       ctx.logger.info('convert-and-edit end');
     }
@@ -757,7 +757,7 @@ function getConverterHtmlHandler(req, res) {
       }
       utils.fillResponse(req, res, status, isJson);
     } catch (err) {
-      ctx.logger.error('convert-and-edit-handler error:%s', err.stack);
+      ctx.logger.error('convert-and-edit-handler error:', err);
       utils.fillResponse(req, res, new commonDefines.ConvertStatus(constants.UNKNOWN), isJson);
     } finally {
       ctx.logger.info('convert-and-edit-handler end');

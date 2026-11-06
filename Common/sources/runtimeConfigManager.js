@@ -61,7 +61,7 @@ async function getConfigFromFile(ctx) {
     return JSON.parse(configData);
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      ctx.logger.error('getConfigFromFile error: %s', err.stack);
+      ctx.logger.error('getConfigFromFile error:', err);
     }
     return null;
   }
