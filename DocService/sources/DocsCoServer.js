@@ -709,13 +709,35 @@ function* addTask(data, priority, opt_queue, opt_expiration) {
   const realQueue = opt_queue ? opt_queue : queue;
   yield realQueue.addTask(data, priority, opt_expiration);
 }
-function* addResponse(data, opt_queue) {
+function* addResponse(data, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addResponse(data);
+  yield realQueue.addResponse(data, opt_requireConfirm);
 }
-function* addDelayed(data, ttl, opt_queue) {
+// A delayed retry whose response could not be published goes back into the
+// delayed queue for another round of this length (a final save's round waits
+// as long as its next infrastructure retry would: each round uses one up).  If
+// that fails too, the dead letter is requeued after this wait, at most
+// DEAD_LETTER_MAX_REQUEUES times (counted here: a requeued dead letter comes
+// back unchanged).
+const DEAD_LETTER_REQUEUE_DELAY_MS = 2000;
+const DEAD_LETTER_MAX_REQUEUES = 30;
+// Per process: a letter that moved to another instance is forgotten here after
+// an hour.
+const deadLetterRequeues = new Map();
+function countDeadLetterRequeue(key) {
+  const now = Date.now();
+  for (const [entryKey, entry] of deadLetterRequeues) {
+    if (now - entry.at > 3600000) {
+      deadLetterRequeues.delete(entryKey);
+    }
+  }
+  const count = (deadLetterRequeues.get(key)?.count || 0) + 1;
+  deadLetterRequeues.set(key, {count, at: now});
+  return count;
+}
+function* addDelayed(data, ttl, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addDelayed(data, ttl);
+  yield realQueue.addDelayed(data, ttl, opt_requireConfirm);
 }
 function* removeResponse(data) {
   yield queue.removeResponse(data);
@@ -1296,9 +1318,10 @@ function* startRPC(ctx, conn, responseKey, data) {
   }
   ctx.logger.debug('startRPC end');
 }
-function handleDeadLetter(data, ack) {
+function handleDeadLetter(data, ack, opt_nack) {
   return co(function* () {
     const ctx = new operationContext.Context();
+    let requeue = false;
     try {
       let isRequeued = false;
       const task = new commonDefines.TaskQueueData(JSON.parse(data));
@@ -1321,7 +1344,43 @@ function handleDeadLetter(data, ack) {
           isRequeued = true;
         } else if (cmd.getAttempt()) {
           ctx.logger.warn('handleDeadLetter addResponse delayed = %d', cmd.getAttempt());
-          yield* addResponse(task);
+          // The dead letter is the only copy of a delayed retry, with all its
+          // state.  Publish it with broker confirmation.
+          const requeueKey = `${ctx.tenant}/${cmd.getDocId()}/${cmd.getSaveKey()}/${cmd.getAttempt()}`;
+          try {
+            yield* addResponse(task, undefined, true);
+            deadLetterRequeues.delete(requeueKey);
+          } catch (err) {
+            // Response channel unavailable: put the retry back into the delayed
+            // queue for another round rather than hold or spin on the dead
+            // letter (which would block other dead letters on ActiveMQ).  Each
+            // round counts against the save's infrastructure budget; past it the save
+            // is given up as after its own retries, within the window its pending
+            // status lasts (isUpdateVersionExpired).
+            ctx.logger.warn('handleDeadLetter addResponse error: %s', err.stack);
+            const isSfc = 'sfc' === cmd.getCommand();
+            if (isSfc && canvasService.isSfcRetryBudgetExhausted(ctx, cmd)) {
+              yield canvasService.abandonSfcRetry(ctx, cmd);
+            } else {
+              // A fixed short round would use the budget up long before the
+              // window that the save's pending status lasts.
+              const delay = isSfc ? canvasService.getSfcInfraRetryDelay(ctx, cmd) : DEAD_LETTER_REQUEUE_DELAY_MS;
+              cmd.setAttempt((cmd.getAttempt() || 0) + 1);
+              try {
+                yield* addDelayed(task, delay, undefined, true);
+                deadLetterRequeues.delete(requeueKey);
+              } catch (delayErr) {
+                if (isSfc && countDeadLetterRequeue(requeueKey) > DEAD_LETTER_MAX_REQUEUES) {
+                  deadLetterRequeues.delete(requeueKey);
+                  ctx.logger.error('handleDeadLetter: cannot publish a final-save retry: %s', delayErr.stack);
+                  yield canvasService.abandonSfcRetry(ctx, cmd);
+                } else {
+                  requeue = !!opt_nack;
+                  throw delayErr;
+                }
+              }
+            }
+          }
         } else {
           //simulate error response
           cmd.setStatusInfo(constants.CONVERT_DEAD_LETTER);
@@ -1332,7 +1391,17 @@ function handleDeadLetter(data, ack) {
     } catch (err) {
       ctx.logger.error('handleDeadLetter error: %s', err.stack);
     } finally {
-      ack();
+      if (!requeue) {
+        ack();
+      }
+    }
+    if (requeue) {
+      yield new Promise(resolve => setTimeout(resolve, DEAD_LETTER_REQUEUE_DELAY_MS));
+      try {
+        opt_nack();
+      } catch (err) {
+        ctx.logger.error('handleDeadLetter requeue error: %s', err.stack);
+      }
     }
   });
 }
@@ -1517,6 +1586,10 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
   //wopi unlock
   const getRes = yield getCallback(ctx, docId, opt_userIndex);
   if (getRes && getRes.wopiParams && getRes.wopiParams.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
+    // Unlock is best effort, as on main: wopiClient.unlock() logs and returns
+    // false on failure.  Its result must not decide whether a save completes.
+    // A retry after a successful Unlock gets 409 (not locked), and an expired
+    // lock or token never succeeds, so gating on it would retry forever.
     const unlockRes = yield wopiClient.unlock(ctx, getRes.wopiParams);
     const unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
     if (unlockInfo && unlockRes) {
@@ -1524,30 +1597,67 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
     }
   }
 });
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
+// opt_changesMask: the task row as the caller holds it.  Nothing is cleaned if
+// the row no longer matches it (false: the caller's next attempt finds out),
+// and the changes are deleted only while it still does.
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_changesMask) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  if (opt_changesMask) {
+    const selectRes = yield taskResult.select(ctx, docId);
+    const row = selectRes[0];
+    if (!canvasService.taskResultMatchesMask(row, opt_changesMask)) {
+      // Editor data, forgotten files and the WOPI lock are a new owner's now.
+      return false;
+    }
+  }
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  yield editorData.cleanDocumentOnExit(ctx, docId);
+  const cleanupResult = yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
+  if (cleanupResult !== true) {
+    return false;
+  }
   if (preStopFlag && editorStatProxy?.deleteKey) {
     yield editorStatProxy.deleteKey(docId);
   }
   //remove changes
   if (deleteChanges) {
-    yield taskResult.restoreInitialPassword(ctx, docId);
-    sqlBase.deleteChanges(ctx, docId, null);
+    // Conditional like the change deletion: a session that took the row over
+    // since the check above keeps its password.
+    yield taskResult.restoreInitialPassword(ctx, docId, opt_changesMask);
+    if (opt_changesMask) {
+      yield taskResult.deleteChangesIf(ctx, opt_changesMask);
+      const selectRes = yield taskResult.select(ctx, docId);
+      if (!canvasService.taskResultMatchesMask(selectRes[0], opt_changesMask)) {
+        // Taken over meanwhile: the forgotten files and the lock are the new
+        // owner's.
+        return false;
+      }
+    } else {
+      // Unlike main, a failed deletion fails the cleanup (an encrypted save
+      // answers saveFile with 400): changes left behind silently would be
+      // replayed by the next open on top of the file that already has them.
+      yield sqlBase.deleteChangesPromise(ctx, docId, null);
+    }
     //delete forgotten after successful send on callbackUrl
     yield storage.deletePath(ctx, docId, tenForgottenFiles);
   }
   yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  return true;
 }
-function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges) {
+// opt_closeStatus ({sent}) lets a retried caller send the status only once:
+// it is skipped when `sent` is true and set to true once the status was sent.
+function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges, opt_closeStatus) {
   const userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
-  // We send that everyone is gone and there are no changes (to set the status on the server about the end of editing)
-  yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
+  if (!opt_closeStatus?.sent) {
+    // We send that everyone is gone and there are no changes (to set the status on the server about the end of editing)
+    yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
+    if (opt_closeStatus) {
+      opt_closeStatus.sent = true;
+    }
+  }
   //if the user entered the document, the connection was broken, all information was deleted on the server,
   //when the connection is restored, the userIndex will be saved and it will match the userIndex of the next user
-  yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
+  return yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
 }
 
 function createSaveTimer(ctx, docId, opt_userId, opt_userIndex, opt_userLcid, opt_queue, opt_noDelay, opt_initShardKey) {
@@ -3070,25 +3180,31 @@ exports.install = function (server, app, callbackFunction) {
           commonDefines.FileStatus.SaveVersion === status ||
           (!bIsRestore &&
             commonDefines.FileStatus.UpdateVersion === status &&
-            Date.now() - result[0]['status_info'] * 60000 > tenExpUpdateVersionStatus)
+            canvasService.isUpdateVersionExpired(ctx, result[0], tenExpUpdateVersionStatus))
         ) {
-          let newStatus = commonDefines.FileStatus.Ok;
+          let updated;
           if (commonDefines.FileStatus.UpdateVersion === status) {
-            ctx.logger.warn('UpdateVersion expired');
-            //FileStatus.None to open file again from new url
-            newStatus = commonDefines.FileStatus.None;
+            // An expired save: open the file again from the integrator's URL
+            // (FileStatus.None), unless the save left its changes behind (an
+            // abandoned save, or a cleanup that never ran): then resume from the
+            // cache with them, so that they are neither lost nor applied twice.
+            const newStatus = yield canvasService.takeOverAbandonedSaveForOpen(ctx, docId, result[0]);
+            updated = undefined !== newStatus;
+          } else {
+            const newStatus = commonDefines.FileStatus.Ok;
+            // Update the status of the file (the build is in progress, you need to stop it)
+            const updateMask = new taskResult.TaskResultData();
+            updateMask.tenant = ctx.tenant;
+            updateMask.key = docId;
+            updateMask.status = status;
+            updateMask.statusInfo = result[0]['status_info'];
+            const updateTask = new taskResult.TaskResultData();
+            updateTask.status = newStatus;
+            updateTask.statusInfo = constants.NO_ERROR;
+            const updateIfRes = yield taskResult.updateIf(ctx, updateTask, updateMask);
+            updated = updateIfRes.affectedRows > 0;
           }
-          // Update the status of the file (the build is in progress, you need to stop it)
-          const updateMask = new taskResult.TaskResultData();
-          updateMask.tenant = ctx.tenant;
-          updateMask.key = docId;
-          updateMask.status = status;
-          updateMask.statusInfo = result[0]['status_info'];
-          const updateTask = new taskResult.TaskResultData();
-          updateTask.status = newStatus;
-          updateTask.statusInfo = constants.NO_ERROR;
-          const updateIfRes = yield taskResult.updateIf(ctx, updateTask, updateMask);
-          if (!(updateIfRes.affectedRows > 0)) {
+          if (!updated) {
             // error version
             //log level is debug because error handled via refreshFile
             yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'Update Version error', constants.UPDATE_VERSION_CODE, true);

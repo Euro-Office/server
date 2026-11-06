@@ -250,11 +250,18 @@ function insertChanges(ctx, tableChanges, startIndex, objChanges, docId, index, 
   );
 }
 
+// See baseConnector getOwnershipCheckFallback: a READ COMMITTED snapshot does
+// not see a concurrent UPDATE of the row, FOR SHARE waits for it and rechecks.
+function getOwnershipCheck(table, where) {
+  return `SELECT 1 FROM ${table} WHERE ${where} FOR SHARE`;
+}
+
 module.exports = {
   sqlQuery,
   closePool,
   addSqlParameter,
   concatParams,
   upsert,
-  insertChanges
+  insertChanges,
+  getOwnershipCheck
 };
