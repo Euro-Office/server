@@ -56,10 +56,10 @@ jobs:
           path: documentserver
           ref: main
 
-      - name: Use Node.js 24
+      - name: Use Node.js 26
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 26
 
       - name: Pull nightly image
         run: docker pull ${{ env.NIGHTLY_IMAGE }}
