@@ -9,11 +9,13 @@ on:
       - '**/npm-shrinkwrap.json'
       - '.github/workflows/unitTests.yml'
       - '!tests/integration/**'
+      - 'tests/integration/rabbitmq/**'
       - '!DocService/sources/databaseConnectors/**'
 jobs:
   unit-tests:
     name: Service unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository code
@@ -37,5 +39,5 @@ jobs:
           npm --prefix DocService ci
           npm --prefix FileConverter ci
 
-      - name: Run Jest
-        run: npm run "unit tests"
+      - name: Run unit and RabbitMQ integration tests
+        run: npm test
