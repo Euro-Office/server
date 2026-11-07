@@ -190,10 +190,20 @@ describe('final-save saved-state handling', () => {
     jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
     let completeDeletion;
     const started = new Promise(resolve => {
-      jest.spyOn(sqlConnector, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => {
-        completeDeletion = callback;
-        resolve();
-      });
+      if (sqlConnector.deleteChangesIf) {
+        jest.spyOn(sqlConnector, 'deleteChangesIf').mockImplementation(
+          () =>
+            new Promise((complete, reject) => {
+              completeDeletion = (error, result) => (error ? reject(error) : complete(result));
+              resolve();
+            })
+        );
+      } else {
+        jest.spyOn(sqlConnector, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => {
+          completeDeletion = callback;
+          resolve();
+        });
+      }
     });
 
     const save = canvasservice.commandSfcCallback(ctx, command(), false, false);
@@ -1225,12 +1235,17 @@ describe('SQL deletion critical section', () => {
 
   test('the ownership check of a conditional deletion locks the task row until the deletion commits', async () => {
     const query = jest.spyOn(sqlConnector, 'sqlQuery').mockImplementation((_ctx, _sql, callback) => callback(null, {affectedRows: 0}));
+    const transaction = sqlConnector.deleteChangesIf ? jest.spyOn(sqlConnector, 'deleteChangesIf').mockResolvedValue({affectedRows: 0}) : null;
     await taskResult.deleteChangesIf(ctx, {tenant: ctx.tenant, key: 'document', status: 3, statusInfo: 2000000001});
-    const sql = query.mock.calls[0][1];
+    const sql = transaction ? transaction.mock.calls[0][2] : query.mock.calls[0][1];
+    if (transaction) {
+      expect(transaction).toHaveBeenCalledWith(ctx, 'document', sql, [3, 2000000001, ctx.tenant, 'document', ctx.tenant, 'document']);
+      expect(query).not.toHaveBeenCalled();
+    }
     expect(sql).toMatch(/^DELETE FROM \w+ WHERE EXISTS \(SELECT 1 FROM \w+/);
     // A snapshot read lets a takeover's hold land during the deletion (Postgres,
     // MSSQL with READ_COMMITTED_SNAPSHOT); MySQL and MariaDB lock DML subquery
-    // reads by themselves; Oracle cannot lock in a subquery.
+    // reads by themselves; Oracle locks separately in the transaction helper.
     const lock = {postgreConnector: / FOR SHARE\)/, mssqlConnector: / WITH \(REPEATABLEREAD\) WHERE /}[sqlConnectorName];
     if (lock) {
       expect(sql).toMatch(lock);

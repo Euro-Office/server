@@ -1,5 +1,6 @@
 /*
  * (c) Copyright Ascensio System SIA 2010-2024
+ * SPDX-FileCopyrightText: 2026 Euro-Office contributors
  *
  * This program is a free software product. You can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License (AGPL)
@@ -240,6 +241,62 @@ async function executeBunch(ctx, sqlCommand, values = [], options, noLog = false
       }
     }
   }
+}
+
+async function deleteChangesIf(ctx, docId, sqlCommand, values) {
+  let connection;
+  let dropConnection = false;
+  let operationError;
+  let affectedRows = 0;
+  try {
+    if (!pool) {
+      pool = await oracledb.createPool(configuration);
+    }
+    connection = await pool.getConnection();
+    // Lock in task_result -> doc_changes order, on one connection. Oracle
+    // cannot use FOR UPDATE in the DELETE's ownership subquery.
+    const locked = await connection.execute(`SELECT 1 FROM ${cfgTableResult} WHERE tenant=:0 AND id=:1 FOR UPDATE`, [ctx.tenant, docId], {
+      autoCommit: false
+    });
+    if (locked.rows.length > 0) {
+      // Recheck the mask in a fresh statement after acquiring the lock: a
+      // takeover may have changed ownership while the SELECT was waiting.
+      const result = await connection.execute(sqlCommand.replace(/;/g, ''), values, {autoCommit: false});
+      affectedRows = result.rowsAffected;
+    }
+    await connection.commit();
+  } catch (error) {
+    operationError = error;
+    ctx.logger.error(`deleteChangesIf() error: ${error.stack}`);
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        dropConnection = true;
+        ctx.logger.error(`deleteChangesIf() rollback error: ${rollbackError.stack}`);
+      }
+    }
+  } finally {
+    if (connection) {
+      try {
+        await connection.close({drop: dropConnection});
+      } catch (error) {
+        ctx.logger.error(`deleteChangesIf() connection.close() error: ${error.stack}`);
+        try {
+          await connection.close({drop: true});
+        } catch (dropError) {
+          ctx.logger.error(`deleteChangesIf() connection drop error: ${dropError.stack}`);
+          if (!operationError) {
+            operationError = error;
+          }
+        }
+      }
+    }
+  }
+  if (operationError) {
+    throw operationError;
+  }
+  return {affectedRows};
 }
 
 function closePool() {
@@ -497,6 +554,7 @@ function getNotEmptyCondition(fieldName) {
 
 module.exports = {
   sqlQuery,
+  deleteChangesIf,
   closePool,
   healthCheck,
   addSqlParameter,

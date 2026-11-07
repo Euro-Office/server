@@ -50,5 +50,13 @@ jobs:
           docker cp ./schema/oracle/createdb.sql oracle:/
           docker exec oracle sqlplus -s onlyoffice/onlyoffice@//localhost/onlyoffice "@/createdb.sql"
 
+      - name: Allow concurrency tests to observe database lock waits
+        run: |
+          docker exec -i oracle sqlplus -s "sys/admin@//localhost/onlyoffice as sysdba" <<'SQL'
+          WHENEVER SQLERROR EXIT FAILURE
+          GRANT SELECT ON sys.v_$session TO onlyoffice;
+          EXIT;
+          SQL
+
       - name: Run Jest
         run: npm run "integration database tests"

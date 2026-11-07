@@ -688,8 +688,8 @@ function isFinalSaveInProgress(ctx, row) {
 // out and which no save owns): from then on a slow attempt of the save can no
 // longer delete the changes (every deletion of a save is conditional on its
 // status, and that check locks the row, so the hold waits for a deletion in
-// flight: getOwnershipCheck in baseConnector; not on Oracle), so they decide
-// for good.  Only then does the row get the status that lets a session start
+// flight: getOwnershipCheck in baseConnector, or Oracle's deleteChangesIf),
+// so they decide for good. Only then does the row let a session start
 // on it.
 // Returns 'resume' or 'reload', or undefined if the row changed meanwhile.
 function* takeOverAbandonedSave(ctx, docId, row, resumeTask, reloadTask) {

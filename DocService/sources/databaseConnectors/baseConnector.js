@@ -185,7 +185,14 @@ function deleteChangesCallback(ctx, docId, deleteIndex, callback, opt_taskResult
     conditions.push(`change_id >= ${sqlParam2}`);
   }
   const sqlCommand = `DELETE FROM ${cfgTableChanges} WHERE ${conditions.join(' AND ')};`;
-  dbInstance.sqlQuery(ctx, sqlCommand, callback, undefined, undefined, values);
+  if (opt_taskResultCondition && dbInstance.deleteChangesIf) {
+    dbInstance.deleteChangesIf(ctx, docId, sqlCommand, values).then(
+      result => callback(null, result),
+      error => callback(error)
+    );
+  } else {
+    dbInstance.sqlQuery(ctx, sqlCommand, callback, undefined, undefined, values);
+  }
 }
 
 function deleteChangesPromise(ctx, docId, deleteIndex, opt_taskResultCondition) {
@@ -463,8 +470,9 @@ function getNotEmptyConditionFallback(fieldName) {
  * a deletion that starts during such an UPDATE sees its result.  With a
  * snapshot read both go ahead: the takeover still sees the changes that are
  * being deleted.  MySQL and MariaDB lock the rows a DML subquery reads, so the
- * plain subquery is enough there.  Oracle cannot lock in a subquery: there the
- * gap remains.  Connectors that need a locking clause override this.
+ * plain subquery is enough there. Oracle's deleteChangesIf locks the task row
+ * in a separate statement within the deletion transaction. Connectors that
+ * need a locking clause in the subquery override this.
  * @param {string} table - The task table
  * @param {string} where - The ownership condition
  * @returns {string} SQL subquery
