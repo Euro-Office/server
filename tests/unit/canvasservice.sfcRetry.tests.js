@@ -11,6 +11,9 @@
 // deliveries. Every scenario must end in a completed save or a logged give-up.
 
 const util = require('node:util');
+const Queue = require('../../Common/sources/taskqueueRabbitMQ');
+const rabbitCore = require('../../Common/sources/rabbitMQCore');
+const {rabbit} = require('./helpers/queueBroker');
 const {afterEach, beforeEach, describe, expect, jest, test} = require('@jest/globals');
 const canvasservice = require('../../DocService/sources/canvasservice');
 const commonDefines = require('../../Common/sources/commondefines');
@@ -472,6 +475,30 @@ describe('final-save retries converge', () => {
     expectCompleted();
   });
 
+  test('an exhausted dead letter runs real abandonment and releases saved state before acknowledgement', async () => {
+    const options = config.get('services.CoAuthoring.callbackBackoffOptions');
+    operationContext.Context.prototype.getCfg.mockImplementation((path, fallback) =>
+      path === 'services.CoAuthoring.callbackBackoffOptions' ? {...options, infraRetries: 1} : fallback
+    );
+    taskResult.restoreInitialPassword.mockRejectedValueOnce(new Error('SQL unavailable'));
+    await deliver(queued());
+    expect(delayed).toHaveLength(1);
+    expect(row.status_info).toBe(commonDefines.CALLBACK_ACCEPTED_STATUS_INFO);
+    const clearAccepted = jest.spyOn(docsCoServer.editorData, 'clearSavedCallbackAccepted');
+    const ack = jest.fn(() => {
+      expect(row.status_info).toBeLessThan(commonDefines.FINAL_SAVE_PENDING_STATUS_INFO);
+      expect(clearAccepted).toHaveBeenCalledTimes(1);
+    });
+    const nack = jest.fn();
+    await docsCoServer.handleDeadLetter(delayed.shift().data, ack, nack, undefined, new Queue());
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(nack).not.toHaveBeenCalled();
+    expect(delayed).toHaveLength(0);
+    expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+    expect(docsCoServer.publish).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({type: commonDefines.c_oPublishType.updateVersion}));
+    expect(errors.some(error => error.includes('giving up after 1 infrastructure retries'))).toBe(true);
+  });
+
   test('a persistent failure gives up after the retry budget and leaves the row expirable', async () => {
     const budget = config.get('services.CoAuthoring.callbackBackoffOptions').infraRetries;
     expect(budget).toBeGreaterThan(0);
@@ -673,23 +700,61 @@ describe('final-save retries converge', () => {
     expect(delayed).toHaveLength(0);
   });
 
-  test('a retry held for a broker confirmation stops once the broker has the delivery back', async () => {
-    useFastBackoff();
-    taskResult.restoreInitialPassword.mockRejectedValueOnce(new Error('SQL unavailable'));
-    docsCoServer.addDelayed.mockImplementation(function* () {
-      yield Promise.reject(new Error('connection lost'));
-    });
-    const ack = jest.fn();
-    let live = true;
-    const processing = canvasservice.receiveTask(queued(), ack, () => live);
-    await new Promise(resolve => setTimeout(resolve, 20));
-    live = false;
-    await processing;
-    const attempts = docsCoServer.addDelayed.mock.calls.length;
-    await new Promise(resolve => setTimeout(resolve, 20));
-
-    expect(docsCoServer.addDelayed.mock.calls.length).toBe(attempts);
-    expect(ack).not.toHaveBeenCalled();
+  test.each(['channel close', 'connection loss'])('a failed retry confirmation stops after a real %s event', async closure => {
+    jest.useFakeTimers({doNotFake: ['Date']});
+    const broker = rabbit(rabbitCore);
+    const queue = new Queue();
+    try {
+      await queue.initPromise(false, false, false, true, false, true);
+      const source = queue.channelConvertResponseReceive;
+      const sender = queue.channelDelayed;
+      let confirm;
+      sender.sendToQueue.mockImplementation((_name, _body, _options, callback) => {
+        confirm = callback;
+      });
+      docsCoServer.addDelayed.mockRestore();
+      const addDelayed = docsCoServer.addDelayed;
+      jest.spyOn(docsCoServer, 'addDelayed').mockImplementation(function* (task, ttl, _queue, requireConfirm) {
+        yield* addDelayed(task, ttl, queue, requireConfirm);
+      });
+      taskResult.restoreInitialPassword.mockRejectedValueOnce(new Error('SQL unavailable'));
+      let processing;
+      let live;
+      queue.on('response', (data, ack, isLive) => {
+        live = isLive;
+        processing = canvasservice.receiveTask(data, ack, isLive);
+      });
+      broker.deliver(source, queued());
+      await jest.advanceTimersByTimeAsync(0);
+      expect(live()).toBe(true);
+      expect(sender.sendToQueue).toHaveBeenCalledTimes(1);
+      expect(source.ack).not.toHaveBeenCalled();
+      const retry = JSON.parse(sender.sendToQueue.mock.calls[0][1]);
+      expect(retry.cmd).toMatchObject({attempt: 1, callbackAccepted: true});
+      confirm(new Error('broker confirmation failed'));
+      await jest.advanceTimersByTimeAsync(0);
+      if (closure === 'channel close') {
+        source.emit('close');
+        expect(queue.connection).not.toBeNull();
+      } else {
+        queue.isClose = true;
+        broker.disconnect();
+      }
+      expect(live()).toBe(false);
+      await jest.advanceTimersByTimeAsync(8000);
+      await processing;
+      expect(sender.sendToQueue).toHaveBeenCalledTimes(1);
+      expect(docsCoServer.addDelayed).toHaveBeenCalledTimes(1);
+      expect(source.ack).not.toHaveBeenCalled();
+      expect(source.nack).not.toHaveBeenCalled();
+      expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+      expect(row.status_info).toBe(commonDefines.CALLBACK_ACCEPTED_STATUS_INFO);
+    } finally {
+      queue.removeAllListeners();
+      broker.channels.forEach(source => source.removeAllListeners());
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
   });
 
   test('a database without the additional column still saves, as main does', async () => {

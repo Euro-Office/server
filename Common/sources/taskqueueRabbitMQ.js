@@ -191,7 +191,8 @@ function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
                     if (isLive()) {
                       channel.nack(message, false, true);
                     }
-                  }
+                  },
+                  isLive
                 );
               }
             }
@@ -299,11 +300,11 @@ function initActive(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
               'response',
               context.message.body,
               () => {
-                if (unsettled-- >= ACTIVE_RESPONSE_WINDOW) {
-                  receiver.add_credit(1);
-                }
-                // Settle only on the link that delivered it (see RabbitMQ).
+                // Settle and restore credit only on the live delivering link.
                 if (isLive()) {
+                  if (unsettled-- >= ACTIVE_RESPONSE_WINDOW) {
+                    receiver.add_credit(1);
+                  }
                   context.delivery.accept();
                 }
               },
@@ -337,17 +338,23 @@ function initActive(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
         receiver.add_credit(1);
         receiver.on('message', context => {
           if (context) {
+            const isLive = () => receiver === taskqueue.channelConvertDead;
             taskqueue.emit(
               'dead',
               context.message.body,
               () => {
-                context.delivery.accept();
-                receiver.add_credit(1);
+                if (isLive()) {
+                  context.delivery.accept();
+                  receiver.add_credit(1);
+                }
               },
               () => {
-                context.delivery.release();
-                receiver.add_credit(1);
-              }
+                if (isLive()) {
+                  context.delivery.release();
+                  receiver.add_credit(1);
+                }
+              },
+              isLive
             );
           }
         });
@@ -385,7 +392,9 @@ function clear(taskqueue) {
   // be settled on the lost link, and their callers must not wait forever.
   for (const pending of [taskqueue.channelConvertTaskData, taskqueue.channelConvertResponseData, taskqueue.channelDelayedData]) {
     for (const id in pending || {}) {
-      pending[id](new Error('[AMQP] connection lost before the message was settled'));
+      const callback = pending[id];
+      delete pending[id];
+      callback(new Error('[AMQP] connection lost before the message was settled'));
     }
   }
   taskqueue.channelConvertTaskData = {};

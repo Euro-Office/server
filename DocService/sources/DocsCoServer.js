@@ -718,7 +718,8 @@ function* addResponse(data, opt_queue, opt_requireConfirm) {
 // as long as its next infrastructure retry would: each round uses one up).  If
 // that fails too, the dead letter is requeued after this wait, at most
 // DEAD_LETTER_MAX_REQUEUES times (counted here: a requeued dead letter comes
-// back unchanged).
+// back unchanged). Failed abandonment shares this budget; exhaustion leaves
+// the delivery unacknowledged until the broker redelivers it after recovery.
 const DEAD_LETTER_REQUEUE_DELAY_MS = 2000;
 const DEAD_LETTER_MAX_REQUEUES = 30;
 // Per process: a letter that moved to another instance is forgotten here after
@@ -731,8 +732,9 @@ function countDeadLetterRequeue(key) {
       deadLetterRequeues.delete(entryKey);
     }
   }
-  const count = (deadLetterRequeues.get(key)?.count || 0) + 1;
-  deadLetterRequeues.set(key, {count, at: now});
+  const entry = deadLetterRequeues.get(key);
+  const count = (entry?.count || 0) + 1;
+  deadLetterRequeues.set(key, {...entry, count, at: now});
   return count;
 }
 function* addDelayed(data, ttl, opt_queue, opt_requireConfirm) {
@@ -1318,39 +1320,72 @@ function* startRPC(ctx, conn, responseKey, data) {
   }
   ctx.logger.debug('startRPC end');
 }
-function handleDeadLetter(data, ack, opt_nack) {
+// Optional queue injection exercises dead-letter recovery without starting the HTTP server.
+exports.handleDeadLetter = handleDeadLetter;
+function handleDeadLetter(data, ack, opt_nack, opt_isDeliveryLive, opt_queue) {
   return co(function* () {
     const ctx = new operationContext.Context();
     let requeue = false;
+    let shouldAck = true;
+    let cmd;
+    let requeueKey;
+    let abandoning = false;
+    const isLive = () => !opt_isDeliveryLive || opt_isDeliveryLive();
+    function* abandon() {
+      abandoning = true;
+      const entry = deadLetterRequeues.get(requeueKey);
+      deadLetterRequeues.set(requeueKey, {...entry, abandoning: true, count: entry?.count || 0, at: Date.now()});
+      yield canvasService.abandonSfcRetry(ctx, cmd);
+      deadLetterRequeues.delete(requeueKey);
+    }
     try {
+      if (!isLive()) {
+        return;
+      }
       let isRequeued = false;
       const task = new commonDefines.TaskQueueData(JSON.parse(data));
       if (task) {
         ctx.initFromTaskQueueData(task);
+        cmd = task.getCmd();
+        requeueKey = `${ctx.tenant}/${cmd.getDocId()}/${cmd.getSaveKey()}/${cmd.getAttempt()}`;
         yield ctx.initTenantCache();
-        const cmd = task.getCmd();
+        if (!isLive()) {
+          return;
+        }
+        // A failed terminal transition must resume abandonment, not publication.
+        if ('sfc' === cmd.getCommand() && deadLetterRequeues.get(requeueKey)?.abandoning) {
+          yield* abandon();
+          return;
+        }
         ctx.logger.warn('handleDeadLetter start: %s', data);
         const forceSave = cmd.getForceSave();
         if (forceSave && commonDefines.c_oAscForceSaveTypes.Timeout == forceSave.getType()) {
           const actualForceSave = yield editorData.getForceSave(ctx, cmd.getDocId());
+          if (!isLive()) {
+            return;
+          }
           //check that there are no new changes
           if (actualForceSave && forceSave.getTime() === actualForceSave.time && forceSave.getIndex() === actualForceSave.index) {
             //requeue task
-            yield* addTask(task, constants.QUEUE_PRIORITY_VERY_LOW, undefined, getForceSaveExpiration(ctx));
+            yield* addTask(task, constants.QUEUE_PRIORITY_VERY_LOW, opt_queue, getForceSaveExpiration(ctx));
             isRequeued = true;
           }
         } else if (!forceSave && task.getFromChanges()) {
-          yield* addTask(task, constants.QUEUE_PRIORITY_NORMAL, undefined);
+          yield* addTask(task, constants.QUEUE_PRIORITY_NORMAL, opt_queue);
           isRequeued = true;
         } else if (cmd.getAttempt()) {
           ctx.logger.warn('handleDeadLetter addResponse delayed = %d', cmd.getAttempt());
           // The dead letter is the only copy of a delayed retry, with all its
           // state.  Publish it with broker confirmation.
-          const requeueKey = `${ctx.tenant}/${cmd.getDocId()}/${cmd.getSaveKey()}/${cmd.getAttempt()}`;
           try {
-            yield* addResponse(task, undefined, true);
-            deadLetterRequeues.delete(requeueKey);
+            yield* addResponse(task, opt_queue, true);
+            if (isLive()) {
+              deadLetterRequeues.delete(requeueKey);
+            }
           } catch (err) {
+            if (!isLive()) {
+              return;
+            }
             // Response channel unavailable: put the retry back into the delayed
             // queue for another round rather than hold or spin on the dead
             // letter (which would block other dead letters on ActiveMQ).  Each
@@ -1360,24 +1395,20 @@ function handleDeadLetter(data, ack, opt_nack) {
             ctx.logger.warn('handleDeadLetter addResponse error: %s', err.stack);
             const isSfc = 'sfc' === cmd.getCommand();
             if (isSfc && canvasService.isSfcRetryBudgetExhausted(ctx, cmd)) {
-              yield canvasService.abandonSfcRetry(ctx, cmd);
+              yield* abandon();
             } else {
               // A fixed short round would use the budget up long before the
               // window that the save's pending status lasts.
               const delay = isSfc ? canvasService.getSfcInfraRetryDelay(ctx, cmd) : DEAD_LETTER_REQUEUE_DELAY_MS;
               cmd.setAttempt((cmd.getAttempt() || 0) + 1);
               try {
-                yield* addDelayed(task, delay, undefined, true);
-                deadLetterRequeues.delete(requeueKey);
-              } catch (delayErr) {
-                if (isSfc && countDeadLetterRequeue(requeueKey) > DEAD_LETTER_MAX_REQUEUES) {
+                yield* addDelayed(task, delay, opt_queue, true);
+                if (isLive()) {
                   deadLetterRequeues.delete(requeueKey);
-                  ctx.logger.error('handleDeadLetter: cannot publish a final-save retry: %s', delayErr.stack);
-                  yield canvasService.abandonSfcRetry(ctx, cmd);
-                } else {
-                  requeue = !!opt_nack;
-                  throw delayErr;
                 }
+              } catch (delayErr) {
+                requeue = !!opt_nack;
+                throw delayErr;
               }
             }
           }
@@ -1390,15 +1421,39 @@ function handleDeadLetter(data, ack, opt_nack) {
       ctx.logger.warn('handleDeadLetter end: requeue = %s', isRequeued);
     } catch (err) {
       ctx.logger.error('handleDeadLetter error: %s', err.stack);
+      if (!isLive()) {
+        return;
+      }
+      if ('sfc' === cmd?.getCommand()) {
+        // Keep a valid final save until recovery or its terminal transition succeeds.
+        // Without a nack callback it remains unacked for broker redelivery.
+        shouldAck = false;
+        const count = countDeadLetterRequeue(requeueKey);
+        requeue = !!opt_nack && count <= DEAD_LETTER_MAX_REQUEUES;
+        if (!abandoning && count > DEAD_LETTER_MAX_REQUEUES) {
+          try {
+            yield* abandon();
+            shouldAck = true;
+            requeue = false;
+          } catch (abandonErr) {
+            ctx.logger.error('handleDeadLetter abandonment error: %s', abandonErr.stack);
+          }
+        }
+        if (!shouldAck && count > DEAD_LETTER_MAX_REQUEUES) {
+          ctx.logger.error('handleDeadLetter: automatic requeues exhausted; delivery remains unacknowledged for broker redelivery');
+        }
+      }
     } finally {
-      if (!requeue) {
+      if (shouldAck && !requeue && isLive()) {
         ack();
       }
     }
-    if (requeue) {
+    if (requeue && isLive()) {
       yield new Promise(resolve => setTimeout(resolve, DEAD_LETTER_REQUEUE_DELAY_MS));
       try {
-        opt_nack();
+        if (isLive()) {
+          opt_nack();
+        }
       } catch (err) {
         ctx.logger.error('handleDeadLetter requeue error: %s', err.stack);
       }
