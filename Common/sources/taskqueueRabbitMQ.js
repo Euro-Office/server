@@ -584,7 +584,7 @@ TaskQueueRabbitMQ.prototype.addResponse = function (task) {
     }
   });
 };
-TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl) {
+TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl, opt_requireConfirm) {
   const t = this;
   return new Promise((resolve, reject) => {
     const content = new Buffer(JSON.stringify(task));
@@ -596,6 +596,8 @@ TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl) {
           resolve();
         }
       });
+    } else if (opt_requireConfirm) {
+      reject(new Error('Delayed-task channel is unavailable; retry was not persisted'));
     } else {
       t.addDelayedStore.push({task: content, ttl});
       resolve();
