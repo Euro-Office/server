@@ -550,6 +550,7 @@
       "downloadAttemptMaxCount": 3,
       "downloadAttemptDelay": 1000,
       "maxprocesscount": 1,
+      "workercount": null,
       "fontDir": "null",
       "presentationThemesDir": "null",
       "x2tPath": "null",
