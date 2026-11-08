@@ -479,7 +479,7 @@ async function getUpdateResponse(ctx, cmd) {
   return updateTask;
 }
 function taskResultMatchesMask(row, mask) {
-  // Repeat the status check that the conditional SQL uses.  Cleanup can take
+  // Repeat the ownership check that the conditional SQL uses. Cleanup can take
   // several attempts, so a fresh read must prove that this attempt still owns
   // the row before it touches the cache.
   if (!row) {
@@ -491,7 +491,24 @@ function taskResultMatchesMask(row, mask) {
   if (mask.statusInfo !== undefined && mask.statusInfo !== null && row.status_info !== mask.statusInfo) {
     return false;
   }
+  if (mask.additional !== undefined && mask.additional !== null && row.additional !== mask.additional) {
+    return false;
+  }
   return true;
+}
+function hasSameFinalSaveOwner(row, mask) {
+  return (
+    taskResultMatchesMask(row, {...mask, additional: null}) &&
+    JSON.stringify(readFinalSaveMarkers(row.additional).at(-1)) === JSON.stringify(readFinalSaveMarkers(mask.additional).at(-1))
+  );
+}
+function* retryChangedFinalSaveMetadata(ctx, docId, mask) {
+  const currentRes = yield taskResult.select(ctx, docId);
+  if (hasSameFinalSaveOwner(currentRes[0], mask)) {
+    // A failed snapshot comparison is not proof of completion or takeover.
+    // Retrying reads the new metadata and still compares it atomically in SQL.
+    throw new Error('final-save metadata changed; retry with current ownership snapshot');
+  }
 }
 function getCleanupClaimStatusInfo(mask) {
   // A cleanup claim needs a value that is stable across retries, but cannot be
@@ -673,6 +690,22 @@ function isFinalSaveInProgress(ctx, row) {
   const expireMs = ms(ctx.getCfg('services.CoAuthoring.expire.updateVersionStatus', cfgExpUpdateVersionStatus));
   return getCallbackInFlightUntil(ctx, row) > 0 && !isUpdateVersionExpired(ctx, row, expireMs);
 }
+function* retryTakeoverMetadata(ctx, mask, action) {
+  // Bound optimistic retries under a busy metadata writer. Every attempt
+  // still compares the refreshed snapshot atomically in SQL.
+  for (let attempt = 0; attempt < 3; ++attempt) {
+    if (yield action()) {
+      return true;
+    }
+    const currentRes = yield taskResult.select(ctx, mask.key);
+    const current = currentRes[0];
+    if (!hasSameFinalSaveOwner(current, mask) || (current.additional || null) === mask.additional) {
+      return false;
+    }
+    mask.additional = current.additional || null;
+  }
+  return false;
+}
 // Takes over a row that an abandoned final save still holds (a pending
 // status_info), for an open or for the save itself when it gives up.  What is
 // left of the save decides, not what the integrator may have done with the
@@ -695,15 +728,17 @@ function isFinalSaveInProgress(ctx, row) {
 function* takeOverAbandonedSave(ctx, docId, row, resumeTask, reloadTask) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const holdTask = newTaskMask(ctx, docId, commonDefines.FileStatus.UpdateVersion, commonDefines.FINAL_SAVE_TAKEOVER_STATUS_INFO);
-  const holdRes = yield taskResult.updateIf(ctx, holdTask, newTaskMask(ctx, docId, row.status, row.status_info));
-  let held = holdRes.affectedRows > 0;
+  const holdMask = newTaskMask(ctx, docId, row.status, row.status_info);
+  holdMask.additional = row.additional || null;
+  let held = yield* retryTakeoverMetadata(ctx, holdMask, async () => (await taskResult.updateIf(ctx, holdTask, holdMask)).affectedRows > 0);
+  const ownedHoldMask = {...holdTask, additional: holdMask.additional};
   if (!held && commonDefines.FINAL_SAVE_TAKEOVER_STATUS_INFO === row.status_info) {
     // Taking an interrupted hold over writes the values the row already has
     // (the open's upsert set last_open_date in the same second), which MySQL
     // and MariaDB report as 0 rows: they count changed rows, not matched ones.
     // Tell an unchanged hold from a row that changed meanwhile.
     const selectRes = yield taskResult.select(ctx, docId);
-    held = selectRes.length > 0 && taskResultMatchesMask(selectRes[0], holdTask);
+    held = selectRes.length > 0 && taskResultMatchesMask(selectRes[0], ownedHoldMask);
   }
   if (!held) {
     return undefined;
@@ -717,10 +752,19 @@ function* takeOverAbandonedSave(ctx, docId, row, resumeTask, reloadTask) {
     isCallbackAcceptedStatusInfo(row.status_info) ||
     (commonDefines.FINAL_SAVE_TAKEOVER_STATUS_INFO === row.status_info && 'accepted' === lastMarker?.phase);
   if (!resume && accepted) {
-    yield storage.deletePath(ctx, docId, tenForgottenFiles);
+    const cleaned = yield* retryTakeoverMetadata(ctx, ownedHoldMask, () =>
+      taskResult.withCleanupOwnership(ctx, ownedHoldMask, () => storage.deletePath(ctx, docId, tenForgottenFiles))
+    );
+    if (!cleaned) {
+      return undefined;
+    }
   }
-  const updateRes = yield taskResult.updateIf(ctx, resume ? resumeTask : reloadTask, holdTask);
-  if (!(updateRes.affectedRows > 0)) {
+  const updated = yield* retryTakeoverMetadata(
+    ctx,
+    ownedHoldMask,
+    async () => (await taskResult.updateIf(ctx, resume ? resumeTask : reloadTask, ownedHoldMask)).affectedRows > 0
+  );
+  if (!updated) {
     // Another open took the hold over (it decides the same way).
     return undefined;
   }
@@ -764,6 +808,14 @@ const cleanupCache = co.wrap(function* (ctx, docId) {
   ctx.logger.debug('cleanupCache docId=%s db.affectedRows=%d', docId, removeRes.affectedRows);
   return res;
 });
+function deleteDocumentCacheIfOwned(ctx, mask) {
+  return taskResult.withCleanupOwnership(ctx, mask, async () => {
+    await storage.deletePath(ctx, mask.key);
+    if (docsCoServer?.editorStatProxy?.deleteKey) {
+      await docsCoServer.editorStatProxy.deleteKey(mask.key);
+    }
+  });
+}
 const cleanupCacheIf = co.wrap(function* (ctx, mask) {
   //todo redis ?
   // Cleanup is deliberately staged: claim the exact row, delete its changes,
@@ -779,8 +831,9 @@ const cleanupCacheIf = co.wrap(function* (ctx, mask) {
   // That closes the select/delete race and lets a retry recognize its own
   // claim instead of claiming a newer save.
   const claimStatusInfo = getCleanupClaimStatusInfo(mask);
-  const alreadyClaimed = selectRes[0].status === commonDefines.FileStatus.UpdateVersion && selectRes[0].status_info === claimStatusInfo;
   const cleanupMask = newTaskMask(ctx, mask.key, commonDefines.FileStatus.UpdateVersion, claimStatusInfo);
+  cleanupMask.additional = mask.additional;
+  const alreadyClaimed = taskResultMatchesMask(selectRes[0], cleanupMask);
   if (!alreadyClaimed) {
     const claimTask = newTaskMask(ctx, mask.key, commonDefines.FileStatus.UpdateVersion, claimStatusInfo);
     const claimRes = yield taskResult.claimIf(ctx, claimTask, mask);
@@ -794,21 +847,13 @@ const cleanupCacheIf = co.wrap(function* (ctx, mask) {
   // Keeping the row here preserves the retry metadata if storage deletion
   // fails, while also preventing a stale cleanup from deleting newer data.
   yield taskResult.deleteChangesIf(ctx, cleanupMask);
-  const ownedRes = yield taskResult.select(ctx, mask.key);
-  if (ownedRes.length === 0) {
-    return true;
-  }
-  if (!taskResultMatchesMask(ownedRes[0], cleanupMask)) {
-    return false;
-  }
-  yield storage.deletePath(ctx, mask.key);
-  if (docsCoServer?.editorStatProxy?.deleteKey) {
-    yield docsCoServer.editorStatProxy.deleteKey(mask.key);
-  }
-  const removeRes = yield taskResult.removeIf(ctx, cleanupMask);
-  ctx.logger.debug('cleanupCacheIf db.affectedRows=%d', removeRes.affectedRows);
-  if (removeRes.affectedRows > 0) {
-    return true;
+  const cleaned = yield deleteDocumentCacheIfOwned(ctx, cleanupMask);
+  if (cleaned) {
+    const removeRes = yield taskResult.removeIf(ctx, cleanupMask);
+    ctx.logger.debug('cleanupCacheIf db.affectedRows=%d', removeRes.affectedRows);
+    if (removeRes.affectedRows > 0) {
+      return true;
+    }
   }
   // A concurrent cleanup may have removed the row after our ownership check.
   // Missing means the work is complete; a live row means this attempt lost
@@ -1391,6 +1436,12 @@ function* releaseAbandonedTaskRow(ctx, cmd, docId, operationId) {
   if (!row) {
     return false;
   }
+  const finalSave = getFinalSaveState(row, operationId);
+  if (finalSave.last && finalSave.last.operationId !== String(operationId)) {
+    // Claim hashes and minute statuses can be reused by another save. Only
+    // marker-less rows may fall back to those values without an owner match.
+    return false;
+  }
   if (commonDefines.FileStatus.SaveVersion === row.status) {
     // Restored already (declined, or not accepted): a reopen resumes it.
     return row.status_info === cmd.getStatusInfoIn();
@@ -1402,7 +1453,7 @@ function* releaseAbandonedTaskRow(ctx, cmd, docId, operationId) {
   // Its pending status, its claim, or the minute it wrote (an acceptance that
   // could not be persisted): any of them may still have its changes.
   const holdsRow =
-    getFinalSaveState(row, operationId).pendingOwn ||
+    finalSave.pendingOwn ||
     row.status_info === ownClaim ||
     (undefined !== cmd.getSfcStatusInfo() && null !== cmd.getSfcStatusInfo() && row.status_info === cmd.getSfcStatusInfo());
   if (!holdsRow) {
@@ -1543,17 +1594,34 @@ function* persistAcceptedCallback(ctx, docId, updateMask, openFromForgotten, ope
   // The integrator has accepted the final save, so persist that fact before
   // any post-callback work.  The marker is what protects a stale broker
   // delivery from sending the same callback a second time.
-  const acceptedMask = newTaskMask(ctx, docId, updateMask.status, updateMask.statusInfo);
+  const acceptedMask = {...updateMask};
   const acceptedTask = new taskResult.TaskResultData();
   acceptedTask.status = commonDefines.FileStatus.UpdateVersion;
   acceptedTask.statusInfo = openFromForgotten ? commonDefines.CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO : commonDefines.CALLBACK_ACCEPTED_STATUS_INFO;
   const fresh = yield* getAdditionalForMarker(ctx, docId, currentAdditional);
-  const additional = setFinalSaveMarker(acceptedTask, fresh, operationId, 'accepted', openFromForgotten);
-  const acceptedRes = yield taskResult.updateIf(ctx, acceptedTask, acceptedMask);
+  let additional = setFinalSaveMarker(acceptedTask, fresh, operationId, 'accepted', openFromForgotten);
+  let acceptedRes = yield taskResult.updateIf(ctx, acceptedTask, acceptedMask);
+  if (!(acceptedRes.affectedRows > 0)) {
+    // Metadata appended during the callback can change the snapshot. Refresh
+    // only while the last marker still names this operation, and compare the
+    // refreshed snapshot atomically too.
+    const currentRes = yield taskResult.select(ctx, docId);
+    const current = currentRes[0];
+    if (
+      taskResultMatchesMask(current, {...acceptedMask, additional: null}) &&
+      getFinalSaveState(current, operationId).last?.operationId === String(operationId)
+    ) {
+      acceptedMask.additional = current.additional;
+      acceptedTask.replaceAdditional = false;
+      additional = setFinalSaveMarker(acceptedTask, current.additional, operationId, 'accepted', openFromForgotten);
+      acceptedRes = yield taskResult.updateIf(ctx, acceptedTask, acceptedMask);
+    }
+  }
   if (!(acceptedRes.affectedRows > 0)) {
     throw new Error('failed to persist accepted final-save callback');
   }
   updateMask.statusInfo = acceptedTask.statusInfo;
+  updateMask.additional = additional;
   return additional;
 }
 // The last step of an accepted save, once cleanup and publication are done.
@@ -1566,15 +1634,15 @@ function* completeAcceptedSave(ctx, docId, openFromForgotten, mask) {
     // As on main, the cache and the row of a session opened from the forgotten
     // file go, so that the next open converts the integrator's file.  Storage
     // first, while the row still keeps opens out; then the row.
-    const selectRes = yield taskResult.select(ctx, docId);
-    if (selectRes.length === 0 || !taskResultMatchesMask(selectRes[0], mask)) {
+    const cleaned = yield deleteDocumentCacheIfOwned(ctx, mask);
+    if (!cleaned) {
+      yield* retryChangedFinalSaveMetadata(ctx, docId, mask);
       return;
     }
-    yield storage.deletePath(ctx, docId);
-    if (docsCoServer?.editorStatProxy?.deleteKey) {
-      yield docsCoServer.editorStatProxy.deleteKey(docId);
+    const removed = yield taskResult.removeIf(ctx, mask);
+    if (!(removed.affectedRows > 0)) {
+      yield* retryChangedFinalSaveMetadata(ctx, docId, mask);
     }
-    yield taskResult.removeIf(ctx, mask);
     return;
   }
   if (isCallbackAcceptedStatusInfo(mask.statusInfo)) {
@@ -1586,6 +1654,7 @@ function* completeAcceptedSave(ctx, docId, openFromForgotten, mask) {
     updateTask.statusInfo = Math.floor(Date.now() / 60000);
     const completedRes = yield taskResult.updateIf(ctx, updateTask, mask);
     if (!(completedRes.affectedRows > 0)) {
+      yield* retryChangedFinalSaveMetadata(ctx, docId, mask);
       // Removed (GC or cache cleanup), released or taken over meanwhile.
       ctx.logger.debug('commandSfcCallback: accepted status already released');
     }
@@ -1708,7 +1777,12 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
     // The row holds this save's forgotten-file cleanup claim: the forgotten
     // file is stored and the changes may already be gone, so resume that
     // cleanup instead of restoring SaveVersion.
-    const holdsOwnClaim = tracked && !!row && commonDefines.FileStatus.UpdateVersion === row.status && row.status_info === ownClaimStatusInfo;
+    const holdsOwnClaim =
+      tracked &&
+      !!row &&
+      commonDefines.FileStatus.UpdateVersion === row.status &&
+      row.status_info === ownClaimStatusInfo &&
+      (!finalSave.last || finalSave.last.operationId === String(savedClaimId));
     const resumeForgottenCleanup = callbackDeclined && holdsOwnClaim;
     let storeForgotten = false;
     // A saved-state claim taken by an earlier attempt travels with the command.
@@ -1732,8 +1806,17 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
     let updateIfRes;
 
     const updateMask = newTaskMask(ctx, docId, null, null);
+    if (tracked) {
+      // Match the operation's marker history as well as its reusable status.
+      // SQL compares this snapshot atomically; retries read a fresh snapshot.
+      // Oracle normalizes a NULL NCLOB to ''. Neither carries a marker.
+      updateMask.additional = rowAdditional || null;
+    }
     let superseded = false;
     if (row) {
+      // New saves may claim rows containing older markers. An operation whose
+      // own marker precedes another save must not reclaim its restored row.
+      const canClaimSaveVersion = !tracked || !finalSave.own || finalSave.last.operationId === String(savedClaimId);
       const ownsUpdateVersionRow = () => {
         // Only a row this save can show it holds may be taken over: a late
         // retry or redelivery must not continue on a newer save's row.
@@ -1761,7 +1844,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
         recoverTask.status = updateMask.status = row.status;
         recoverTask.statusInfo = updateMask.statusInfo = row.status_info;
       } else if (
-        (commonDefines.FileStatus.SaveVersion === row.status && cmd.getStatusInfoIn() === row.status_info) ||
+        (commonDefines.FileStatus.SaveVersion === row.status && cmd.getStatusInfoIn() === row.status_info && canClaimSaveVersion) ||
         (commonDefines.FileStatus.UpdateVersion === row.status && ownsUpdateVersionRow())
       ) {
         if (commonDefines.FileStatus.UpdateVersion === row.status) {
@@ -1976,6 +2059,9 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
               // updates must match what it wrote.
               updateMask.status = updateIfTask.status;
               updateMask.statusInfo = updateIfTask.statusInfo;
+              if (tracked && markersSupported) {
+                updateMask.additional = rowAdditional;
+              }
             }
             // Otherwise the row was already UpdateVersion when it was read (a
             // retry, a redelivery after a crash, an accepted callback), and the
@@ -2121,6 +2207,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
               // view-only.  An encrypted save gets its previous status back.
             }
           } else {
+            yield* retryChangedFinalSaveMetadata(ctx, docId, updateMask);
             updateIfTask = undefined;
             needUpdateVersionEvent = false;
           }
@@ -2153,7 +2240,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
         // Record the decision on the row, so that a redelivery of this save
         // (which carries no retry state) does not send the callback again.
         const fresh = yield* getAdditionalForMarker(ctx, docId, rowAdditional);
-        setFinalSaveMarker(updateIfTask, fresh, savedClaimId, 'declined', cmd.getOpenFromForgotten());
+        rowAdditional = setFinalSaveMarker(updateIfTask, fresh, savedClaimId, 'declined', cmd.getOpenFromForgotten());
       }
       updateIfRes = yield taskResult.updateIf(ctx, updateIfTask, updateMask);
       let currentRes;
@@ -2177,6 +2264,9 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
       if (updateIfRes.affectedRows > 0) {
         updateMask.status = updateIfTask.status;
         updateMask.statusInfo = updateIfTask.statusInfo;
+        if (tracked && markersSupported) {
+          updateMask.additional = rowAdditional;
+        }
         if (tracked) {
           // The row no longer carries the minute this save wrote: a newer save
           // may write the same minute, and a retry must not take that row.
@@ -2185,12 +2275,19 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
       } else {
         ctx.logger.debug('commandSfcCallback restore %d status failed', recoverTask.status);
         if (tracked && currentRes.length > 0) {
+          if (
+            taskResultMatchesMask(currentRes[0], {...updateMask, additional: null}) &&
+            getFinalSaveState(currentRes[0], savedClaimId).last?.operationId === String(savedClaimId)
+          ) {
+            // The same operation, with metadata appended meanwhile: retry with
+            // its fresh snapshot instead of releasing its saved-state claim.
+            throw new Error('final-save metadata changed during status restoration');
+          }
           // The row is someone else's now: an open that took it over (and
           // resumed the changes or found them gone), or a newer save.  Stop as
           // a superseded save: a forgotten file would shadow that session's
           // document, and the updateVersion event is not for its editors.  A
-          // removed row (GC, WOPI invalidation) still gets the forgotten file,
-          // as on main: nothing else may keep the changes.
+          // removed row cannot prove ownership of the shared forgotten file.
           ctx.logger.warn("commandSfcCallback: task row is no longer this save's; stopping");
           yield* releaseSaveState(ctx, cmd, docId, savedClaimId);
           yield* releaseShutdownEntry(ctx, cmd, docId);
@@ -2206,7 +2303,19 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
         if (!forgottenStored) {
           ctx.logger.warn('storeForgotten');
           const forgottenName = tenForgottenFilesName + pathModule.extname(cmd.getOutputPath());
-          yield storage.copyObject(ctx, savePathDoc, docId + '/' + forgottenName, undefined, tenForgottenFiles);
+          const copyForgottenFile = () => storage.copyObject(ctx, savePathDoc, docId + '/' + forgottenName, undefined, tenForgottenFiles);
+          // The row is SaveVersion again, so an open may start a new session.
+          // Hold ownership until the shared-file write has finished.
+          if (!tracked) {
+            yield copyForgottenFile();
+          } else if (!row || !(yield taskResult.withCleanupOwnership(ctx, updateMask, copyForgottenFile))) {
+            if (row) {
+              yield* retryChangedFinalSaveMetadata(ctx, docId, updateMask);
+            }
+            yield* releaseSaveState(ctx, cmd, docId, savedClaimId);
+            yield* releaseShutdownEntry(ctx, cmd, docId);
+            return replyStr;
+          }
           forgottenStored = true;
         }
       } catch (err) {
@@ -2225,7 +2334,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           false,
           callbackUserIndex,
           savedClaimed ? savedClaimId : undefined,
-          tracked && row ? (resumeForgottenCleanup ? newTaskMask(ctx, docId, row.status, row.status_info) : updateMask) : undefined
+          tracked && row ? (resumeForgottenCleanup ? {...updateMask, status: row.status, statusInfo: row.status_info} : updateMask) : undefined
         );
         if (cleanupResult === true) {
           // Keep the saved-state claim pending until cache cleanup completes.

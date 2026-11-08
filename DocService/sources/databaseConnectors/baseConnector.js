@@ -499,5 +499,6 @@ module.exports = {
   ...connectorUtilities,
   ...dbInstance,
   // Use connector-specific implementation if available, otherwise use fallback
-  getNotEmptyCondition: dbInstance.getNotEmptyCondition || getNotEmptyConditionFallback
+  getNotEmptyCondition: dbInstance.getNotEmptyCondition || getNotEmptyConditionFallback,
+  getAdditionalCondition: dbInstance.getAdditionalCondition || (parameter => `additional=${parameter}`)
 };

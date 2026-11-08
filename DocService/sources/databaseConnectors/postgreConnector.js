@@ -96,6 +96,34 @@ function closePool() {
   pool.end();
 }
 
+async function withTaskResultLock(ctx, docId, condition, action) {
+  const client = await pool.connect();
+  let discard;
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query(`SELECT 1 FROM ${cfgTableResult} WHERE tenant=$1 AND id=$2 FOR UPDATE`, [ctx.tenant, docId]);
+    let owned = false;
+    if (locked.rowCount > 0) {
+      const result = await client.query(`SELECT 1 FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values);
+      owned = result.rowCount > 0;
+      if (owned) {
+        await action();
+      }
+    }
+    await client.query('COMMIT');
+    return owned;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      discard = rollbackError;
+    }
+    throw error;
+  } finally {
+    client.release(discard);
+  }
+}
+
 function addSqlParameter(val, values) {
   values.push(val);
   return '$' + values.length;
@@ -263,5 +291,6 @@ module.exports = {
   concatParams,
   upsert,
   insertChanges,
-  getOwnershipCheck
+  getOwnershipCheck,
+  withTaskResultLock
 };

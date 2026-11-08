@@ -41,9 +41,23 @@ let row;
 let delayed;
 let errors;
 let changesLeft;
+let cleanupWait;
 
 function minute() {
   return Math.floor(now / 60000);
+}
+function cleanupBarrier() {
+  let entered, release;
+  const started = new Promise(resolve => (entered = resolve));
+  const pending = new Promise(resolve => (release = resolve));
+  return {
+    started,
+    release,
+    pause: async () => {
+      entered();
+      await pending;
+    }
+  };
 }
 function additionalEntries() {
   if (!row?.additional) {
@@ -67,6 +81,9 @@ function rowMatches(mask) {
     return false;
   }
   if (mask.statusInfo !== undefined && mask.statusInfo !== null && row.status_info !== mask.statusInfo) {
+    return false;
+  }
+  if (mask.additional !== undefined && mask.additional !== null && row.additional !== mask.additional) {
     return false;
   }
   return true;
@@ -196,6 +213,7 @@ describe('final-save retries converge', () => {
     delayed = [];
     errors = [];
     changesLeft = true;
+    cleanupWait = Promise.resolve();
     row = {
       tenant,
       id: DOC_ID,
@@ -220,9 +238,30 @@ describe('final-save retries converge', () => {
 
     jest.spyOn(taskResult, 'select').mockImplementation(async (_ctx, id) => (row && id === DOC_ID ? [{...row}] : []));
     jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
-    jest.spyOn(taskResult, 'updateIf').mockImplementation(async (_ctx, task, mask, updateTime = true) => updateRow(task, mask, updateTime));
-    jest.spyOn(taskResult, 'claimIf').mockImplementation(async (_ctx, task, mask) => updateRow(task, mask, false));
+    jest.spyOn(taskResult, 'updateIf').mockImplementation(async (_ctx, task, mask, updateTime = true) => {
+      await cleanupWait;
+      return updateRow(task, mask, updateTime);
+    });
+    jest.spyOn(taskResult, 'claimIf').mockImplementation(async (_ctx, task, mask) => {
+      await cleanupWait;
+      return updateRow(task, mask, false);
+    });
+    jest.spyOn(taskResult, 'withCleanupOwnership').mockImplementation(async (_ctx, mask, action) => {
+      await cleanupWait;
+      if (!rowMatches(mask)) {
+        return false;
+      }
+      let release;
+      cleanupWait = new Promise(resolve => (release = resolve));
+      try {
+        await action();
+        return true;
+      } finally {
+        release();
+      }
+    });
     jest.spyOn(taskResult, 'deleteChangesIf').mockImplementation(async (_ctx, mask) => {
+      await cleanupWait;
       if (!rowMatches(mask)) {
         return {affectedRows: 0};
       }
@@ -231,6 +270,7 @@ describe('final-save retries converge', () => {
     });
     jest.spyOn(sqlBase, 'getChangesIndexPromise').mockImplementation(async () => [{change_id: changesLeft ? 3 : null}]);
     jest.spyOn(taskResult, 'removeIf').mockImplementation(async (_ctx, mask) => {
+      await cleanupWait;
       if (!rowMatches(mask)) {
         return {affectedRows: 0};
       }
@@ -267,6 +307,237 @@ describe('final-save retries converge', () => {
     });
   });
   afterEach(() => jest.restoreAllMocks());
+
+  test.each([false, true])('initial-claim metadata conflicts retry without dropping the save (older marker: %s)', async olderMarker => {
+    if (olderMarker) {
+      await deliver(queued());
+      expectCompleted();
+      row.status = SaveVersion;
+      row.status_info = 12;
+      changesLeft = true;
+      docsCoServer.sendServerRequest.mockClear();
+    }
+    const updateIf = taskResult.updateIf.getMockImplementation();
+    let appended = false;
+    taskResult.updateIf.mockImplementation(async (ctx, task, mask, updateTime) => {
+      if (!appended && mask.status === SaveVersion && task.status === UpdateVersion) {
+        appended = true;
+        row.additional += sqlBase.DocumentAdditional.prototype.setShardKey('appended-meanwhile');
+      }
+      return updateIf(ctx, task, mask, updateTime);
+    });
+
+    const {ack} = await deliver(queued({savekey: 'save-B'}));
+
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(delayed).toHaveLength(1);
+    expect(docsCoServer.sendServerRequest).not.toHaveBeenCalled();
+    expect(changesLeft).toBe(true);
+    expect(await drainRetries()).toBe(1);
+    expectCompleted('save-B');
+    expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+    expect(changesLeft).toBe(false);
+  });
+
+  test.each([false, true])('metadata appended after cleanup retries completion (from forgotten: %s)', async fromForgotten => {
+    if (fromForgotten) {
+      storage.listObjects.mockImplementation(async (_ctx, path) =>
+        path.endsWith('.txt') ? ['document/forgotten.txt'] : ['document/forgotten.docx']
+      );
+    }
+    const clean = docsCoServer.cleanDocumentOnExitPromise;
+    let appended = false;
+    jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockImplementation(async (...args) => {
+      const result = await clean(...args);
+      if (!appended) {
+        appended = true;
+        row.additional += sqlBase.DocumentAdditional.prototype.setShardKey('appended-meanwhile');
+      }
+      return result;
+    });
+
+    await deliver(queued());
+
+    expect(delayed).toHaveLength(1);
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    expect(await drainRetries()).toBe(1);
+    if (fromForgotten) {
+      expect(row).toBeNull();
+    } else {
+      expectCompleted();
+      expect(additionalEntries()).toContainEqual({shardKey: 'appended-meanwhile'});
+    }
+    expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['forgotten files', 'cache', 'forgotten completion'])('takeover waits for in-flight %s deletion', async stage => {
+    const deleting = cleanupBarrier();
+    const cleaningB = cleanupBarrier();
+    let notifyTakeover;
+    const submitted = new Promise(resolve => (notifyTakeover = resolve));
+    if (stage === 'cache') {
+      docsCoServer.sendServerRequest.mockResolvedValue('{"error":1}');
+    } else if (stage === 'forgotten completion') {
+      storage.listObjects.mockImplementation(async (_ctx, path) =>
+        path.endsWith('.txt') ? ['document/forgotten.txt'] : ['document/forgotten.docx']
+      );
+    }
+    const files = new Set(['old-file']);
+    let paused = false;
+    storage.deletePath.mockImplementation(async (_ctx, _docId, prefix) => {
+      if (!paused && (stage === 'forgotten files' ? prefix !== undefined : prefix === undefined)) {
+        paused = true;
+        await deleting.pause();
+        files.clear();
+      }
+    });
+    const updateIf = taskResult.updateIf.getMockImplementation();
+    taskResult.updateIf.mockImplementation(async (...args) => {
+      if (args[1].statusInfo === commonDefines.FINAL_SAVE_TAKEOVER_STATUS_INFO) {
+        notifyTakeover();
+      }
+      return updateIf(...args);
+    });
+    const initialRow = {...row};
+    const saveA = deliver(queued());
+    let takeover, saveB;
+    try {
+      await deleting.started;
+      const ctx = new operationContext.Context();
+      ctx.setTenant(tenant);
+      now += 86400000;
+      let tookOver = false;
+      takeover = canvasservice.takeOverAbandonedSaveForOpen(ctx, DOC_ID, {...row}).then(result => {
+        tookOver = true;
+        return result;
+      });
+      await submitted;
+      await new Promise(setImmediate);
+      expect(tookOver).toBe(false);
+      expect(files).toEqual(new Set(['old-file']));
+
+      deleting.release();
+      await Promise.all([saveA, takeover]);
+      expect(files.size).toBe(0);
+      row = {...(row || initialRow), status: SaveVersion, status_info: 12};
+      changesLeft = true;
+      files.add('new-session-file');
+      docsCoServer.sendServerRequest.mockResolvedValue('{"error":0}');
+      const clean = docsCoServer.cleanDocumentOnExitPromise;
+      jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockImplementation(async (...args) => {
+        await cleaningB.pause();
+        return clean(...args);
+      });
+      saveB = deliver(queued({savekey: 'save-B'}));
+      await cleaningB.started;
+      const pendingB = {...row};
+      await drainRetries();
+      expect(row).toEqual(pendingB);
+      expect(changesLeft).toBe(true);
+      expect(files).toEqual(new Set(['new-session-file']));
+    } finally {
+      deleting.release();
+      cleaningB.release();
+      await Promise.all([saveA, takeover, saveB]);
+    }
+  });
+
+  test('a new session waits for an in-flight forgotten-file copy', async () => {
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('1').mockResolvedValueOnce('0');
+    const copying = cleanupBarrier();
+    let forgottenFile;
+    storage.copyObject.mockImplementationOnce(async () => {
+      await copying.pause();
+      forgottenFile = 'save-A';
+    });
+    const saveA = deliver(queued());
+    let reopen;
+    try {
+      await copying.started;
+      expect(finalSaveMarkers().at(-1)).toEqual(expect.objectContaining({operationId: 'save-key', phase: 'declined'}));
+      const ctx = new operationContext.Context();
+      ctx.setTenant(tenant);
+      let reopened = false;
+      reopen = taskResult
+        .updateIf(
+          ctx,
+          {status: Ok, statusInfo: constants.NO_ERROR},
+          {
+            tenant,
+            key: DOC_ID,
+            status: SaveVersion,
+            statusInfo: 12,
+            additional: row.additional
+          }
+        )
+        .then(result => {
+          reopened = true;
+          return result;
+        });
+      await new Promise(setImmediate);
+      expect(reopened).toBe(false);
+      expect(forgottenFile).toBeUndefined();
+      copying.release();
+      expect((await reopen).affectedRows).toBe(1);
+      await saveA;
+      const retriesA = delayed.splice(0);
+      row.status = SaveVersion;
+      row.status_info = 12;
+      changesLeft = true;
+      taskResult.restoreInitialPassword.mockRejectedValueOnce(new Error('pause B cleanup'));
+      await deliver(queued({savekey: 'save-B'}));
+      const pendingB = {...row};
+      forgottenFile = 'save-B';
+      for (const retryA of retriesA) {
+        await deliver(retryA.data);
+      }
+      expect(row).toEqual(pendingB);
+      expect(forgottenFile).toBe('save-B');
+      expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    } finally {
+      copying.release();
+      await Promise.all([saveA, reopen]);
+    }
+  });
+
+  test.each(['newer save', 'metadata'])('a forgotten-file copy rechecks ownership after %s changes', async change => {
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
+    const withOwnership = taskResult.withCleanupOwnership.getMockImplementation();
+    let interrupted = false;
+    let newerRow;
+    taskResult.withCleanupOwnership.mockImplementation(async (...args) => {
+      if (!interrupted) {
+        interrupted = true;
+        if (change === 'newer save') {
+          newerSaveTakesRow();
+          row.status_info = commonDefines.CALLBACK_ACCEPTED_STATUS_INFO;
+          const additional = new sqlBase.DocumentAdditional();
+          additional.data.push({[MARKER]: {operationId: 'newer-save', phase: 'accepted', since: now}});
+          row.additional += additional.toSQLInsert();
+          newerRow = {...row};
+        } else {
+          row.additional += sqlBase.DocumentAdditional.prototype.setShardKey('before-forgotten-copy');
+        }
+      }
+      return withOwnership(...args);
+    });
+
+    await deliver(queued());
+
+    expect(storage.copyObject).not.toHaveBeenCalled();
+    if (change === 'newer save') {
+      expect(row).toEqual(newerRow);
+      expect(delayed).toHaveLength(0);
+      expect(taskResult.deleteChangesIf).not.toHaveBeenCalled();
+      expect(docsCoServer.publish).not.toHaveBeenCalled();
+    } else {
+      expect(delayed).toHaveLength(1);
+      await drainRetries();
+      expect(storage.copyObject).toHaveBeenCalledTimes(1);
+      expect(row).toBeNull();
+      expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+    }
+  });
 
   test('a first-attempt success releases its pending status and leaves one marker', async () => {
     const {ack} = await deliver(queued());
@@ -587,6 +858,105 @@ describe('final-save retries converge', () => {
     expect(row).toEqual(newerRow);
     expect(sqlBase.deleteChangesPromise).not.toHaveBeenCalled();
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['changes', 'password'])('an accepted save paused before %s cleanup cannot clean a newer accepted save', async stage => {
+    const first = cleanupBarrier();
+    const second = cleanupBarrier();
+    let calls = 0;
+    if (stage === 'changes') {
+      const deleteChanges = taskResult.deleteChangesIf.getMockImplementation();
+      taskResult.deleteChangesIf.mockImplementation(async (...args) => {
+        await (++calls === 1 ? first : second).pause();
+        return deleteChanges(...args);
+      });
+    } else {
+      taskResult.restoreInitialPassword.mockImplementation(async (_ctx, _id, mask) => {
+        await (++calls === 1 ? first : second).pause();
+        if (rowMatches(mask)) {
+          row.password = 'restored';
+        }
+      });
+    }
+    const saveA = deliver(queued());
+    let saveB;
+    try {
+      await first.started;
+      const ctx = new operationContext.Context();
+      ctx.setTenant(tenant);
+      now += 86400000;
+      expect(canvasservice.isUpdateVersionExpired(ctx, row, 5 * 60000)).toBe(true);
+      expect(await canvasservice.takeOverAbandonedSaveForOpen(ctx, DOC_ID, {...row})).toBe(Ok);
+      row.status = SaveVersion;
+      row.status_info = 12;
+      row.password = 'new-session-password';
+      saveB = deliver(queued({savekey: 'save-B'}));
+      await second.started;
+      const pendingB = {...row};
+      expect(finalSaveMarkers().at(-1)).toEqual(expect.objectContaining({operationId: 'save-B', phase: 'accepted'}));
+      first.release();
+      await saveA;
+
+      expect(row).toEqual(pendingB);
+      expect(changesLeft).toBe(true);
+      expect(storage.deletePath).not.toHaveBeenCalled();
+      expect(taskResult.removeIf).not.toHaveBeenCalled();
+    } finally {
+      first.release();
+      second.release();
+      await Promise.all([saveA, saveB]);
+    }
+    expectCompleted('save-B');
+    expect(await drainRetries()).toBe(1);
+    expectCompleted('save-B');
+    expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([false, true])('a stale accepted completion preserves the next save (from forgotten: %s)', async fromForgotten => {
+    if (fromForgotten) {
+      storage.listObjects.mockImplementation(async (_ctx, path) =>
+        path.endsWith('.txt') ? ['document/forgotten.txt'] : ['document/forgotten.docx']
+      );
+    }
+    const first = cleanupBarrier();
+    const second = cleanupBarrier();
+    const clean = docsCoServer.cleanDocumentOnExitPromise;
+    jest.spyOn(docsCoServer, 'cleanDocumentOnExitPromise').mockImplementation(async (...args) => {
+      if (finalSaveMarkers().at(-1)?.operationId === 'save-B') {
+        await second.pause();
+        return clean(...args);
+      }
+      const result = await clean(...args);
+      await first.pause();
+      return result;
+    });
+    const saveA = deliver(queued());
+    let saveB;
+    try {
+      await first.started;
+      now += 86400000;
+      const ctx = new operationContext.Context();
+      ctx.setTenant(tenant);
+      expect(await canvasservice.takeOverAbandonedSaveForOpen(ctx, DOC_ID, {...row})).toBe(commonDefines.FileStatus.None);
+      row.status = SaveVersion;
+      row.status_info = 12;
+      changesLeft = true;
+      saveB = deliver(queued({savekey: 'save-B'}));
+      await second.started;
+      const pendingB = {...row};
+      storage.deletePath.mockClear();
+      first.release();
+      await saveA;
+
+      expect(row).toEqual(pendingB);
+      expect(changesLeft).toBe(true);
+      expect(storage.deletePath).not.toHaveBeenCalled();
+      expect(taskResult.removeIf).not.toHaveBeenCalled();
+    } finally {
+      first.release();
+      second.release();
+      await Promise.all([saveA, saveB]);
+    }
   });
 
   test('a stale delivery of an earlier save does not resend after a later save appended its marker', async () => {
@@ -1020,6 +1390,27 @@ describe('final-save retries converge', () => {
     expect(finalSaveMarkers()).toHaveLength(11);
   });
 
+  test('metadata appended during a declined restore retries the same operation', async () => {
+    docsCoServer.sendServerRequest.mockResolvedValue('{"error":1}');
+    const updateIf = taskResult.updateIf.getMockImplementation();
+    let appended = false;
+    taskResult.updateIf.mockImplementation(async (ctx, task, mask, updateTime) => {
+      if (!appended && task.status === SaveVersion) {
+        appended = true;
+        row.additional += sqlBase.DocumentAdditional.prototype.setShardKey('appended-meanwhile');
+      }
+      return updateIf(ctx, task, mask, updateTime);
+    });
+
+    await deliver(queued());
+    expect(delayed).toHaveLength(1);
+    expect(await drainRetries()).toBe(1);
+
+    expect(row).toBeNull();
+    expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+  });
+
   test('a session opened from the forgotten file ends as on main: cache and row removed at completion', async () => {
     storage.listObjects.mockImplementation(async (_ctx, path) => (path.endsWith('.txt') ? ['document/forgotten.txt'] : ['document/forgotten.docx']));
     const cacheDeleted = [];
@@ -1068,6 +1459,119 @@ describe('final-save retries converge', () => {
     expect(storage.deletePath).not.toHaveBeenCalled();
     // Never conditional on Ok: a live session's row is not switched under it.
     expect(masks.filter(mask => Ok === mask.status)).toEqual([]);
+  });
+
+  test.each([
+    ['remaining changes', true],
+    ['remaining changes', false],
+    ['claim', false],
+    ['storage', false],
+    ['release', false]
+  ])('takeover retries metadata conflicts during %s (changes remain: %s)', async (stage, remaining) => {
+    taskResult.restoreInitialPassword.mockRejectedValueOnce(new Error('pause accepted cleanup'));
+    await deliver(queued());
+    now += 86400000;
+    const ctx = new operationContext.Context();
+    ctx.setTenant(tenant);
+    changesLeft = remaining;
+    let appended = false;
+    const append = () => {
+      appended = true;
+      row.additional += sqlBase.DocumentAdditional.prototype.setShardKey('appended-meanwhile');
+    };
+    sqlBase.getChangesIndexPromise.mockImplementationOnce(async () => {
+      if (stage === 'remaining changes') append();
+      return [{change_id: remaining ? 3 : null}];
+    });
+    const updateIf = taskResult.updateIf.getMockImplementation();
+    taskResult.updateIf.mockImplementation(async (...args) => {
+      const claiming = args[1].statusInfo === commonDefines.FINAL_SAVE_TAKEOVER_STATUS_INFO;
+      if (!appended && ((stage === 'claim' && claiming) || (stage === 'release' && !claiming))) append();
+      return updateIf(...args);
+    });
+    const cleanup = taskResult.withCleanupOwnership.getMockImplementation();
+    taskResult.withCleanupOwnership.mockImplementation(async (...args) => {
+      if (!appended && stage === 'storage') append();
+      return cleanup(...args);
+    });
+
+    const expected = remaining ? Ok : commonDefines.FileStatus.None;
+    expect(await canvasservice.takeOverAbandonedSaveForOpen(ctx, DOC_ID, {...row})).toBe(expected);
+    expect(row.status).toBe(expected);
+    expect(additionalEntries()).toContainEqual({shardKey: 'appended-meanwhile'});
+    expect(storage.deletePath).toHaveBeenCalledTimes(remaining ? 0 : 1);
+  });
+
+  test('takeover does not refresh its snapshot across another operation with the same hold status', async () => {
+    taskResult.restoreInitialPassword.mockRejectedValueOnce(new Error('pause accepted cleanup'));
+    await deliver(queued());
+    const ctx = new operationContext.Context();
+    ctx.setTenant(tenant);
+    let pendingB;
+    sqlBase.getChangesIndexPromise.mockImplementationOnce(async () => {
+      newerSaveTakesRow();
+      row.status_info = commonDefines.FINAL_SAVE_TAKEOVER_STATUS_INFO;
+      pendingB = {...row};
+      return [{change_id: 3}];
+    });
+
+    expect(await canvasservice.takeOverAbandonedSaveForOpen(ctx, DOC_ID, {...row})).toBeUndefined();
+    expect(row).toEqual(pendingB);
+    expect(storage.deletePath).not.toHaveBeenCalled();
+  });
+
+  test.each(['cleanup claim', 'sending', 'restored'])('abandoning A leaves B cleanup state alone (%s)', async phase => {
+    taskResult.restoreInitialPassword.mockRejectedValueOnce(new Error('pause A cleanup'));
+    await deliver(queued());
+    const retryA = new commonDefines.TaskQueueData(JSON.parse(delayed[0].data)).getCmd();
+    const ctx = new operationContext.Context();
+    ctx.setTenant(tenant);
+    if (phase === 'cleanup claim') {
+      delayed = [];
+      now += 86400000;
+      expect(await canvasservice.takeOverAbandonedSaveForOpen(ctx, DOC_ID, {...row})).toBe(Ok);
+      row.status = SaveVersion;
+      row.status_info = 12;
+      docsCoServer.sendServerRequest.mockResolvedValue('{"error":1}');
+      storage.deletePath.mockRejectedValueOnce(new Error('pause B cache cleanup'));
+      await deliver(queued({savekey: 'save-B'}));
+      expect(finalSaveMarkers().at(-1)).toEqual(expect.objectContaining({operationId: 'save-B', phase: 'declined'}));
+      expect(row.status_info).toBeGreaterThan(commonDefines.CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO);
+    } else {
+      newerSaveTakesRow();
+      if (phase === 'restored') {
+        row.status = SaveVersion;
+        row.status_info = 12;
+      }
+    }
+    const pendingB = {...row};
+    docsCoServer.publish.mockClear();
+
+    await canvasservice.abandonSfcRetry(ctx, retryA);
+
+    expect(row).toEqual(pendingB);
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    if (phase !== 'cleanup claim') expect(storage.deletePath).not.toHaveBeenCalled();
+  });
+
+  test('takeover bounds retries when metadata is continuously appended', async () => {
+    taskResult.restoreInitialPassword.mockRejectedValueOnce(new Error('pause accepted cleanup'));
+    await deliver(queued());
+    const ctx = new operationContext.Context();
+    ctx.setTenant(tenant);
+    const updateIf = taskResult.updateIf.getMockImplementation();
+    let attempts = 0;
+    taskResult.updateIf.mockImplementation(async (...args) => {
+      attempts++;
+      row.additional += sqlBase.DocumentAdditional.prototype.setShardKey(`writer-${attempts}`);
+      return updateIf(...args);
+    });
+
+    expect(await canvasservice.takeOverAbandonedSaveForOpen(ctx, DOC_ID, {...row})).toBeUndefined();
+    expect(attempts).toBe(3);
+    expect(row.status_info).toBe(commonDefines.CALLBACK_ACCEPTED_STATUS_INFO);
+    expect(changesLeft).toBe(true);
+    expect(storage.deletePath).not.toHaveBeenCalled();
   });
 
   test('a takeover of an interrupted hold decides like the takeover it replaces', async () => {
@@ -1482,6 +1986,62 @@ describe('final-save retries converge', () => {
     expectCompleted();
   });
 
+  test.each([
+    ['retry', 'declined'],
+    ['redelivery', 'declined'],
+    ['retry', 'sending'],
+    ['redelivery', 'sending']
+  ])('an old %s cannot claim B restored SaveVersion after its %s phase', async (delivery, phase) => {
+    jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
+    storage.copyObject.mockRejectedValueOnce(new Error('pause A recovery copy'));
+    const originalA = queued();
+    await deliver(originalA);
+    const retryA = delayed.shift().data;
+    expect(finalSaveMarkers().at(-1)).toEqual(expect.objectContaining({operationId: 'save-key', phase: 'declined'}));
+    // SaveVersion input values are milliseconds within the hour and can recur.
+    now += 3600000;
+    row.status = SaveVersion;
+    row.status_info = 12;
+    row.password = 'B-password';
+    if (phase === 'declined') {
+      storage.copyObject.mockRejectedValueOnce(new Error('pause B recovery copy'));
+    } else {
+      docsCoServer.sendServerRequest.mockRejectedValueOnce(Object.assign(new Error('pause B callback'), {statusCode: 503}));
+    }
+    await deliver(queued({savekey: 'save-B'}));
+    expect(row.status).toBe(SaveVersion);
+    expect(finalSaveMarkers().at(-1)).toEqual(expect.objectContaining({operationId: 'save-B', phase}));
+    const pendingB = {...row};
+    const retryB = [...delayed];
+    for (const mock of [
+      storage.copyObject,
+      storage.deletePath,
+      taskResult.updateIf,
+      taskResult.deleteChangesIf,
+      taskResult.removeIf,
+      docsCoServer.publish
+    ]) {
+      mock.mockClear();
+    }
+
+    const {ack} = await deliver(delivery === 'retry' ? retryA : originalA);
+
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(row).toEqual(pendingB);
+    expect(changesLeft).toBe(true);
+    expect(delayed).toEqual(retryB);
+    expect(storage.copyObject).not.toHaveBeenCalled();
+    expect(storage.deletePath).not.toHaveBeenCalled();
+    expect(taskResult.updateIf).not.toHaveBeenCalled();
+    expect(taskResult.deleteChangesIf).not.toHaveBeenCalled();
+    expect(taskResult.removeIf).not.toHaveBeenCalled();
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    expect(await drainRetries()).toBe(1);
+    expect(row).toBeNull();
+    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    expect(storage.copyObject.mock.calls[0][1]).toBe('documentsave-B/output.docx');
+  });
+
   test("a redelivered original of a declined save leaves a newer save's row alone", async () => {
     docsCoServer.sendServerRequest.mockResolvedValue('{"error":1}');
     storage.copyObject.mockRejectedValueOnce(new Error('forgotten storage unavailable'));
@@ -1735,16 +2295,29 @@ describe('final-save retries converge', () => {
     expect(docsCoServer.editorData.savedCallbackAccepted).toEqual({});
   });
 
-  test('a declined save whose row was removed meanwhile still stores the forgotten file, as main does', async () => {
+  test.each([false, true])('a declined save whose row was removed cannot copy into a new session (reopened: %s)', async reopened => {
+    const initialRow = {...row};
     docsCoServer.sendServerRequest.mockImplementation(async () => {
       row = null;
       return '{"error":1}';
+    });
+    const withOwnership = taskResult.withCleanupOwnership.getMockImplementation();
+    taskResult.withCleanupOwnership.mockImplementation(async (...args) => {
+      if (reopened) {
+        row = {...initialRow};
+        newerSaveTakesRow();
+      }
+      return withOwnership(...args);
     });
 
     await deliver(queued());
     await drainRetries();
 
-    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    expect(storage.copyObject).not.toHaveBeenCalled();
+    expect(storage.deletePath).not.toHaveBeenCalled();
+    expect(taskResult.deleteChangesIf).not.toHaveBeenCalled();
+    expect(taskResult.removeIf).not.toHaveBeenCalled();
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
     expect(delayed).toHaveLength(0);
   });
 });

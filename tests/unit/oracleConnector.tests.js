@@ -39,9 +39,56 @@ describe('Oracle conditional change deletion transaction', () => {
     jest.resetModules();
     connection = makeConnection();
     pool = {getConnection: jest.fn().mockResolvedValue(connection)};
-    driver = {createPool: jest.fn().mockResolvedValue(pool)};
+    driver = {createPool: jest.fn().mockResolvedValue(pool), DB_TYPE_NCLOB: 'NCLOB'};
     jest.doMock('../../DocService/node_modules/oracledb', () => driver);
     connector = require('../../DocService/sources/databaseConnectors/oracleConnector');
+  });
+
+  test('binds large operation snapshots as NCLOB without changing ordinary parameter binding', () => {
+    const values = [];
+    const snapshot = 'é'.repeat(40000);
+    expect(connector.addSqlParameter(snapshot, values, true)).toBe(':0');
+    expect(connector.addSqlParameter('document', values)).toBe(':1');
+    expect(values).toEqual([{val: snapshot, type: driver.DB_TYPE_NCLOB}, 'document']);
+  });
+
+  test.each([false, true])('keeps storage under the row lock and releases after its result (failure: %s)', async failed => {
+    connection.execute.mockReset().mockResolvedValue({rows: [[1]]});
+    let entered, finish;
+    const started = new Promise(resolve => (entered = resolve));
+    const pending = new Promise(resolve => (finish = resolve));
+    const failure = new Error('storage failed');
+    const cleanup = connector.withTaskResultLock(ctx, docId, {sql: 'status=:0', values: [7]}, async () => {
+      entered();
+      await pending;
+      if (failed) throw failure;
+    });
+    await started;
+    expect(connection.execute).toHaveBeenNthCalledWith(2, expect.stringContaining('WHERE status=:0'), [7], {autoCommit: false});
+    expect(connection.commit).not.toHaveBeenCalled();
+    expect(connection.close).not.toHaveBeenCalled();
+    finish();
+    if (failed) {
+      await expect(cleanup).rejects.toBe(failure);
+      expect(connection.rollback).toHaveBeenCalledTimes(1);
+      expect(connection.commit).not.toHaveBeenCalled();
+    } else {
+      await expect(cleanup).resolves.toBe(true);
+      expect(connection.commit).toHaveBeenCalledTimes(1);
+    }
+    expect(connection.close).toHaveBeenCalledWith({drop: false});
+  });
+
+  test('does not run storage after ownership changed while waiting for the lock', async () => {
+    connection.execute
+      .mockReset()
+      .mockResolvedValueOnce({rows: [[1]]})
+      .mockResolvedValueOnce({rows: []});
+    const action = jest.fn();
+    await expect(connector.withTaskResultLock(ctx, docId, {sql: 'status=:0', values: [7]}, action)).resolves.toBe(false);
+    expect(action).not.toHaveBeenCalled();
+    expect(connection.commit).toHaveBeenCalledTimes(1);
+    expect(connection.close).toHaveBeenCalledWith({drop: false});
   });
 
   test('holds the task row while revalidating ownership and deleting on the same connection', async () => {

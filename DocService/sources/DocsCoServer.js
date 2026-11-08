@@ -1681,12 +1681,6 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
     yield taskResult.restoreInitialPassword(ctx, docId, opt_changesMask);
     if (opt_changesMask) {
       yield taskResult.deleteChangesIf(ctx, opt_changesMask);
-      const selectRes = yield taskResult.select(ctx, docId);
-      if (!canvasService.taskResultMatchesMask(selectRes[0], opt_changesMask)) {
-        // Taken over meanwhile: the forgotten files and the lock are the new
-        // owner's.
-        return false;
-      }
     } else {
       // Unlike main, a failed deletion fails the cleanup (an encrypted save
       // answers saveFile with 400): changes left behind silently would be
@@ -1694,7 +1688,14 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
       yield sqlBase.deleteChangesPromise(ctx, docId, null);
     }
     //delete forgotten after successful send on callbackUrl
-    yield storage.deletePath(ctx, docId, tenForgottenFiles);
+    if (opt_changesMask) {
+      const cleaned = yield taskResult.withCleanupOwnership(ctx, opt_changesMask, () => storage.deletePath(ctx, docId, tenForgottenFiles));
+      if (!cleaned) {
+        return false;
+      }
+    } else {
+      yield storage.deletePath(ctx, docId, tenForgottenFiles);
+    }
   }
   yield unlockWopiDoc(ctx, docId, opt_userIndex);
   return true;

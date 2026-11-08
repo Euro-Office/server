@@ -243,37 +243,34 @@ async function executeBunch(ctx, sqlCommand, values = [], options, noLog = false
   }
 }
 
-async function deleteChangesIf(ctx, docId, sqlCommand, values) {
+async function withLockedTaskRow(ctx, docId, action) {
   let connection;
   let dropConnection = false;
   let operationError;
-  let affectedRows = 0;
+  let result = false;
   try {
     if (!pool) {
       pool = await oracledb.createPool(configuration);
     }
     connection = await pool.getConnection();
-    // Lock in task_result -> doc_changes order, on one connection. Oracle
-    // cannot use FOR UPDATE in the DELETE's ownership subquery.
+    // Hold task_result before revalidating ownership or touching changes/storage.
+    // Oracle cannot use FOR UPDATE in the DELETE's ownership subquery.
     const locked = await connection.execute(`SELECT 1 FROM ${cfgTableResult} WHERE tenant=:0 AND id=:1 FOR UPDATE`, [ctx.tenant, docId], {
       autoCommit: false
     });
     if (locked.rows.length > 0) {
-      // Recheck the mask in a fresh statement after acquiring the lock: a
-      // takeover may have changed ownership while the SELECT was waiting.
-      const result = await connection.execute(sqlCommand.replace(/;/g, ''), values, {autoCommit: false});
-      affectedRows = result.rowsAffected;
+      result = await action(connection);
     }
     await connection.commit();
   } catch (error) {
     operationError = error;
-    ctx.logger.error(`deleteChangesIf() error: ${error.stack}`);
+    ctx.logger.error(`withLockedTaskRow() error: ${error.stack}`);
     if (connection) {
       try {
         await connection.rollback();
       } catch (rollbackError) {
         dropConnection = true;
-        ctx.logger.error(`deleteChangesIf() rollback error: ${rollbackError.stack}`);
+        ctx.logger.error(`withLockedTaskRow() rollback error: ${rollbackError.stack}`);
       }
     }
   } finally {
@@ -281,11 +278,11 @@ async function deleteChangesIf(ctx, docId, sqlCommand, values) {
       try {
         await connection.close({drop: dropConnection});
       } catch (error) {
-        ctx.logger.error(`deleteChangesIf() connection.close() error: ${error.stack}`);
+        ctx.logger.error(`withLockedTaskRow() connection.close() error: ${error.stack}`);
         try {
           await connection.close({drop: true});
         } catch (dropError) {
-          ctx.logger.error(`deleteChangesIf() connection drop error: ${dropError.stack}`);
+          ctx.logger.error(`withLockedTaskRow() connection drop error: ${dropError.stack}`);
           if (!operationError) {
             operationError = error;
           }
@@ -296,7 +293,27 @@ async function deleteChangesIf(ctx, docId, sqlCommand, values) {
   if (operationError) {
     throw operationError;
   }
-  return {affectedRows};
+  return result;
+}
+
+async function deleteChangesIf(ctx, docId, sqlCommand, values) {
+  const result = await withLockedTaskRow(ctx, docId, async connection => {
+    // Recheck after acquiring the lock: ownership may have changed while waiting.
+    const deleted = await connection.execute(sqlCommand.replace(/;/g, ''), values, {autoCommit: false});
+    return {affectedRows: deleted.rowsAffected};
+  });
+  return result || {affectedRows: 0};
+}
+
+function withTaskResultLock(ctx, docId, condition, action) {
+  return withLockedTaskRow(ctx, docId, async connection => {
+    const result = await connection.execute(`SELECT 1 FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values, {autoCommit: false});
+    if (result.rows.length === 0) {
+      return false;
+    }
+    await action();
+    return true;
+  });
 }
 
 function closePool() {
@@ -308,8 +325,11 @@ function healthCheck(ctx) {
   return executeQuery(ctx, 'SELECT 1 FROM DUAL');
 }
 
-function addSqlParameter(parameter, accumulatedArray) {
-  const currentIndex = accumulatedArray.push(parameter) - 1;
+function addSqlParameter(parameter, accumulatedArray, opt_largeText = false) {
+  // Marker snapshots can exceed Oracle's VARCHAR bind limit. Bind additional
+  // as NCLOB for both writes and ownership comparisons.
+  const value = opt_largeText ? {val: parameter, type: oracledb.DB_TYPE_NCLOB} : parameter;
+  const currentIndex = accumulatedArray.push(value) - 1;
   return `:${currentIndex}`;
 }
 
@@ -552,9 +572,14 @@ function getNotEmptyCondition(fieldName) {
   return `${fieldName} IS NOT NULL`;
 }
 
+function getAdditionalCondition(parameter) {
+  return `DBMS_LOB.COMPARE(additional, ${parameter})=0`;
+}
+
 module.exports = {
   sqlQuery,
   deleteChangesIf,
+  withTaskResultLock,
   closePool,
   healthCheck,
   addSqlParameter,
@@ -565,5 +590,6 @@ module.exports = {
   getExpired,
   upsert,
   insertChanges,
-  getNotEmptyCondition
+  getNotEmptyCondition,
+  getAdditionalCondition
 };

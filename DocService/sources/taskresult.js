@@ -188,10 +188,14 @@ function toUpdateArray(task, updateTime, isMask, values, setPassword) {
     res.push(`password=${concatParams('password', sqlParam)}`);
   }
   if (null != task.additional) {
-    const sqlParam = addSqlParam(task.additional, values);
-    // replaceAdditional rewrites the column (used to prune old entries);
-    // otherwise the value is appended.
-    res.push(task.replaceAdditional ? `additional=${sqlParam}` : `additional=${concatParams('additional', sqlParam)}`);
+    const sqlParam = addSqlParam(task.additional, values, true);
+    if (isMask) {
+      res.push(sqlBase.getAdditionalCondition(sqlParam));
+    } else {
+      // replaceAdditional rewrites the column (used to prune old entries);
+      // otherwise the value is appended.
+      res.push(task.replaceAdditional ? `additional=${sqlParam}` : `additional=${concatParams('additional', sqlParam)}`);
+    }
   }
   return res;
 }
@@ -380,6 +384,14 @@ function deleteChangesIf(ctx, mask) {
   const sqlWhere = getMaskCondition(mask, values);
   return sqlBase.deleteChangesPromise(ctx, mask.key, null, {sql: sqlWhere, values});
 }
+function withCleanupOwnership(ctx, mask, action) {
+  const values = [];
+  const sql = getMaskCondition(mask, values);
+  // Storage cannot enforce the SQL mask itself. Keep the task row locked
+  // until the storage action finishes, so opens and takeovers cannot replace it.
+  // The action must not update this row through another database connection.
+  return sqlBase.withTaskResultLock(ctx, mask.key, {sql, values}, action);
+}
 function removeIf(ctx, mask) {
   const values = [];
   const sqlWhere = getMaskCondition(mask, values);
@@ -414,4 +426,5 @@ exports.addRandomKeyTask = addRandomKeyTask;
 exports.remove = remove;
 exports.removeIf = removeIf;
 exports.deleteChangesIf = deleteChangesIf;
+exports.withCleanupOwnership = withCleanupOwnership;
 exports.getExpired = sqlBase.getExpired;

@@ -64,6 +64,14 @@ describe('final-save saved-state handling', () => {
     });
     jest.spyOn(taskResult, 'removeIf').mockResolvedValue({affectedRows: 1});
     jest.spyOn(taskResult, 'deleteChangesIf').mockResolvedValue({affectedRows: 1});
+    jest.spyOn(taskResult, 'withCleanupOwnership').mockImplementation(async (_ctx, mask, action) => {
+      const rows = await taskResult.select(_ctx, mask.key);
+      if (!canvasservice.taskResultMatchesMask(rows[0], mask)) {
+        return false;
+      }
+      await action();
+      return true;
+    });
     jest.spyOn(sqlBase.UserCallback.prototype, 'getCallbackByUserIndex').mockReturnValue('https://callback.example.test/save');
     jest.spyOn(storage, 'listObjects').mockResolvedValue([]);
     jest.spyOn(storage, 'getObject').mockResolvedValue(Buffer.from('{}'));
@@ -85,7 +93,8 @@ describe('final-save saved-state handling', () => {
     const matches = mask =>
       !removed &&
       (mask.status === undefined || mask.status === null || selectedRow.status === mask.status) &&
-      (mask.statusInfo === undefined || mask.statusInfo === null || selectedRow.status_info === mask.statusInfo);
+      (mask.statusInfo === undefined || mask.statusInfo === null || selectedRow.status_info === mask.statusInfo) &&
+      (mask.additional === undefined || mask.additional === null || selectedRow.additional === mask.additional);
     const update = async (_ctx, task, mask) => {
       if (!matches(mask)) {
         return {affectedRows: 0};
@@ -95,6 +104,9 @@ describe('final-save saved-state handling', () => {
       }
       if (task.statusInfo !== undefined && task.statusInfo !== null) {
         selectedRow.status_info = task.statusInfo;
+      }
+      if (task.additional !== undefined && task.additional !== null) {
+        selectedRow.additional = task.replaceAdditional ? task.additional : (selectedRow.additional || '') + task.additional;
       }
       return {affectedRows: 1};
     };
@@ -168,6 +180,7 @@ describe('final-save saved-state handling', () => {
   });
 
   test.each(['1', '0'])('does not acknowledge status %s when cleanup throws', async status => {
+    useRowModel();
     const error = new Error('cleanup failed');
     jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue(status);
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
@@ -406,6 +419,7 @@ describe('final-save saved-state handling', () => {
     ['0', false],
     ['0', undefined]
   ])('retains status %s when cleanup returns %s', async (status, cleanupResult) => {
+    useRowModel();
     jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue(status);
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
     docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(cleanupResult);
@@ -419,6 +433,7 @@ describe('final-save saved-state handling', () => {
   });
 
   test('retains the claim and source files when forgotten-file preservation fails', async () => {
+    useRowModel();
     jest.spyOn(docsCoServer.editorData, 'getdelSaved').mockResolvedValue('0');
     const ack = jest.spyOn(docsCoServer.editorData, 'ackSaved');
     const error = new Error('recovery storage unavailable');
@@ -564,7 +579,7 @@ describe('final-save queue recovery', () => {
     jest.spyOn(taskResult, 'select').mockImplementation(async () => (row.removed ? [] : [row]));
     jest.spyOn(taskResult, 'update').mockResolvedValue({affectedRows: 1});
     jest.spyOn(taskResult, 'updateIf').mockImplementation(async (_ctx, update, mask) => {
-      if (row.removed || row.status !== mask.status || row.status_info !== mask.statusInfo) {
+      if (row.removed || !canvasservice.taskResultMatchesMask(row, mask)) {
         return {affectedRows: 0};
       }
       // Like the SQL, leave fields the update does not set unchanged.
@@ -590,6 +605,13 @@ describe('final-save queue recovery', () => {
     });
     jest.spyOn(taskResult, 'removeIf').mockResolvedValue({affectedRows: 0});
     jest.spyOn(taskResult, 'deleteChangesIf').mockResolvedValue({affectedRows: 1});
+    jest.spyOn(taskResult, 'withCleanupOwnership').mockImplementation(async (_ctx, mask, action) => {
+      if (row.removed || !canvasservice.taskResultMatchesMask(row, mask)) {
+        return false;
+      }
+      await action();
+      return true;
+    });
     jest.spyOn(sqlBase, 'deleteChangesPromise').mockResolvedValue({affectedRows: 1});
     // The session's changes are still in the database.
     jest.spyOn(sqlBase, 'getChangesIndexPromise').mockResolvedValue([{change_id: 3}]);
@@ -1207,6 +1229,53 @@ describe('document cleanup completion contract', () => {
 
 describe('SQL deletion critical section', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  test.each(['completion', 'claim', 'password', 'remove', 'changes'])('compares the operation snapshot atomically in %s SQL', async action => {
+    const additional = constants.CHAR_DELIMITER + JSON.stringify({sfcFinalSave: {operationId: "save-A'_%", phase: 'accepted'}});
+    const mask = {tenant: ctx.tenant, key: 'document', status: 3, statusInfo: 2000000001, additional};
+    const queries = [];
+    const query = (_ctx, sql, callback, _raw, _noLog, values) => {
+      queries.push({sql, values});
+      callback(null, sql.startsWith('SELECT') ? [{password: 'newer-session-password'}] : {affectedRows: 0});
+    };
+    jest.spyOn(sqlBase, 'sqlQuery').mockImplementation(query);
+    jest.spyOn(sqlConnector, 'sqlQuery').mockImplementation(query);
+    if (sqlConnector.deleteChangesIf) {
+      jest.spyOn(sqlConnector, 'deleteChangesIf').mockImplementation(async (_ctx, _docId, sql, values) => {
+        queries.push({sql, values});
+        return {affectedRows: 0};
+      });
+    }
+    const update = {status: 3, statusInfo: 123};
+    if (action === 'completion') {
+      await taskResult.updateIf(ctx, update, mask);
+    } else if (action === 'claim') {
+      await taskResult.claimIf(ctx, update, mask);
+    } else if (action === 'password') {
+      jest.spyOn(sqlBase.DocumentPassword.prototype, 'getDocPassword').mockReturnValue({current: 'newer-session-password'});
+      await taskResult.restoreInitialPassword(ctx, 'document', mask);
+    } else if (action === 'remove') {
+      await taskResult.removeIf(ctx, mask);
+    } else {
+      await taskResult.deleteChangesIf(ctx, mask);
+    }
+    const {sql, values} = queries.at(-1);
+    const boundValues = values.map(value => value?.val ?? value);
+    const parameter = sqlConnector.addSqlParameter(additional, Array(boundValues.indexOf(additional)));
+    expect(boundValues).toContain(additional);
+    expect(sql.slice(sql.indexOf(' WHERE '))).toContain(sqlBase.getAdditionalCondition(parameter));
+    expect(sql).not.toContain(additional);
+    expect(sql).not.toMatch(/WHERE.*additional=(?:CONCAT|COALESCE)/);
+  });
+
+  test('uses exact text comparison on each connector, including Oracle NCLOBs', () => {
+    const mysql = require('../../DocService/sources/databaseConnectors/mysqlConnector');
+    const mssql = require('../../DocService/sources/databaseConnectors/mssqlConnector');
+    const oracle = require('../../DocService/sources/databaseConnectors/oracleConnector');
+    expect(mysql.getAdditionalCondition('?')).toBe('BINARY additional=BINARY ?');
+    expect(mssql.getAdditionalCondition('@p')).toBe('additional COLLATE Latin1_General_100_BIN2=@p');
+    expect(oracle.getAdditionalCondition(':0')).toBe('DBMS_LOB.COMPARE(additional, :0)=0');
+  });
 
   test.each([null, new Error('SQL deletion failed')])('serializes legacy and awaited deletions and releases on %s', async error => {
     const callbacks = [];
