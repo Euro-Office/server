@@ -69,7 +69,7 @@ describe('final-save saved-state handling', () => {
       if (!canvasservice.taskResultMatchesMask(rows[0], mask)) {
         return false;
       }
-      await action();
+      await action(rows[0]);
       return true;
     });
     jest.spyOn(sqlBase.UserCallback.prototype, 'getCallbackByUserIndex').mockReturnValue('https://callback.example.test/save');
@@ -609,7 +609,7 @@ describe('final-save queue recovery', () => {
       if (row.removed || !canvasservice.taskResultMatchesMask(row, mask)) {
         return false;
       }
-      await action();
+      await action({...row});
       return true;
     });
     jest.spyOn(sqlBase, 'deleteChangesPromise').mockResolvedValue({affectedRows: 1});

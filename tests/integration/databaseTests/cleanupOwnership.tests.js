@@ -92,6 +92,17 @@ afterEach(async () => {
 });
 
 describe('conditional document cleanup ownership', () => {
+  test('supplies the verified task row to the ownership action', async () => {
+    const mask = await fixture();
+    const [expected] = await taskResult.select(ctx, docId);
+    const action = jest.fn(async lockedRow => {
+      expect(lockedRow).toEqual(expected);
+    });
+
+    await expect(taskResult.withCleanupOwnership(ctx, mask, action)).resolves.toBe(true);
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+
   test('notification retries hold ownership through publication and release it after a publication failure', async () => {
     await fixture();
     await taskResult.update(ctx, {

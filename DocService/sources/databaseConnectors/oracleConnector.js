@@ -307,11 +307,14 @@ async function deleteChangesIf(ctx, docId, sqlCommand, values) {
 
 function withTaskResultLock(ctx, docId, condition, action) {
   return withLockedTaskRow(ctx, docId, async connection => {
-    const result = await connection.execute(`SELECT 1 FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values, {autoCommit: false});
+    const result = await connection.execute(`SELECT * FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values, {
+      autoCommit: false,
+      outFormat: oracledb.OUT_FORMAT_OBJECT
+    });
     if (result.rows.length === 0) {
       return false;
     }
-    await action();
+    await action(columnsToLowercase(result.rows, result.metaData)[0]);
     return true;
   });
 }

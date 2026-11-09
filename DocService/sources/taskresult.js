@@ -389,7 +389,8 @@ function withCleanupOwnership(ctx, mask, action) {
   const sql = getMaskCondition(mask, values);
   // Storage cannot enforce the SQL mask itself. Keep the task row locked
   // until the storage action finishes, so opens and takeovers cannot replace it.
-  // The action must not update this row through another database connection.
+  // Pass the verified row to the action so it needs no second pooled connection.
+  // The action must not query SQL through another connection while holding this lock.
   return sqlBase.withTaskResultLock(ctx, mask.key, {sql, values}, action);
 }
 function removeIf(ctx, mask) {

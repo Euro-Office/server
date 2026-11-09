@@ -104,10 +104,10 @@ async function withTaskResultLock(ctx, docId, condition, action) {
     const locked = await client.query(`SELECT 1 FROM ${cfgTableResult} WHERE tenant=$1 AND id=$2 FOR UPDATE`, [ctx.tenant, docId]);
     let owned = false;
     if (locked.rowCount > 0) {
-      const result = await client.query(`SELECT 1 FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values);
+      const result = await client.query(`SELECT * FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values);
       owned = result.rowCount > 0;
       if (owned) {
-        await action();
+        await action(result.rows[0]);
       }
     }
     await client.query('COMMIT');

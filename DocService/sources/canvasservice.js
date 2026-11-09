@@ -1706,10 +1706,9 @@ function* publishUpdateVersion(ctx, cmd, success) {
   }
   cmd.setUpdateVersionOwner(owner);
   cmd.setUpdateVersionPending(success);
-  const publish = async () => {
-    // The row may have changed while waiting for the ownership lock.
-    const current = await taskResult.select(ctx, docId);
-    if (getUpdateVersionOwner(current[0], cmd) === owner) {
+  const publish = async lockedRow => {
+    // Revalidate using the row read on the ownership transaction connection.
+    if (getUpdateVersionOwner(lockedRow, cmd) === owner) {
       await docsCoServer.publish(ctx, {type: commonDefines.c_oPublishType.updateVersion, ctx, docId, success});
     }
   };
@@ -1720,7 +1719,8 @@ function* publishUpdateVersion(ctx, cmd, success) {
       yield* retryChangedFinalSaveMetadata(ctx, docId, mask);
     }
   } else {
-    yield publish();
+    const current = yield taskResult.select(ctx, docId);
+    yield publish(current[0]);
   }
 }
 // opt_isDeliveryLive: see receiveTask.

@@ -39,7 +39,7 @@ describe('Oracle conditional change deletion transaction', () => {
     jest.resetModules();
     connection = makeConnection();
     pool = {getConnection: jest.fn().mockResolvedValue(connection)};
-    driver = {createPool: jest.fn().mockResolvedValue(pool), DB_TYPE_NCLOB: 'NCLOB'};
+    driver = {createPool: jest.fn().mockResolvedValue(pool), DB_TYPE_NCLOB: 'NCLOB', OUT_FORMAT_OBJECT: 'OBJECT'};
     jest.doMock('../../DocService/node_modules/oracledb', () => driver);
     connector = require('../../DocService/sources/databaseConnectors/oracleConnector');
   });
@@ -53,18 +53,26 @@ describe('Oracle conditional change deletion transaction', () => {
   });
 
   test.each([false, true])('keeps storage under the row lock and releases after its result (failure: %s)', async failed => {
-    connection.execute.mockReset().mockResolvedValue({rows: [[1]]});
+    connection.execute.mockReset().mockResolvedValue({
+      rows: [{ID: docId, CALLBACK: 'callback', ADDITIONAL: null}],
+      metaData: [{name: 'ADDITIONAL', dbType: driver.DB_TYPE_NCLOB}]
+    });
     let entered, finish;
     const started = new Promise(resolve => (entered = resolve));
     const pending = new Promise(resolve => (finish = resolve));
     const failure = new Error('storage failed');
-    const cleanup = connector.withTaskResultLock(ctx, docId, {sql: 'status=:0', values: [7]}, async () => {
+    const cleanup = connector.withTaskResultLock(ctx, docId, {sql: 'status=:0', values: [7]}, async row => {
+      expect(row).toEqual({id: docId, callback: 'callback', additional: ''});
+      expect(pool.getConnection).toHaveBeenCalledTimes(1);
       entered();
       await pending;
       if (failed) throw failure;
     });
     await started;
-    expect(connection.execute).toHaveBeenNthCalledWith(2, expect.stringContaining('WHERE status=:0'), [7], {autoCommit: false});
+    expect(connection.execute).toHaveBeenNthCalledWith(2, expect.stringContaining('WHERE status=:0'), [7], {
+      autoCommit: false,
+      outFormat: driver.OUT_FORMAT_OBJECT
+    });
     expect(connection.commit).not.toHaveBeenCalled();
     expect(connection.close).not.toHaveBeenCalled();
     finish();

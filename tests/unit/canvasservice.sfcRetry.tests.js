@@ -259,7 +259,7 @@ describe('final-save retries converge', () => {
       let release;
       cleanupWait = new Promise(resolve => (release = resolve));
       try {
-        await action();
+        await action({...row});
         return true;
       } finally {
         release();
@@ -713,10 +713,10 @@ describe('final-save retries converge', () => {
     let locked = false;
     const withOwnership = taskResult.withCleanupOwnership.getMockImplementation();
     taskResult.withCleanupOwnership.mockImplementation((ctx, mask, action) =>
-      withOwnership(ctx, mask, async () => {
+      withOwnership(ctx, mask, async lockedRow => {
         locked = true;
         try {
-          await action();
+          await action(lockedRow);
         } finally {
           locked = false;
         }
@@ -2563,5 +2563,38 @@ describe('final-save retries converge', () => {
     expect(taskResult.removeIf).not.toHaveBeenCalled();
     expect(docsCoServer.publish).not.toHaveBeenCalled();
     expect(delayed).toHaveLength(0);
+  });
+  test.each([false, true])('cleanup and publication need no second SQL connection (WOPI: %s)', async wopi => {
+    if (wopi) {
+      fakeWopiHost();
+    }
+    let locked = false;
+    const select = taskResult.select.getMockImplementation();
+    taskResult.select.mockImplementation(async (...args) => {
+      if (locked) {
+        throw new Error('pool exhausted: ownership action requested another connection');
+      }
+      return select(...args);
+    });
+    const withOwnership = taskResult.withCleanupOwnership.getMockImplementation();
+    taskResult.withCleanupOwnership.mockImplementation((ctx, mask, action) =>
+      withOwnership(ctx, mask, async lockedRow => {
+        locked = true;
+        try {
+          await action(lockedRow);
+        } finally {
+          locked = false;
+        }
+      })
+    );
+
+    await deliver(queued());
+
+    expectCompleted();
+    expect(docsCoServer.publish).toHaveBeenCalledTimes(1);
+    expect(delayed).toHaveLength(0);
+    if (wopi) {
+      expect(row.callback).toContain('unlockId');
+    }
   });
 });

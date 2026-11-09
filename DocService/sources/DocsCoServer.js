@@ -825,12 +825,14 @@ function parseUrl(ctx, callbackUrl) {
 }
 
 async function getCallback(ctx, id, opt_userIndex) {
+  const selectRes = await taskResult.select(ctx, id);
+  return getCallbackFromRow(ctx, selectRes[0], opt_userIndex);
+}
+function getCallbackFromRow(ctx, row, opt_userIndex) {
   let callbackUrl = null;
   let baseUrl = null;
   let wopiParams = null;
-  const selectRes = await taskResult.select(ctx, id);
-  if (selectRes.length > 0) {
-    const row = selectRes[0];
+  if (row) {
     if (row.callback) {
       callbackUrl = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, row.callback, opt_userIndex);
       wopiParams = wopiClient.parseWopiCallback(ctx, callbackUrl, row.callback);
@@ -1639,8 +1641,8 @@ function* bindEvents(ctx, docId, callback, baseUrl, opt_userAction, opt_userData
 }
 const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesMask) {
   let unlockInfo;
-  const unlock = async () => {
-    const getRes = await getCallback(ctx, docId, opt_userIndex);
+  const unlock = async lockedRow => {
+    const getRes = opt_changesMask ? getCallbackFromRow(ctx, lockedRow, opt_userIndex) : await getCallback(ctx, docId, opt_userIndex);
     if (getRes?.wopiParams?.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
       // Unlock is best effort: a retry may get 409 (already unlocked), and an
       // expired lock or token must not prevent a save from completing.

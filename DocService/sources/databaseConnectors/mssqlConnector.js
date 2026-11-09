@@ -367,10 +367,10 @@ async function withTaskResultLock(ctx, docId, condition, action) {
     );
     let owned = false;
     if (locked.recordset.length > 0) {
-      const result = await query(`SELECT 1 FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values);
+      const result = await query(`SELECT * FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values);
       owned = result.recordset.length > 0;
       if (owned) {
-        await action();
+        await action(result.recordset[0]);
       }
     }
     await transaction.commit();
