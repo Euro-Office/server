@@ -15,6 +15,8 @@ const taskResult = require('../../../DocService/sources/taskresult');
 const storage = require('../../../Common/sources/storage/storage-base');
 const constants = require('../../../Common/sources/constants');
 const config = require('../../../Common/node_modules/config');
+const docsCoServer = require('../../../DocService/sources/DocsCoServer');
+const wopiClient = require('../../../DocService/sources/wopiClient');
 
 const ctx = new operationContext.Context();
 ctx.setTenant('cleanup-ownership-tests');
@@ -90,6 +92,113 @@ afterEach(async () => {
 });
 
 describe('conditional document cleanup ownership', () => {
+  test('notification retries hold ownership through publication and release it after a publication failure', async () => {
+    await fixture();
+    await taskResult.update(ctx, {
+      tenant: ctx.tenant,
+      key: docId,
+      status: commonDefines.FileStatus.UpdateVersion,
+      statusInfo: Math.floor(Date.now() / 60000),
+      additional: constants.CHAR_DELIMITER + JSON.stringify({sfcFinalSave: {operationId: 'save-A', phase: 'accepted'}})
+    });
+    const cmd = new commonDefines.InputCommand({c: 'sfc', id: docId, savekey: 'save-A', updateVersionPending: true}, true);
+    const error = new Error('publication unavailable');
+    const publish = jest
+      .spyOn(docsCoServer, 'publish')
+      .mockImplementationOnce(async () => {
+        await expect(probeRowLock()).rejects.toBeDefined();
+        throw error;
+      })
+      .mockResolvedValue(undefined);
+
+    await expect(canvasservice.commandSfcCallback(ctx, cmd, false, false)).rejects.toBe(error);
+    // The failed attempt released the lock, and its serialized retry can still
+    // notify editors waiting for the original save.
+    await expect(probeRowLock()).resolves.toBeDefined();
+    const retry = new commonDefines.InputCommand(JSON.parse(JSON.stringify(cmd)), true);
+    await expect(canvasservice.commandSfcCallback(ctx, retry, false, false)).resolves.toBeUndefined();
+    expect(publish).toHaveBeenCalledTimes(2);
+  });
+
+  test('a notification retry revalidates ownership after a concurrent open takes the row', async () => {
+    await fixture();
+    await taskResult.update(ctx, {
+      tenant: ctx.tenant,
+      key: docId,
+      status: commonDefines.FileStatus.UpdateVersion,
+      statusInfo: Math.floor(Date.now() / 60000),
+      additional: constants.CHAR_DELIMITER + JSON.stringify({sfcFinalSave: {operationId: 'save-A', phase: 'accepted'}})
+    });
+    const cmd = new commonDefines.InputCommand({c: 'sfc', id: docId, savekey: 'save-A', updateVersionPending: true}, true);
+    const publish = jest.spyOn(docsCoServer, 'publish').mockResolvedValue(undefined);
+    const withOwnership = taskResult.withCleanupOwnership;
+    jest.spyOn(taskResult, 'withCleanupOwnership').mockImplementationOnce(async (...args) => {
+      await taskResult.update(ctx, {tenant: ctx.tenant, key: docId, status: commonDefines.FileStatus.Ok, statusInfo: 0});
+      return withOwnership(...args);
+    });
+
+    await expect(canvasservice.commandSfcCallback(ctx, cmd, false, false)).resolves.toBeUndefined();
+
+    expect(publish).not.toHaveBeenCalled();
+    expect((await taskResult.select(ctx, docId))[0].status).toBe(commonDefines.FileStatus.Ok);
+  });
+
+  test('WOPI unlock holds ownership through the request and appends its marker without deadlocking', async () => {
+    const mask = await fixture();
+    const params = {commonInfo: {lockId: 'original-lock'}, userAuth: {mode: 'edit', access_token: 'original-token'}};
+    jest.spyOn(wopiClient, 'parseWopiCallback').mockReturnValue(params);
+    const entered = signal();
+    const release = signal();
+    jest.spyOn(wopiClient, 'unlock').mockImplementation(async () => {
+      entered.resolve();
+      await release.promise;
+      return true;
+    });
+    const unlock = docsCoServer.unlockWopiDoc(ctx, docId, 1, mask);
+    try {
+      await bounded(entered.promise);
+      await expect(probeRowLock()).rejects.toBeDefined();
+    } finally {
+      release.resolve();
+      await expect(bounded(unlock)).resolves.toBe(true);
+    }
+
+    const row = (await taskResult.select(ctx, docId))[0];
+    expect(sqlBase.UserCallback.prototype.getCallbacks(ctx, row.callback)).toContain(wopiClient.getWopiUnlockMarker(params));
+    expect(row.status).toBe(mask.status);
+    expect(row.status_info).toBe(mask.statusInfo);
+  });
+
+  test.each(['takeover', 'removal'])('WOPI unlock conditionally appends its marker after concurrent %s', async action => {
+    const mask = await fixture();
+    jest.spyOn(wopiClient, 'parseWopiCallback').mockReturnValue({
+      commonInfo: {lockId: 'original-lock'},
+      userAuth: {mode: 'edit', access_token: 'original-token'}
+    });
+    const unlock = jest.spyOn(wopiClient, 'unlock').mockResolvedValue(true);
+    const withOwnership = taskResult.withCleanupOwnership;
+    jest.spyOn(taskResult, 'withCleanupOwnership').mockImplementationOnce(async (...args) => {
+      const result = await withOwnership(...args);
+      if (action === 'removal') {
+        await taskResult.remove(ctx, docId);
+      } else {
+        await taskResult.update(ctx, {tenant: ctx.tenant, key: docId, status: commonDefines.FileStatus.Ok, statusInfo: 0});
+      }
+      return result;
+    });
+
+    await expect(docsCoServer.unlockWopiDoc(ctx, docId, 1, mask)).resolves.toBe(false);
+
+    expect(unlock).toHaveBeenCalledWith(ctx, expect.objectContaining({commonInfo: {lockId: 'original-lock'}}));
+    const rows = await taskResult.select(ctx, docId);
+    if (action === 'removal') {
+      expect(rows).toHaveLength(0);
+    } else {
+      expect(rows[0].status).toBe(commonDefines.FileStatus.Ok);
+      expect(rows[0].callback).not.toContain('unlockId');
+    }
+  });
+
   test.each([true, false])('takeover retries metadata-only SQL conflicts while retaining changes (%s)', async remaining => {
     await fixture();
     if (!remaining) {

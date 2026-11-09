@@ -1637,20 +1637,41 @@ function* bindEvents(ctx, docId, callback, baseUrl, opt_userAction, opt_userData
   }
   return null;
 }
-const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
-  //wopi unlock
-  const getRes = yield getCallback(ctx, docId, opt_userIndex);
-  if (getRes && getRes.wopiParams && getRes.wopiParams.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
-    // Unlock is best effort, as on main: wopiClient.unlock() logs and returns
-    // false on failure.  Its result must not decide whether a save completes.
-    // A retry after a successful Unlock gets 409 (not locked), and an expired
-    // lock or token never succeeds, so gating on it would retry forever.
-    const unlockRes = yield wopiClient.unlock(ctx, getRes.wopiParams);
-    const unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
-    if (unlockInfo && unlockRes) {
-      yield canvasService.commandOpenStartPromise(ctx, docId, undefined, unlockInfo);
+const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesMask) {
+  let unlockInfo;
+  const unlock = async () => {
+    const getRes = await getCallback(ctx, docId, opt_userIndex);
+    if (getRes?.wopiParams?.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
+      // Unlock is best effort: a retry may get 409 (already unlocked), and an
+      // expired lock or token must not prevent a save from completing.
+      if (await wopiClient.unlock(ctx, getRes.wopiParams)) {
+        unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
+      }
     }
+  };
+  if (opt_changesMask) {
+    // Read credentials and send UNLOCK while this save still owns the row.
+    // The preceding storage cleanup has already released its lock.
+    if (!(yield taskResult.withCleanupOwnership(ctx, opt_changesMask, unlock))) {
+      return false;
+    }
+  } else {
+    yield unlock();
   }
+  if (unlockInfo) {
+    if (opt_changesMask) {
+      // A write on another connection would deadlock inside the ownership
+      // lock. Append conditionally after releasing it; never upsert a new row.
+      const task = new taskResult.TaskResultData();
+      task.tenant = ctx.tenant;
+      task.key = docId;
+      task.callback = unlockInfo;
+      const updated = yield taskResult.updateIf(ctx, task, opt_changesMask);
+      return updated.affectedRows > 0;
+    }
+    yield canvasService.commandOpenStartPromise(ctx, docId, undefined, unlockInfo);
+  }
+  return true;
 });
 // opt_changesMask: the task row as the caller holds it.  Nothing is cleaned if
 // the row no longer matches it (false: the caller's next attempt finds out),
@@ -1697,8 +1718,7 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
       yield storage.deletePath(ctx, docId, tenForgottenFiles);
     }
   }
-  yield unlockWopiDoc(ctx, docId, opt_userIndex);
-  return true;
+  return yield unlockWopiDoc(ctx, docId, opt_userIndex, opt_changesMask);
 }
 // opt_closeStatus ({sent}) lets a retried caller send the status only once:
 // it is skipped when `sent` is true and set to true once the status was sent.

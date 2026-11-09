@@ -104,6 +104,11 @@ function updateRow(task, mask, updateTime = true) {
   if (task.additional !== undefined && task.additional !== null) {
     row.additional = task.replaceAdditional ? task.additional : (row.additional || '') + task.additional;
   }
+  if (task.callback) {
+    const callback = new sqlBase.UserCallback();
+    callback.fromValues(task.indexUser, task.callback);
+    row.callback += callback.toSQLInsert();
+  }
   return {affectedRows: 1};
 }
 function command(overrides = {}) {
@@ -642,6 +647,106 @@ describe('final-save retries converge', () => {
     expect(storage.copyObject).toHaveBeenCalledTimes(2);
     expect(row).toBeNull();
     expect(docsCoServer.publish).toHaveBeenCalledTimes(1);
+  });
+
+  test('WOPI: takeover after storage cleanup cannot unlock the newer session', async () => {
+    fakeWopiHost();
+    const unlock = jest.spyOn(wopiClient, 'unlock').mockResolvedValue(true);
+    const ctx = new operationContext.Context();
+    ctx.setTenant(tenant);
+    const mask = {tenant, key: DOC_ID, status: row.status, statusInfo: row.status_info, additional: row.additional};
+    const withOwnership = taskResult.withCleanupOwnership.getMockImplementation();
+    taskResult.withCleanupOwnership.mockImplementationOnce(async (...args) => {
+      const result = await withOwnership(...args);
+      newerSaveTakesRow();
+      row.callback = 'new session callback';
+      wopiClient.parseWopiCallback.mockReturnValue({
+        commonInfo: {lockId: 'new-lock'},
+        userAuth: {access_token: 'new-token', mode: 'edit'}
+      });
+      return result;
+    });
+
+    await expect(docsCoServer.cleanDocumentOnExitPromise(ctx, DOC_ID, true, 1, undefined, mask)).resolves.toBe(false);
+
+    expect(unlock).not.toHaveBeenCalled();
+    expect(row.callback).toBe('new session callback');
+    expect(canvasservice.commandOpenStartPromise).not.toHaveBeenCalled();
+  });
+
+  test.each(['newer save', 'removed row'])('WOPI: the unlock marker cannot overwrite a %s after UNLOCK', async takeover => {
+    fakeWopiHost();
+    const unlock = jest.spyOn(wopiClient, 'unlock').mockResolvedValue(true);
+    const ctx = new operationContext.Context();
+    ctx.setTenant(tenant);
+    const mask = {tenant, key: DOC_ID, status: row.status, statusInfo: row.status_info, additional: row.additional};
+    const withOwnership = taskResult.withCleanupOwnership.getMockImplementation();
+    taskResult.withCleanupOwnership.mockImplementation(async (...args) => {
+      const result = await withOwnership(...args);
+      if (unlock.mock.calls.length > 0) {
+        if (takeover === 'removed row') {
+          row = null;
+        } else {
+          newerSaveTakesRow();
+          row.callback = 'new session callback';
+        }
+      }
+      return result;
+    });
+
+    await expect(docsCoServer.cleanDocumentOnExitPromise(ctx, DOC_ID, true, 1, undefined, mask)).resolves.toBe(false);
+
+    expect(unlock).toHaveBeenCalledWith(
+      ctx,
+      expect.objectContaining({
+        commonInfo: expect.objectContaining({lockId: 'lock'}),
+        userAuth: expect.objectContaining({access_token: 'token'})
+      })
+    );
+    expect(unlock).toHaveBeenCalledTimes(1);
+    expect(canvasservice.commandOpenStartPromise).not.toHaveBeenCalled();
+    expect(row?.callback ?? null).toBe(takeover === 'removed row' ? null : 'new session callback');
+  });
+
+  test('WOPI: ownership is held through UNLOCK and released before the conditional marker write', async () => {
+    fakeWopiHost();
+    let locked = false;
+    const withOwnership = taskResult.withCleanupOwnership.getMockImplementation();
+    taskResult.withCleanupOwnership.mockImplementation((ctx, mask, action) =>
+      withOwnership(ctx, mask, async () => {
+        locked = true;
+        try {
+          await action();
+        } finally {
+          locked = false;
+        }
+      })
+    );
+    jest.spyOn(wopiClient, 'unlock').mockImplementation(async () => {
+      expect(locked).toBe(true);
+      return true;
+    });
+    const updateIf = taskResult.updateIf.getMockImplementation();
+    taskResult.updateIf.mockImplementation(async (...args) => {
+      expect(locked).toBe(false);
+      return updateIf(...args);
+    });
+
+    await deliver(queued());
+
+    expectCompleted();
+    expect(taskResult.updateIf).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        callback: expect.stringContaining('"unlockId":"lock"')
+      }),
+      expect.objectContaining({statusInfo: commonDefines.CALLBACK_ACCEPTED_STATUS_INFO})
+    );
+    expect(sqlBase.UserCallback.prototype.getCallbacks(new operationContext.Context(), row.callback)).toContainEqual(
+      expect.stringContaining('"unlockId":"lock"')
+    );
+    expect(canvasservice.commandOpenStartPromise).not.toHaveBeenCalled();
+    expect(delayed).toHaveLength(0);
   });
 
   test('WOPI: a second Unlock answered 409 after a later failure does not loop', async () => {
@@ -2101,6 +2206,145 @@ describe('final-save retries converge', () => {
     expect(delayed).toHaveLength(1);
     const retry = new commonDefines.TaskQueueData(JSON.parse(delayed[0].data)).getCmd();
     expect(retry.getCallbackAttempt() || 0).toBe(0);
+  });
+
+  test.each(['reopened', 'newer save', 'recreated row'])('a notification retry does not publish after takeover by a %s', async takeover => {
+    docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable'));
+    await deliver(queued());
+    expectCompleted();
+    expect(delayed).toHaveLength(1);
+    if (takeover === 'reopened') {
+      row.status = Ok;
+      row.status_info = constants.NO_ERROR;
+    } else if (takeover === 'newer save') {
+      // Its reusable minute status is the same as the old completion's.
+      newerSaveTakesRow();
+    } else {
+      row = {...row, additional: '', status: UpdateVersion, status_info: minute(), callback: 'new callback'};
+    }
+    const newerRow = {...row};
+    docsCoServer.publish.mockClear();
+    taskResult.updateIf.mockClear();
+
+    expect(await drainRetries()).toBe(1);
+
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    expect(taskResult.updateIf).not.toHaveBeenCalled();
+    expect(delayed).toHaveLength(0);
+    expect(row).toEqual(newerRow);
+  });
+
+  test.each([true, false])('a notification retry after row removal detects a new session (accepted: %s)', async accepted => {
+    if (accepted) {
+      storage.listObjects.mockImplementation(async (_ctx, path) =>
+        path.endsWith('.txt') ? ['document/forgotten.txt'] : ['document/forgotten.docx']
+      );
+    } else {
+      docsCoServer.sendServerRequest.mockResolvedValue('{"error":1}');
+    }
+    const newSession = {...row, status: Ok, status_info: constants.NO_ERROR};
+    docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable'));
+    await deliver(queued());
+    expect(row).toBeNull();
+    expect(delayed).toHaveLength(1);
+    row = newSession;
+    docsCoServer.publish.mockClear();
+
+    expect(await drainRetries()).toBe(1);
+
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    expect(row).toEqual(newSession);
+    expect(delayed).toHaveLength(0);
+  });
+
+  test('a notification retry retains the original owner after ancillary metadata changes', async () => {
+    docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable'));
+    await deliver(queued());
+    row.additional += sqlBase.DocumentAdditional.prototype.setShardKey('new shard metadata');
+    now += 90000;
+
+    expect(await drainRetries()).toBe(1);
+
+    expect(docsCoServer.publish).toHaveBeenCalledTimes(2);
+    expectCompleted();
+  });
+
+  test('a notification retry still publishes after its forgotten-file session removed the row', async () => {
+    storage.listObjects.mockImplementation(async (_ctx, path) => (path.endsWith('.txt') ? ['document/forgotten.txt'] : ['document/forgotten.docx']));
+    docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable'));
+    await deliver(queued());
+    expect(row).toBeNull();
+    expect(delayed).toHaveLength(1);
+
+    expect(await drainRetries()).toBe(1);
+
+    expect(docsCoServer.publish).toHaveBeenCalledTimes(2);
+    expect(docsCoServer.publish).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({success: true}));
+    expect(row).toBeNull();
+  });
+
+  test.each([false, true])('a notification retry without final-save markers checks its session (takeover: %s)', async takeover => {
+    row.additional = undefined;
+    row.callback = 'https://callback.example.test/secret-token';
+    docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable'));
+    await deliver(queued());
+    expect(delayed).toHaveLength(1);
+    expect(delayed[0].data).not.toContain('secret-token');
+    if (takeover) {
+      // A new row with the same reusable status and minute must not pass.
+      row.callback = 'https://callback.example.test/new-session';
+    }
+
+    expect(await drainRetries()).toBe(1);
+
+    expect(docsCoServer.publish).toHaveBeenCalledTimes(takeover ? 1 : 2);
+  });
+
+  test.each([false, true])('a close-without-changes notification retry checks its session (takeover: %s)', async takeover => {
+    newerSaveTakesRow();
+    row.status = Ok;
+    row.status_info = constants.NO_ERROR;
+    docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable'));
+    await deliver(queued({status_info: constants.EDITOR_CHANGES}));
+    expect(delayed).toHaveLength(1);
+    if (takeover) {
+      row.callback = 'new session callback';
+    }
+
+    expect(await drainRetries()).toBe(1);
+
+    expect(docsCoServer.publish).toHaveBeenCalledTimes(takeover ? 1 : 2);
+  });
+
+  test.each([false, true])('a notification retry queued before ownership snapshots checks the final-save marker (takeover: %s)', async takeover => {
+    docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable'));
+    await deliver(queued());
+    const legacy = JSON.parse(delayed[0].data);
+    delete legacy.cmd.updateVersionOwner;
+    delayed[0].data = JSON.stringify(legacy);
+    if (takeover) {
+      newerSaveTakesRow();
+    }
+
+    expect(await drainRetries()).toBe(1);
+
+    expect(docsCoServer.publish).toHaveBeenCalledTimes(takeover ? 1 : 2);
+  });
+
+  test('a notification retry rechecks ownership after waiting for the row lock', async () => {
+    docsCoServer.publish.mockRejectedValueOnce(new Error('publication unavailable'));
+    await deliver(queued());
+    const withOwnership = taskResult.withCleanupOwnership.getMockImplementation();
+    taskResult.withCleanupOwnership.mockImplementationOnce(async (...args) => {
+      newerSaveTakesRow();
+      return withOwnership(...args);
+    });
+    docsCoServer.publish.mockClear();
+
+    expect(await drainRetries()).toBe(1);
+
+    expect(docsCoServer.publish).not.toHaveBeenCalled();
+    expect(delayed).toHaveLength(0);
   });
 
   test('a failed updateVersion publication is retried on its own, after the save completed', async () => {

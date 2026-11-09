@@ -1660,6 +1660,69 @@ function* completeAcceptedSave(ctx, docId, openFromForgotten, mask) {
     }
   }
 }
+function getUpdateVersionOwner(row, cmd) {
+  if (!row) {
+    return null;
+  }
+  const last = readFinalSaveMarkers(row.additional).at(-1);
+  const trackCallbacks = !last || cmd.getStatusInfo() === constants.EDITOR_CHANGES;
+  // Keep credentials out of retry messages. Ancillary metadata (e.g. a shard
+  // key) may change without changing the session or the save that owns it.
+  const identity = [
+    row.status,
+    row.status_info,
+    last,
+    last ? undefined : row.additional,
+    trackCallbacks ? row.callback : undefined,
+    trackCallbacks ? row.user_index : undefined
+  ];
+  return crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+}
+function* publishUpdateVersion(ctx, cmd, success) {
+  const docId = cmd.getDocId();
+  const rows = yield taskResult.select(ctx, docId);
+  const row = rows[0];
+  const owner = getUpdateVersionOwner(row, cmd);
+  const expected = cmd.getUpdateVersionOwner();
+  if (expected !== undefined) {
+    if (expected !== owner) {
+      return;
+    }
+  } else if (row) {
+    const last = readFinalSaveMarkers(row.additional).at(-1);
+    if (cmd.getStatusInfo() !== constants.EDITOR_CHANGES && last && last.operationId !== String(getSavedClaimId(cmd))) {
+      return;
+    }
+    // Retries queued before ownership snapshots existed still have to prove
+    // that the row is the completed save's, as an original redelivery does.
+    if (
+      cmd.getUpdateVersionPending() !== undefined &&
+      (row.status !== commonDefines.FileStatus.UpdateVersion ||
+        commonDefines.isFinalSavePendingStatusInfo(row.status_info) ||
+        (last ? last.phase !== 'accepted' : row.status_info !== cmd.getSfcStatusInfo()))
+    ) {
+      return;
+    }
+  }
+  cmd.setUpdateVersionOwner(owner);
+  cmd.setUpdateVersionPending(success);
+  const publish = async () => {
+    // The row may have changed while waiting for the ownership lock.
+    const current = await taskResult.select(ctx, docId);
+    if (getUpdateVersionOwner(current[0], cmd) === owner) {
+      await docsCoServer.publish(ctx, {type: commonDefines.c_oPublishType.updateVersion, ctx, docId, success});
+    }
+  };
+  if (row) {
+    const mask = newTaskMask(ctx, docId, row.status, row.status_info);
+    mask.additional = row.additional || null;
+    if (!(yield taskResult.withCleanupOwnership(ctx, mask, publish))) {
+      yield* retryChangedFinalSaveMetadata(ctx, docId, mask);
+    }
+  } else {
+    yield publish();
+  }
+}
 // opt_isDeliveryLive: see receiveTask.
 const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt_isDeliveryLive) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
@@ -1688,7 +1751,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
   const updateVersionPending = cmd.getUpdateVersionPending();
   if (!isSfcm && !isEncrypted && (true === updateVersionPending || false === updateVersionPending)) {
     // The save finished and only its updateVersion event failed to go out.
-    yield docsCoServer.publish(ctx, {type: commonDefines.c_oPublishType.updateVersion, ctx, docId, success: updateVersionPending});
+    yield* publishUpdateVersion(ctx, cmd, updateVersionPending);
     yield* releaseShutdownEntry(ctx, cmd, docId);
     ctx.logger.debug('End commandSfcCallback');
     return replyStr;
@@ -1905,8 +1968,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
       if (tracked && callbackAccepted && completedRow) {
         const success = cmd.getSavedState()?.success !== false;
         // A failed publication is retried alone (see above).
-        cmd.setUpdateVersionPending(success);
-        yield docsCoServer.publish(ctx, {type: commonDefines.c_oPublishType.updateVersion, ctx, docId, success});
+        yield* publishUpdateVersion(ctx, cmd, success);
       }
       yield* releaseShutdownEntry(ctx, cmd, docId);
       ctx.logger.debug('End commandSfcCallback');
@@ -2412,8 +2474,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
   if (needUpdateVersionEvent && !needRetry) {
     // Everything else is done: a retry after a failed publication only
     // publishes (see the start of commandSfcCallback).
-    cmd.setUpdateVersionPending(isSfcSuccess);
-    yield docsCoServer.publish(ctx, {type: commonDefines.c_oPublishType.updateVersion, ctx, docId, success: isSfcSuccess});
+    yield* publishUpdateVersion(ctx, cmd, isSfcSuccess);
   }
 
   // A forcesave leaves the shutdown entry to its final save.

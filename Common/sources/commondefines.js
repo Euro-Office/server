@@ -115,6 +115,7 @@ function InputCommand(data, copyExplicit) {
       this['sfcStatusInfo'] = data['sfcStatusInfo'];
       this['closeStatusSent'] = data['closeStatusSent'];
       this['updateVersionPending'] = data['updateVersionPending'];
+      this['updateVersionOwner'] = data['updateVersionOwner'];
       this['savedState'] = data['savedState'];
       this['openFromForgotten'] = data['openFromForgotten'];
     }
@@ -506,6 +507,13 @@ InputCommand.prototype = {
   },
   setUpdateVersionPending(data) {
     this['updateVersionPending'] = data;
+  },
+  // Opaque ownership snapshot for a completion notification retry.
+  getUpdateVersionOwner() {
+    return this['updateVersionOwner'];
+  },
+  setUpdateVersionOwner(data) {
+    this['updateVersionOwner'] = data;
   },
   getSavedState() {
     return this['savedState'];
