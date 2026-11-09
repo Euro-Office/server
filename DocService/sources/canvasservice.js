@@ -1186,7 +1186,11 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
           } else {
             try {
               if (wopiParams) {
-                if (outputSfc.getUrl()) {
+                // Error callbacks may carry a partial-output URL; WOPI writes must only send successful conversions.
+                if (isError) {
+                  ctx.logger.error('Skipping WOPI write for failed output: statusInfo=%d', statusInfo);
+                  replyStr = JSON.stringify({error: 1, descr: 'wopi: conversion failed'});
+                } else if (outputSfc.getUrl()) {
                   if (forceSaveType === commonDefines.c_oAscForceSaveTypes.Form) {
                     yield processWopiSaveAs(ctx, cmd);
                     replyStr = JSON.stringify({error: 0});
@@ -1230,7 +1234,10 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
             updateMask.statusInfo = updateIfTask.statusInfo;
             try {
               if (wopiParams) {
-                if (outputSfc.getUrl()) {
+                if (isError) {
+                  ctx.logger.error('Skipping WOPI write for failed output: statusInfo=%d', statusInfo);
+                  replyStr = JSON.stringify({error: 1, descr: 'wopi: conversion failed'});
+                } else if (outputSfc.getUrl()) {
                   replyStr = yield processWopiPutFile(ctx, docId, wopiParams, savePathDoc, userLastChangeId, !notModified, false, true);
                 } else {
                   replyStr = JSON.stringify({error: 1, descr: 'wopi: no file'});
