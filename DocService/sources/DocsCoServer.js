@@ -643,17 +643,17 @@ function* updateEditUsers(ctx, licenseInfo, userId, anonym, isLiveViewer) {
     yield editorStat.addPresenceUniqueUsersOfMonth(ctx, userId, period, {anonym, firstOpenDate: now.toISOString()});
   }
 }
-function* getEditorsCount(ctx, docId, opt_hvals) {
+function* getEditorsCount(ctx, docId, opt_presenceEntries) {
   let elem,
     editorsCount = 0;
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    elem = JSON.parse(presenceEntries[i]);
     if (!elem.view && !elem.isCloseCoAuthoring) {
       editorsCount++;
       break;
@@ -661,8 +661,8 @@ function* getEditorsCount(ctx, docId, opt_hvals) {
   }
   return editorsCount;
 }
-function* hasEditors(ctx, docId, opt_hvals) {
-  const editorsCount = yield* getEditorsCount(ctx, docId, opt_hvals);
+function* hasEditors(ctx, docId, opt_presenceEntries) {
+  const editorsCount = yield* getEditorsCount(ctx, docId, opt_presenceEntries);
   return editorsCount > 0;
 }
 function* isUserReconnect(ctx, docId, userId, connectionId) {
@@ -1906,16 +1906,16 @@ function getLicenseNowUtc() {
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds()) / 1000;
 }
-const getParticipantMap = co.wrap(function* (ctx, docId, opt_hvals) {
+const getParticipantMap = co.wrap(function* (ctx, docId, opt_presenceEntries) {
   const participantsMap = [];
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    const elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    const elem = JSON.parse(presenceEntries[i]);
     if (!elem.isCloseCoAuthoring) {
       participantsMap.push(elem);
     }

@@ -81,6 +81,28 @@ describe('editorDataRedis failure policy', () => {
     assert.equal(evalCalls, 1);
   });
 
+  test.each([
+    undefined,
+    null,
+    [],
+    [0, '123'],
+    [0, '123', undefined],
+    [1, undefined],
+    [4, '123'],
+    [null, '123', '456'],
+    [true, '123'],
+    ['invalid', '123']
+  ])('fails closed when document cleanup returns an invalid result: %j', async result => {
+    let syncIndexCalls = 0;
+    data._eval = async () => result;
+    data._syncPresenceIndex = async () => {
+      syncIndexCalls++;
+    };
+
+    assert.equal(await data.cleanDocumentOnExit(context('cleanup-invalid-result'), 'document'), false);
+    assert.equal(syncIndexCalls, 0);
+  });
+
   test('does not attempt force-save index cleanup after document deletion succeeds but index cleanup fails', async () => {
     let evalCalls = 0;
     let commandCalls = 0;

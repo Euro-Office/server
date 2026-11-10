@@ -7,6 +7,7 @@ const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
 const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
+const {emptyDocumentState, readDocumentState, seedDocumentState} = require('./documentStateHelpers');
 const {context, wait} = require('./testHelpers');
 
 async function withClockOffset(offset, operation) {
@@ -22,36 +23,6 @@ async function withClockOffset(offset, operation) {
 async function redisTimeMilliseconds(data) {
   const time = await data._command(['TIME']);
   return Number(time[0]) * 1000 + Math.floor(Number(time[1]) / 1000);
-}
-
-async function seedDocumentState(data, ctx, docId) {
-  await data.lockSave(ctx, docId, 'save-owner', 30);
-  await data.lockAuth(ctx, docId, 'auth-owner', 30);
-  await data.addLocks(ctx, docId, {object: {owner: 'replica'}});
-  await data.addMessage(ctx, docId, {owner: 'replica'});
-  await data.setSaved(ctx, docId, '1');
-  await data.setForceSave(ctx, docId, 1, 1, 'https://example.test', {owner: 'replica'}, null);
-  await data.addForceSaveTimerNX(ctx, docId, Date.now() + 60000);
-}
-
-async function readDocumentState(data, ctx, docId) {
-  const keys = data._docKeys(ctx, docId);
-  const indexKeys = data._indexKeys(ctx, docId);
-  const [saveLock, authLock, saved, savedClaim, timer, locks, messages, forceSave] = await Promise.all([
-    data._command(['GET', keys.saveLock]),
-    data._command(['GET', keys.authLock]),
-    data._command(['GET', keys.saved]),
-    data._command(['HGET', keys.savedClaim, 'id']),
-    data._command(['ZSCORE', indexKeys.forceSaveTimer, documentMember(ctx, docId)]),
-    data.getLocks(ctx, docId),
-    data.getMessages(ctx, docId),
-    data.getForceSave(ctx, docId)
-  ]);
-  return {saveLock, authLock, saved, savedClaim, timer, locks, messages, forceSave};
-}
-
-function emptyDocumentState() {
-  return {saveLock: null, authLock: null, saved: null, savedClaim: null, timer: null, locks: {}, messages: [], forceSave: null};
 }
 
 describe('editorDataRedis presence invariants', () => {
