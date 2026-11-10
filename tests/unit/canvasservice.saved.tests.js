@@ -1152,6 +1152,32 @@ describe('confirmed delayed-task persistence', () => {
 describe('document cleanup completion contract', () => {
   afterEach(() => jest.restoreAllMocks());
 
+  test('final-viewer cleanup preserves the active claim and callback acceptance', async () => {
+    const store = new EditorData();
+    const accepted = {url: 'https://callback.example.test/save'};
+    await store.setSaved(ctx, 'document', '1');
+    await store.getdelSaved(ctx, 'document', 'save-key');
+    await store.setSavedCallbackAccepted(ctx, 'document', 'save-key', accepted);
+    await store.addForceSaveTimerNX(ctx, 'document', 1);
+    jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockImplementation((...args) => store.cleanDocumentOnExit(...args));
+    // Final-viewer cleanup has no ownership mask; argument six remains reserved
+    // for the final-save callers that fence cleanup against a new session.
+    jest.spyOn(taskResult, 'select').mockResolvedValue([]);
+
+    await expect(
+      docsCoServer.cleanDocumentOnExitPromise(ctx, 'document', false, undefined, undefined, undefined, {preserveSavedClaim: true})
+    ).resolves.toBe(true);
+
+    expect(Object.hasOwn(store.data[ctx.tenant], 'document')).toBe(false);
+    expect(await store.getForceSaveTimer(2)).toEqual([]);
+    expect(await store.getdelSaved(ctx, 'document', 'save-key')).toBe('1');
+    expect(await store.getSavedCallbackAccepted(ctx, 'document', 'save-key')).toEqual(accepted);
+    await store.ackSaved(ctx, 'document', 'save-key');
+    await store.clearSavedCallbackAccepted(ctx, 'document', 'save-key');
+    expect(await store.getdelSaved(ctx, 'document', 'save-key')).toBeNull();
+    expect(await store.getSavedCallbackAccepted(ctx, 'document', 'save-key')).toBeUndefined();
+  });
+
   test.each([false, undefined, new Error('storage unavailable')])('stops destructive follow-up for %s', async result => {
     const clean = jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit');
     if (result instanceof Error) {

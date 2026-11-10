@@ -959,6 +959,20 @@ async function getForceSaveUrl(ctx, baseUrl, convertInfo) {
   return null;
 }
 
+// A losing Form/Internal request can still report an active force-save.
+// Reread the store because checkAndStartForceSave returns undefined for both
+// an active save and a missing winner; storage errors must propagate.
+async function markForceSaveInProgress(ctx, docId, type, res) {
+  if (res.startedForceSave || (commonDefines.c_oAscForceSaveTypes.Form !== type && commonDefines.c_oAscForceSaveTypes.Internal !== type)) {
+    return;
+  }
+  const forceSave = await editorData.getForceSave(ctx, docId);
+  if (forceSave?.started && !forceSave.ended) {
+    res.ok = true;
+    res.inProgress = true;
+  }
+}
+
 async function applyForceSaveCache(
   ctx,
   docId,
@@ -1008,6 +1022,7 @@ async function applyForceSaveCache(
         await editorData.checkAndSetForceSave(ctx, docId, forceSave.time, forceSave.index, false, false, null);
         res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
         res.ok = !!res.startedForceSave;
+        await markForceSaveInProgress(ctx, docId, type, res);
       }
     } else {
       res.notModified = true;
@@ -1028,6 +1043,7 @@ async function applyForceSaveCache(
     }
     res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
     res.ok = !!res.startedForceSave;
+    await markForceSaveInProgress(ctx, docId, type, res);
     return res;
   } else if (commonDefines.c_oAscForceSaveTypes.Form === type || commonDefines.c_oAscForceSaveTypes.Internal === type) {
     res.ok = true;
@@ -1678,8 +1694,9 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesM
 // opt_changesMask: the task row as the caller holds it.  Nothing is cleaned if
 // the row no longer matches it (false: the caller's next attempt finds out),
 // and the changes are deleted only while it still does.
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_changesMask) {
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_changesMask, opt_cleanupOptions) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
   if (opt_changesMask) {
     const selectRes = yield taskResult.select(ctx, docId);
     const row = selectRes[0];
@@ -1690,7 +1707,9 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
   }
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  const cleanupResult = yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
+  const cleanupResult = preserveSavedClaim
+    ? yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId, {preserveSavedClaim: true})
+    : yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
   if (cleanupResult !== true) {
     return false;
   }
@@ -1721,6 +1740,13 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
     }
   }
   return yield unlockWopiDoc(ctx, docId, opt_userIndex, opt_changesMask);
+}
+/**
+ * Clean up after the final viewer leaves, while preserving a saved-state claim
+ * that an in-flight callback may still need to acknowledge.
+ */
+function* cleanDocumentAfterFinalViewerExit(ctx, docId) {
+  yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, undefined, {preserveSavedClaim: true});
 }
 // opt_closeStatus ({sent}) lets a retried caller send the status only once:
 // it is skipped when `sent` is true and set to true once the status was sent.
@@ -2255,6 +2281,7 @@ exports.install = function (server, app, callbackFunction) {
       return;
     }
     let hvals;
+    let localPresenceEmpty = false;
     let participantsTimestamp;
     const tmpUser = conn.user;
     const isView = tmpUser.view;
@@ -2273,7 +2300,8 @@ exports.install = function (server, app, callbackFunction) {
         yield removePresence(ctx, conn);
         hvals = yield editorData.getPresence(ctx, docId, connections);
         participantsTimestamp = Date.now();
-        if (hvals.length <= 0) {
+        localPresenceEmpty = hvals.length <= 0;
+        if (localPresenceEmpty) {
           yield editorData.removePresenceDocument(ctx, docId);
         }
       }
@@ -2377,8 +2405,8 @@ exports.install = function (server, app, callbackFunction) {
           );
         }
       } else {
-        if (preStopFlag && hvals?.length <= 0 && editorStatProxy?.deleteKey) {
-          yield editorStatProxy.deleteKey(docId);
+        if (localPresenceEmpty) {
+          yield* cleanDocumentAfterFinalViewerExit(ctx, docId);
         }
       }
       const sessionType = isView ? 'view' : 'edit';

@@ -291,7 +291,7 @@ EditorData.prototype.removeForceSave = async function (ctx, docId) {
   data.forceSave = undefined;
 };
 
-EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId) {
+EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId, cleanupOptions) {
   const tenantData = this.data[ctx.tenant];
   if (tenantData) {
     delete tenantData[docId];
@@ -300,12 +300,13 @@ EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClai
   if (tenantTimer) {
     delete tenantTimer[docId];
   }
-  if (savedClaimId === undefined || savedClaimId === null) {
+  if ((savedClaimId === undefined || savedClaimId === null) && cleanupOptions?.preserveSavedClaim !== true) {
     // Claim-less terminal cleanup also drops claims and acceptance markers
     // that saves left behind without completing (as the Redis backend
     // recovers abandoned claims), so that they do not accumulate.  An owner
     // passes its claim id and acknowledges it itself; a retry keeps the
-    // claimed value in its command and does not need the entry again.
+    // claimed value in its command and does not need the entry again. Final-viewer
+    // cleanup preserves these entries while the callback may still be active.
     deleteDocumentEntries(this.savedClaims, ctx, docId);
     deleteDocumentEntries(this.savedCallbackAccepted, ctx, docId);
   }
