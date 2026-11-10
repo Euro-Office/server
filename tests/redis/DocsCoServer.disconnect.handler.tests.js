@@ -10,28 +10,25 @@ const storage = require('../../Common/sources/storage/storage-base');
 
 const mockSocketIo = {connection: null};
 
-jest.mock(
-  '../../DocService/node_modules/socket.io',
-  () => ({
-    Server: class {
-      constructor() {
-        this.engine = {on: jest.fn()};
-      }
+jest.mock('../../DocService/node_modules/socket.io', () => ({
+  Server: class {
+    constructor() {
+      this.engine = {on: jest.fn()};
+    }
 
-      use() {}
+    use() {}
 
-      on(event, callback) {
-        if (event === 'connection') {
-          mockSocketIo.connection = callback;
-        }
-      }
-
-      close() {
-        return Promise.resolve();
+    on(event, callback) {
+      if (event === 'connection') {
+        mockSocketIo.connection = callback;
       }
     }
-  })
-);
+
+    close() {
+      return Promise.resolve();
+    }
+  }
+}));
 
 jest.mock(
   '../../DocService/sources/pubsubRabbitMQ',
