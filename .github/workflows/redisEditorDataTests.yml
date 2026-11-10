@@ -78,9 +78,11 @@ jobs:
     steps:
       - id: matrix
         run: |
+          set -euo pipefail
           echo 'matrix={"include":[{"name":"redis-7.0.15","image":"redis:7.0.15-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-7.2","image":"redis:7.2-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-8","image":"redis:8-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"valkey-7.2","image":"valkey/valkey:7.2-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-8","image":"valkey/valkey:8-alpine","server_command":"valkey-server","cli_command":"valkey-cli"}]}' >> "$GITHUB_OUTPUT"
           base_matrix='[{"name":"redis-7.0.15","image":"redis:7.0.15-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-7.2","image":"redis:7.2-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-8","image":"redis:8-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"valkey-7.2","image":"valkey/valkey:7.2-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-8","image":"valkey/valkey:8-alpine","server_command":"valkey-server","cli_command":"valkey-cli"}]'
-          echo "sentinel_matrix=$(jq -c '{include: [ .[] as \$item | [\"password\", \"unauthenticated\", \"acl\"][] | \$item + {auth: .} ]}' <<< \"$base_matrix\")" >> "$GITHUB_OUTPUT"
+          sentinel_matrix=$(jq -c '{include: [.[] as $item | ["password", "unauthenticated", "acl"][] | $item + {auth: .}]}' <<< "$base_matrix")
+          echo "sentinel_matrix=$sentinel_matrix" >> "$GITHUB_OUTPUT"
 
   redis-editor-data-tests:
     name: ${{ matrix.name }} standalone editor data tests
@@ -147,14 +149,15 @@ jobs:
           TEST_REDIS_PREFIX: 'ci:editor-data:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
         run: |
           echo "Running ${{ matrix.name }} standalone editor-data tests"
-          npm run tests -- --runInBand ../tests/redis
+          cd DocService
+          ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis
 
       - name: Run ${{ matrix.name }} standalone failure-policy integration test
         env:
           TEST_REDIS_NODE_PASSWORD: ${{ env.REDIS_TEST_PASSWORD }}
           TEST_REDIS_FAILURE_CONTAINER: '${{ matrix.name }}-standalone'
           TEST_REDIS_PREFIX: 'ci:editor-data-failure:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
-        run: npm run tests -- --runInBand ../tests/redis/editorDataRedis.failure.integration.tests.js
+        run: cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.failure.integration.tests.js
 
       - name: Clean up ${{ matrix.name }} standalone service
         if: always()
@@ -202,7 +205,7 @@ jobs:
       - name: Run no-password standalone editor data tests
         env:
           TEST_REDIS_PREFIX: 'ci:editor-data-no-password:${{ github.run_id }}:${{ github.run_attempt }}:'
-        run: npm run tests -- --runInBand ../tests/redis
+        run: cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis
 
       - name: Clean up no-password Redis service
         if: always()
@@ -275,12 +278,14 @@ jobs:
       - name: Run ${{ matrix.name }} Cluster editor data tests
         run: |
           echo "Running ${{ matrix.name }} Cluster editor-data tests"
-          npm run tests -- --runInBand --testPathPattern=redis --testPathIgnorePatterns=editorDataRedis.process.tests.js
+          cd DocService
+          ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis --testPathIgnorePatterns=editorDataRedis.process.tests.js
 
       - name: Run ${{ matrix.name }} Cluster independent-process editor data tests
         run: |
           echo "Running ${{ matrix.name }} Cluster independent-process editor-data tests"
-          npm run tests -- --runInBand --testPathPattern=redis/editorDataRedis.process.tests.js
+          cd DocService
+          ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.process.tests.js
 
       - name: Run ${{ matrix.name }} Cluster promotion and reconnect integration test
         env:
@@ -288,7 +293,7 @@ jobs:
           TEST_REDIS_CLUSTER_FAILOVER_REPLICA_PORT: '7005'
           TEST_REDIS_CLUSTER_CONTAINER_PREFIX: '${{ matrix.name }}-cluster-'
           TEST_REDIS_PREFIX: 'ci:editor-data-cluster-failover:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
-        run: npm run tests -- --runInBand ../tests/redis/editorDataRedis.topology.tests.js
+        run: cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.topology.tests.js
 
       - name: Clean up ${{ matrix.name }} Cluster nodes
         if: always()
@@ -461,7 +466,8 @@ jobs:
           TEST_REDIS_PREFIX: 'ci:editor-data-sentinel:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
         run: |
           echo "Running ${{ matrix.name }} Sentinel editor-data tests"
-          npm run tests -- --runInBand ../tests/redis
+          cd DocService
+          ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis
 
       - name: Run ${{ matrix.name }} Sentinel promotion and reconnect integration test
         env:
@@ -472,7 +478,7 @@ jobs:
           TEST_REDIS_SENTINEL_PRIMARY_CONTAINER: '${{ matrix.name }}-sentinel-${{ matrix.auth }}-primary'
           TEST_REDIS_SENTINEL_REPLICA_PORT: '6381'
           TEST_REDIS_PREFIX: 'ci:editor-data-sentinel-failover:${{ matrix.name }}:${{ github.run_id }}:${{ github.run_attempt }}:'
-        run: npm run tests -- --runInBand ../tests/redis/editorDataRedis.topology.tests.js
+        run: cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.topology.tests.js
 
       - name: Clean up ${{ matrix.name }} Sentinel topology
         if: always()
