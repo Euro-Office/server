@@ -22,7 +22,7 @@ module.exports = function attachCleanup(EditorData) {
   // - final-viewer cleanup passes preserveSavedClaim, because a callback may
   //   still be active even though no presence remains. The claim lease then
   //   provides the recovery boundary if that callback is abandoned.
-  EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId, cleanupOptions) {
+  EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId, cleanupOptions = undefined) {
     const preserveSavedClaim = cleanupOptions?.preserveSavedClaim === true;
     const keys = this._docKeys(ctx, docId);
     const timerCleanupKey = forceSaveTimerCleanupKey(ctx, docId);
