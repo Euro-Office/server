@@ -335,6 +335,58 @@ async function insertChangesAsync(ctx, tableChanges, startIndex, objChanges, doc
   return result;
 }
 
+// See baseConnector getOwnershipCheckFallback: a READ COMMITTED read releases
+// its lock at once and, with READ_COMMITTED_SNAPSHOT, takes none.
+// REPEATABLEREAD holds it until the deletion commits.
+function getOwnershipCheck(table, where) {
+  return `SELECT 1 FROM ${table} WITH (REPEATABLEREAD) WHERE ${where}`;
+}
+
+function getAdditionalCondition(parameter) {
+  return `additional COLLATE Latin1_General_100_BIN2=${parameter}`;
+}
+
+async function withTaskResultLock(ctx, docId, condition, action) {
+  const pool = await sql.connect(configuration);
+  const transaction = new sql.Transaction(pool);
+  let begun = false;
+  const query = (command, values) => {
+    const request = new sql.Request(transaction);
+    const placeholders = convertPlaceholdersValues(values);
+    for (const [name, value] of Object.entries(placeholders)) {
+      request.input(name, dataType(value), value);
+    }
+    return request.query(command);
+  };
+  try {
+    await transaction.begin(sql.ISOLATION_LEVEL.READ_COMMITTED);
+    begun = true;
+    const locked = await query(
+      `SELECT 1 FROM ${cfgTableResult} WITH (UPDLOCK, HOLDLOCK) WHERE tenant=@${placeholderPrefix}0 AND id=@${placeholderPrefix}1`,
+      [ctx.tenant, docId]
+    );
+    let owned = false;
+    if (locked.recordset.length > 0) {
+      const result = await query(`SELECT * FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values);
+      owned = result.recordset.length > 0;
+      if (owned) {
+        await action(result.recordset[0]);
+      }
+    }
+    await transaction.commit();
+    return owned;
+  } catch (error) {
+    if (begun) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        ctx.logger.error('withTaskResultLock rollback error: %s', rollbackError.stack);
+      }
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   sqlQuery,
   closePool,
@@ -344,5 +396,8 @@ module.exports = {
   getDocumentsWithChanges,
   getExpired,
   upsert,
-  insertChanges
+  insertChanges,
+  getOwnershipCheck,
+  getAdditionalCondition,
+  withTaskResultLock
 };
