@@ -47,10 +47,12 @@ Run all standalone Redis tests:
 ```sh
 prefix="local:standalone:$(date +%s):"
 
-TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
-TEST_REDIS_PREFIX="$prefix" \
-bash -c 'cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis' \
-  2>&1 | tee test-results-standalone.log
+(
+  cd DocService || exit
+  TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
+  TEST_REDIS_PREFIX="$prefix" \
+    ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis
+) 2>&1 | tee test-results-standalone.log
 ```
 
 Run the connection-failure integration test separately:
@@ -58,11 +60,13 @@ Run the connection-failure integration test separately:
 ```sh
 prefix="local:failure:$(date +%s):"
 
-TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
-TEST_REDIS_FAILURE_CONTAINER=local-redis \
-TEST_REDIS_PREFIX="$prefix" \
-bash -c 'cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.failure.integration.tests.js' \
-  2>&1 | tee test-results-failure.log
+(
+  cd DocService || exit
+  TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
+  TEST_REDIS_FAILURE_CONTAINER=local-redis \
+  TEST_REDIS_PREFIX="$prefix" \
+    ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.failure.integration.tests.js
+) 2>&1 | tee test-results-failure.log
 ```
 
 The failure test intentionally stops and restarts the configured container.
@@ -86,13 +90,15 @@ Run all tests with authentication variables explicitly removed:
 ```sh
 prefix="local:no-password:$(date +%s):"
 
-env -u TEST_REDIS_NODE_PASSWORD \
+(
+  cd DocService || exit
+  env -u TEST_REDIS_NODE_PASSWORD \
     -u TEST_REDIS_SENTINEL_PASSWORD \
     -u TEST_REDIS_NODE_USERNAME \
     -u TEST_REDIS_SENTINEL_USERNAME \
-TEST_REDIS_PREFIX="$prefix" \
-bash -c 'cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis' \
-  2>&1 | tee test-results-no-password.log
+    TEST_REDIS_PREFIX="$prefix" \
+    ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis
+) 2>&1 | tee test-results-no-password.log
 ```
 
 ## Redis Cluster
@@ -137,37 +143,43 @@ Run the regular Cluster tests:
 ```sh
 prefix="local:cluster:$(date +%s):"
 
-TEST_REDIS_CLUSTER=true \
-TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
-TEST_REDIS_CLUSTER_NODES='redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002' \
-TEST_REDIS_PREFIX="$prefix" \
-bash -c 'cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis --testPathIgnorePatterns=editorDataRedis.process.tests.js' \
-  2>&1 | tee test-results-cluster.log
+(
+  cd DocService || exit
+  TEST_REDIS_CLUSTER=true \
+  TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
+  TEST_REDIS_CLUSTER_NODES='redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002' \
+  TEST_REDIS_PREFIX="$prefix" \
+    ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis --testPathIgnorePatterns=editorDataRedis.process.tests.js
+) 2>&1 | tee test-results-cluster.log
 ```
 
 Run the independent-process tests:
 
 ```sh
-TEST_REDIS_CLUSTER=true \
-TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
-TEST_REDIS_CLUSTER_NODES='redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002' \
-TEST_REDIS_PREFIX="local:cluster-process:$(date +%s):" \
-bash -c 'cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.process.tests.js' \
-  2>&1 | tee test-results-cluster-process.log
+(
+  cd DocService || exit
+  TEST_REDIS_CLUSTER=true \
+  TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
+  TEST_REDIS_CLUSTER_NODES='redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002' \
+  TEST_REDIS_PREFIX="local:cluster-process:$(date +%s):" \
+    ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.process.tests.js
+) 2>&1 | tee test-results-cluster-process.log
 ```
 
 Run Cluster failover and reconnection tests:
 
 ```sh
-TEST_REDIS_CLUSTER=true \
-TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
-TEST_REDIS_CLUSTER_NODES='redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002' \
-TEST_REDIS_TOPOLOGY_REQUIRED=true \
-TEST_REDIS_CLUSTER_FAILOVER_REPLICA_PORT=7005 \
-TEST_REDIS_CLUSTER_CONTAINER_PREFIX=local-cluster- \
-TEST_REDIS_PREFIX="local:cluster-failover:$(date +%s):" \
-bash -c 'cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.topology.tests.js' \
-  2>&1 | tee test-results-cluster-failover.log
+(
+  cd DocService || exit
+  TEST_REDIS_CLUSTER=true \
+  TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
+  TEST_REDIS_CLUSTER_NODES='redis://127.0.0.1:7000,redis://127.0.0.1:7001,redis://127.0.0.1:7002' \
+  TEST_REDIS_TOPOLOGY_REQUIRED=true \
+  TEST_REDIS_CLUSTER_FAILOVER_REPLICA_PORT=7005 \
+  TEST_REDIS_CLUSTER_CONTAINER_PREFIX=local-cluster- \
+  TEST_REDIS_PREFIX="local:cluster-failover:$(date +%s):" \
+    ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.topology.tests.js
+) 2>&1 | tee test-results-cluster-failover.log
 ```
 
 ## Redis Sentinel
@@ -222,32 +234,36 @@ Run all Sentinel tests:
 ```sh
 prefix="local:sentinel:$(date +%s):"
 
-TEST_REDIS_SENTINEL=true \
-TEST_REDIS_SENTINEL_NAME=mymaster \
-TEST_REDIS_SENTINEL_NODES='127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381' \
-TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
-TEST_REDIS_SENTINEL_PASSWORD=sentinel-editor-data-password \
-TEST_REDIS_SENTINEL_TRANSIENT_CONTAINER=local-sentinel-26379 \
-TEST_REDIS_PREFIX="$prefix" \
-bash -c 'cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis' \
-  2>&1 | tee test-results-sentinel.log
+(
+  cd DocService || exit
+  TEST_REDIS_SENTINEL=true \
+  TEST_REDIS_SENTINEL_NAME=mymaster \
+  TEST_REDIS_SENTINEL_NODES='127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381' \
+  TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
+  TEST_REDIS_SENTINEL_PASSWORD=sentinel-editor-data-password \
+  TEST_REDIS_SENTINEL_TRANSIENT_CONTAINER=local-sentinel-26379 \
+  TEST_REDIS_PREFIX="$prefix" \
+    ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis
+) 2>&1 | tee test-results-sentinel.log
 ```
 
 Run Sentinel failover and reconnection tests:
 
 ```sh
-TEST_REDIS_SENTINEL=true \
-TEST_REDIS_SENTINEL_NAME=mymaster \
-TEST_REDIS_SENTINEL_NODES='127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381' \
-TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
-TEST_REDIS_SENTINEL_PASSWORD=sentinel-editor-data-password \
-TEST_REDIS_TOPOLOGY_REQUIRED=true \
-TEST_REDIS_SENTINEL_PRIMARY_CONTAINER=local-sentinel-primary \
-TEST_REDIS_SENTINEL_REPLICA_PORT=6381 \
-TEST_REDIS_SENTINEL_TRANSIENT_CONTAINER=local-sentinel-26379 \
-TEST_REDIS_PREFIX="local:sentinel-failover:$(date +%s):" \
-bash -c 'cd DocService && ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.topology.tests.js' \
-  2>&1 | tee test-results-sentinel-failover.log
+(
+  cd DocService || exit
+  TEST_REDIS_SENTINEL=true \
+  TEST_REDIS_SENTINEL_NAME=mymaster \
+  TEST_REDIS_SENTINEL_NODES='127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381' \
+  TEST_REDIS_NODE_PASSWORD=redis-editor-data-password \
+  TEST_REDIS_SENTINEL_PASSWORD=sentinel-editor-data-password \
+  TEST_REDIS_TOPOLOGY_REQUIRED=true \
+  TEST_REDIS_SENTINEL_PRIMARY_CONTAINER=local-sentinel-primary \
+  TEST_REDIS_SENTINEL_REPLICA_PORT=6381 \
+  TEST_REDIS_SENTINEL_TRANSIENT_CONTAINER=local-sentinel-26379 \
+  TEST_REDIS_PREFIX="local:sentinel-failover:$(date +%s):" \
+    ../node_modules/.bin/jest --inject-globals=false --config=../tests/jest.config.js --runInBand ../tests/redis/editorDataRedis.topology.tests.js
+) 2>&1 | tee test-results-sentinel-failover.log
 ```
 
 ## Cleanup
