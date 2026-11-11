@@ -947,6 +947,40 @@ describe('HTTP Request Unit Tests', () => {
     expect(JSON.parse(result.body.toString())).toEqual({success: true});
   });
 
+  describe('internalUrl rewrite', () => {
+    const EXTERNAL_HOST = 'http://external.invalid';
+    const download = (mockCtx, uri) =>
+      utils.downloadUrlPromise(mockCtx, uri, {wholeCycle: '5s', connectionAndInactivity: '3s'}, 1024 * 1024, null, false, null, null);
+
+    test.concurrent('rewrites URLs on externalHost to internalUrl', async () => {
+      const mockCtx = createMockContext({
+        'storage.externalHost': `${EXTERNAL_HOST}/`,
+        'services.CoAuthoring.server.internalUrl': `${BASE_URL}/`
+      });
+
+      const result = await download(mockCtx, `${EXTERNAL_HOST}/api/data`);
+
+      expect(JSON.parse(result.body.toString())).toEqual({success: true});
+    });
+
+    test.concurrent('leaves URLs on other hosts unchanged', async () => {
+      const mockCtx = createMockContext({
+        'storage.externalHost': EXTERNAL_HOST,
+        'services.CoAuthoring.server.internalUrl': 'http://localhost:1'
+      });
+
+      const result = await download(mockCtx, `${BASE_URL}/api/data`);
+
+      expect(JSON.parse(result.body.toString())).toEqual({success: true});
+    });
+
+    test.concurrent('does not rewrite when internalUrl is unset', async () => {
+      const mockCtx = createMockContext({'storage.externalHost': EXTERNAL_HOST});
+
+      await expect(download(mockCtx, `${EXTERNAL_HOST}/api/data`)).rejects.toThrow(/external\.invalid/);
+    });
+  });
+
   describe('postRequestPromise', () => {
     test.concurrent('successfully posts data', async () => {
       const postData = JSON.stringify({test: 'data'});
