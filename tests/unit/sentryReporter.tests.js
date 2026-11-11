@@ -41,7 +41,9 @@ describe('sentry reporter', () => {
     expect(options.sendDefaultPii).toBe(false);
     expect(options.initialScope).toEqual({tags: {service: 'docservice'}});
     expect(options.release).toMatch(/^documentserver@/);
-    const names = options.integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}, {name: 'Console'}]).map(i => i.name);
+    const names = options
+      .integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}, {name: 'Console'}])
+      .map(i => i.name);
     expect(names).toEqual(['Http']);
     expect(reporters.appenders()).toEqual({sentry: {type: reporter}});
   });
@@ -74,13 +76,13 @@ describe('sentry reporter', () => {
     expect(Sentry.captureMessage.mock.calls[2][1].user).toBeUndefined();
   });
 
-  test('tags x2t failures and groups them by exit code, signal and error', () => {
-    const X2T = {exitCode: 139, signal: null, error: -80, formatFrom: 'docx', formatTo: ''};
-    appender({...logEvent('ERROR', 'ExitCode (code=%d;signal=%s;error:%d)', 139, null, -80), context: {X2T}});
+  test('maps the REPORT context to tags and extends the template fingerprint', () => {
+    const REPORT = {tags: {'converter.binary': 'x2t', 'converter.exitCode': 139, 'converter.signal': null}, fingerprint: ['binary:x2t']};
+    appender({...logEvent('ERROR', 'ExitCode (code=%s)', 139), context: {REPORT}});
     const [, context] = Sentry.captureMessage.mock.calls[0];
-    expect(context.tags).toEqual({logger: 'nodeJS', 'x2t.exitCode': '139', 'x2t.error': '-80', 'x2t.formatFrom': 'docx'});
-    expect(context.fingerprint).toEqual(['ExitCode (code=%d;signal=%s;error:%d)', 'exitCode:139', 'signal:null', 'error:-80']);
-    appender({...logEvent('ERROR', new Error('boom')), context: {X2T}});
+    expect(context.tags).toEqual({logger: 'nodeJS', 'converter.binary': 'x2t', 'converter.exitCode': '139'});
+    expect(context.fingerprint).toEqual(['ExitCode (code=%s)', 'binary:x2t']);
+    appender({...logEvent('ERROR', new Error('boom')), context: {REPORT}});
     expect(Sentry.captureException.mock.calls[0][1].fingerprint).toBeUndefined();
   });
 
