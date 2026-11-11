@@ -37,11 +37,11 @@ describe('sentry reporter', () => {
     delete process.env.SENTRY_DSN;
   });
 
-  test('init uses release default and drops the SDK crash handlers', () => {
+  test('init uses release default and drops the SDK crash handlers and console breadcrumbs', () => {
     expect(options.sendDefaultPii).toBe(false);
     expect(options.initialScope).toEqual({tags: {service: 'docservice'}});
     expect(options.release).toMatch(/^documentserver@/);
-    const names = options.integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}]).map(i => i.name);
+    const names = options.integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}, {name: 'Console'}]).map(i => i.name);
     expect(names).toEqual(['Http']);
     expect(reporters.appenders()).toEqual({sentry: {type: reporter}});
   });

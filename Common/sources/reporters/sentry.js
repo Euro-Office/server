@@ -31,8 +31,9 @@ function init(service) {
     release: process.env.SENTRY_RELEASE || `documentserver@${buildVersion}`,
     sendDefaultPii: false,
     initialScope: {tags: {service}},
-    // Crashes are reported through the existing uncaughtException handlers, which log the error and flush via logger.shutdown
-    integrations: defaults => defaults.filter(i => i.name !== 'OnUncaughtException' && i.name !== 'OnUnhandledRejection'),
+    // Crashes are reported through the existing uncaughtException handlers, which log the error and flush via logger.shutdown.
+    // Console would turn every console log line (document text, other tenants) into breadcrumbs
+    integrations: defaults => defaults.filter(i => !['OnUncaughtException', 'OnUnhandledRejection', 'Console'].includes(i.name)),
     beforeSend: scrub
   });
 }
