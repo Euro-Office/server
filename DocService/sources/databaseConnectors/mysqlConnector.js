@@ -204,4 +204,4 @@ module.exports.addSqlParameter = addSqlParameter;
 module.exports.concatParams = concatParams;
 module.exports.upsert = upsert;
 module.exports.withTaskResultLock = withTaskResultLock;
-module.exports.getAdditionalCondition = parameter => `BINARY additional=BINARY ${parameter}`;
+module.exports.getAdditionalCondition = parameter => `CAST(additional AS BINARY)=CAST(${parameter} AS BINARY)`;

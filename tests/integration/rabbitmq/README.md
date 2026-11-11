@@ -17,8 +17,7 @@ npm run test:rabbitmq
 ```
 
 Requires a running Docker daemon, Bash, GNU `timeout`, and Node.js. Docker pulls
-`rabbitmq:3` if needed, matching the workspace's
-`develop/docker-compose.redis-base.yml`. No other Compose services are started.
+`rabbitmq:3` if needed. No other services are started.
 No new npm dependencies are required.
 
 The command starts a dedicated container with a unique name and vhost, an

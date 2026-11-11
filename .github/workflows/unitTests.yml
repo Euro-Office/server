@@ -10,7 +10,6 @@ on:
       - '.github/workflows/unitTests.yml'
       - '!tests/integration/**'
       - 'tests/integration/rabbitmq/**'
-      - '!DocService/sources/databaseConnectors/**'
 jobs:
   unit-tests:
     name: Service unit tests

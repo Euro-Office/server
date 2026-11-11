@@ -1694,6 +1694,9 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesM
 // opt_changesMask: the task row as the caller holds it.  Nothing is cleaned if
 // the row no longer matches it (false: the caller's next attempt finds out),
 // and the changes are deleted only while it still does.
+// opt_cleanupOptions: {preserveSavedClaim} keeps the saved-state entries a
+// final save still in flight needs (see savedState.js); {skipWopiUnlock} skips
+// the WOPI UNLOCK (and its task-row update) at the end.
 function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_changesMask, opt_cleanupOptions) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
@@ -1724,7 +1727,7 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
     if (opt_changesMask) {
       yield taskResult.deleteChangesIf(ctx, opt_changesMask);
     } else {
-      // Unlike main, a failed deletion fails the cleanup (an encrypted save
+      // A failed deletion fails the cleanup (an encrypted save
       // answers saveFile with 400): changes left behind silently would be
       // replayed by the next open on top of the file that already has them.
       yield sqlBase.deleteChangesPromise(ctx, docId, null);
@@ -1739,14 +1742,24 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
       yield storage.deletePath(ctx, docId, tenForgottenFiles);
     }
   }
+  if (opt_cleanupOptions?.skipWopiUnlock === true) {
+    return true;
+  }
   return yield unlockWopiDoc(ctx, docId, opt_userIndex, opt_changesMask);
 }
 /**
  * Clean up after the final viewer leaves, while preserving a saved-state claim
  * that an in-flight callback may still need to acknowledge.
+ *
+ * It never sends a WOPI UNLOCK.  The lock belongs to the editors: an editor's own exit
+ * releases it when there was no save, and the final save releases it in its
+ * cleanup (or leaves it to the host's lock expiry when it is abandoned).  An
+ * UNLOCK here has no ownership mask and would race a final save still in
+ * flight: the host could reject its PutFile or let a third party lock the file
+ * mid-save.
  */
 function* cleanDocumentAfterFinalViewerExit(ctx, docId) {
-  yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, undefined, {preserveSavedClaim: true});
+  return yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, undefined, {preserveSavedClaim: true, skipWopiUnlock: true});
 }
 // opt_closeStatus ({sent}) lets a retried caller send the status only once:
 // it is skipped when `sent` is true and set to true once the status was sent.
@@ -1985,6 +1998,7 @@ exports.getIsPreStop = getIsPreStop;
 exports.hasChanges = hasChanges;
 exports.cleanDocumentOnExitPromise = co.wrap(cleanDocumentOnExit);
 exports.cleanDocumentOnExitNoChangesPromise = co.wrap(cleanDocumentOnExitNoChanges);
+exports.cleanDocumentAfterFinalViewerExitPromise = co.wrap(cleanDocumentAfterFinalViewerExit);
 exports.unlockWopiDoc = unlockWopiDoc;
 exports.setForceSave = setForceSave;
 exports.startForceSave = startForceSave;

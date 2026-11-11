@@ -171,7 +171,7 @@ describe('final-save saved-state handling', () => {
     expect(docsCoServer.publish).toHaveBeenCalledWith(ctx, expect.objectContaining({success: status === '1'}));
     expect(storage.copyObject).toHaveBeenCalledTimes(status === '1' ? 0 : 1);
     expect(taskResult.deleteChangesIf).toHaveBeenCalledTimes(status === '1' ? 0 : 1);
-    // A declined save's row is removed, as main does.
+    // A declined save's row is removed.
     expect(taskResult.removeIf).toHaveBeenCalledTimes(status === '1' ? 0 : 1);
     if (status === '0') {
       expect(storage.copyObject.mock.invocationCallOrder[0]).toBeLessThan(docsCoServer.cleanDocumentOnExitPromise.mock.invocationCallOrder[0]);
@@ -377,7 +377,7 @@ describe('final-save saved-state handling', () => {
     taskResult.select.mockResolvedValue([]);
     const removeFiles = jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined);
 
-    // GC's cleanupCache (as on main) reports that it removed nothing.
+    // GC's cleanupCache reports that it removed nothing.
     jest.spyOn(taskResult, 'remove').mockResolvedValue({affectedRows: 0});
     await expect(canvasservice.cleanupCache(ctx, 'document')).resolves.toBe(false);
     await expect(
@@ -802,7 +802,7 @@ describe('final-save queue recovery', () => {
 
     await canvasservice.receiveTask(queuedCommand(), firstAck);
 
-    // As on main, the cache and row of a session opened from the forgotten file
+    // The cache and row of a session opened from the forgotten file
     // go, at completion: storage first, while the row keeps opens out.
     expect(row.status_info).toBe(commonDefines.CALLBACK_ACCEPTED_FORGOTTEN_STATUS_INFO);
     expect(removeFiles).toHaveBeenCalledTimes(1);
@@ -836,7 +836,7 @@ describe('final-save queue recovery', () => {
     await canvasservice.receiveTask(original, firstAck);
 
     // The integrator's file lacks the changes: forgotten file first, then the
-    // declined cleanup removes the row, as main does.
+    // declined cleanup removes the row.
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
     expect(storage.copyObject).toHaveBeenCalledTimes(1);
     expect(storage.copyObject.mock.invocationCallOrder[0]).toBeLessThan(taskResult.deleteChangesIf.mock.invocationCallOrder[0]);
@@ -1164,9 +1164,7 @@ describe('document cleanup completion contract', () => {
     // for the final-save callers that fence cleanup against a new session.
     jest.spyOn(taskResult, 'select').mockResolvedValue([]);
 
-    await expect(
-      docsCoServer.cleanDocumentOnExitPromise(ctx, 'document', false, undefined, undefined, undefined, {preserveSavedClaim: true})
-    ).resolves.toBe(true);
+    await expect(docsCoServer.cleanDocumentAfterFinalViewerExitPromise(ctx, 'document')).resolves.toBe(true);
 
     expect(Object.hasOwn(store.data[ctx.tenant], 'document')).toBe(false);
     expect(await store.getForceSaveTimer(2)).toEqual([]);
@@ -1176,6 +1174,26 @@ describe('document cleanup completion contract', () => {
     await store.clearSavedCallbackAccepted(ctx, 'document', 'save-key');
     expect(await store.getdelSaved(ctx, 'document', 'save-key')).toBeNull();
     expect(await store.getSavedCallbackAccepted(ctx, 'document', 'save-key')).toBeUndefined();
+  });
+
+  test('final-viewer cleanup never sends a WOPI unlock', async () => {
+    // The last editor's final save may still hold the WOPI lock for its
+    // PutFile; an unfenced UNLOCK from the last viewer's exit would race it.
+    const store = new EditorData();
+    jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit').mockImplementation((...args) => store.cleanDocumentOnExit(...args));
+    jest.spyOn(taskResult, 'select').mockResolvedValue([{callback: 'https://callback.example.test/save', baseurl: 'https://base.example.test/'}]);
+    jest.spyOn(wopiClient, 'parseWopiCallback').mockReturnValue({
+      userAuth: {wopiSrc: 'https://wopi.example.test/file', access_token: 'token', mode: 'edit'},
+      commonInfo: {lockId: 'lock', fileInfo: {SupportsLocks: true}}
+    });
+    const unlock = jest.spyOn(wopiClient, 'unlock').mockResolvedValue(true);
+    const openStart = jest.spyOn(canvasservice, 'commandOpenStartPromise').mockResolvedValue(undefined);
+
+    await expect(docsCoServer.cleanDocumentAfterFinalViewerExitPromise(ctx, 'document')).resolves.toBe(true);
+
+    expect(docsCoServer.editorData.cleanDocumentOnExit).toHaveBeenCalledWith(ctx, 'document', undefined, {preserveSavedClaim: true});
+    expect(unlock).not.toHaveBeenCalled();
+    expect(openStart).not.toHaveBeenCalled();
   });
 
   test.each([false, undefined, new Error('storage unavailable')])('stops destructive follow-up for %s', async result => {
@@ -1298,7 +1316,7 @@ describe('SQL deletion critical section', () => {
     const mysql = require('../../DocService/sources/databaseConnectors/mysqlConnector');
     const mssql = require('../../DocService/sources/databaseConnectors/mssqlConnector');
     const oracle = require('../../DocService/sources/databaseConnectors/oracleConnector');
-    expect(mysql.getAdditionalCondition('?')).toBe('BINARY additional=BINARY ?');
+    expect(mysql.getAdditionalCondition('?')).toBe('CAST(additional AS BINARY)=CAST(? AS BINARY)');
     expect(mssql.getAdditionalCondition('@p')).toBe('additional COLLATE Latin1_General_100_BIN2=@p');
     expect(oracle.getAdditionalCondition(':0')).toBe('DBMS_LOB.COMPARE(additional, :0)=0');
   });

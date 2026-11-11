@@ -1428,7 +1428,7 @@ function* releaseSaveState(ctx, cmd, docId, operationId) {
 // SaveVersion a reopen resumes), so that its waiting editors may be told.
 function* releaseAbandonedTaskRow(ctx, cmd, docId, operationId) {
   // Leave the row to the next open: resumable with the changes the save left
-  // (SaveVersion, as after a failed save on main), or expirable like a
+  // (SaveVersion, as after any failed save), or expirable like a
   // completed save when they are gone.  Leave another save's row alone.  If
   // this fails, the open path takes the row over later the same way.
   const selectRes = yield taskResult.select(ctx, docId);
@@ -1554,8 +1554,7 @@ function* scheduleSfcRetry(ctx, cmd, opt_isCallbackRetry) {
   let timeout;
   if (opt_isCallbackRetry) {
     // HTTP callback failures have their own budget (options.retries), checked
-    // before the retry is requested, and back off by their own count, as on
-    // main.
+    // before the retry is requested, and back off by their own count.
     timeout = retry.createTimeout(callbackAttempt, options.timeout);
     cmd.setCallbackAttempt(callbackAttempt + 1);
   } else {
@@ -1631,7 +1630,7 @@ function* persistAcceptedCallback(ctx, docId, updateMask, openFromForgotten, ope
 // (getFinalSaveState: own marker, not pendingOwn).
 function* completeAcceptedSave(ctx, docId, openFromForgotten, mask) {
   if (openFromForgotten) {
-    // As on main, the cache and the row of a session opened from the forgotten
+    // The cache and the row of a session opened from the forgotten
     // file go, so that the next open converts the integrator's file.  Storage
     // first, while the row still keeps opens out; then the row.
     const cleaned = yield deleteDocumentCacheIfOwned(ctx, mask);
@@ -1895,7 +1894,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           return finalSave.last.operationId === String(savedClaimId);
         }
         // No markers (a row from before them, or no `additional` column): a
-        // first delivery takes the row as main does, a retry only a row that
+        // first delivery takes the row as an untracked save does, a retry only a row that
         // still carries the status it wrote.
         if (!(cmd.getAttempt() > 0)) {
           return true;
@@ -2164,7 +2163,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
                 // never retried or redelivered, so its acceptance is not
                 // tracked: a database error after acceptance must not fail a
                 // save the integrator already has.  Without markers the
-                // acceptance is not persisted either, as on main: an unowned
+                // acceptance is not persisted either (as for untracked saves): an unowned
                 // pending status could not be released.
                 if (tracked && markersSupported) {
                   // Record acceptance in memory before SQL. If SQL persistence
@@ -2264,7 +2263,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
               storeForgotten = true;
               // Not accepted (a retryable failure, a final answer other than
               // acceptance, or accepted but reported unsaved): restore SaveVersion
-              // below, as main does, so that a retry starts from the row as it
+              // below, so that a retry starts from the row as it
               // was and a reopen within expire.updateVersionStatus is not
               // view-only.  An encrypted save gets its previous status back.
             }
@@ -2402,7 +2401,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           // Keep the saved-state claim pending until cache cleanup completes.
           // An accepted callback keeps its task row as a durable tombstone
           // until the completion marker is persisted after publication.  A
-          // declined save removes the row, as main does.
+          // declined save removes the row.
           const cleanupRes = yield cleanupCacheIf(ctx, updateMask);
           ctx.logger.debug('storeForgotten cleanupRes=%s', cleanupRes);
           savedOutcomeCompleted = cleanupRes === true;
@@ -2465,7 +2464,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
   }
 
   // A callback accepted during this attempt must be completed too, not only
-  // one accepted by an earlier attempt.  Before the event, as on main: editors
+  // one accepted by an earlier attempt.  Before the event: editors
   // reload on it and must find the row (or no row) the save leaves behind.
   if (callbackAccepted && !isEncrypted && savedOutcomeCompleted && !needRetry) {
     yield* completeAcceptedSave(ctx, docId, cmd.getOpenFromForgotten() === true, completionMask);
