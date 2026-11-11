@@ -51,6 +51,7 @@ const tenantManager = require('./../../Common/sources/tenantManager');
 const {detectCertType} = require('./signing/pdfSigningCore');
 const {signPdfFile: signPdfFileKms} = require('./signing/pdfAwsKmsSigner');
 const {signPdfFile: signPdfFileCsc} = require('./signing/pdfCscSigner');
+const {getChildEnv} = require('./childEnv');
 
 const cfgMaxDownloadBytes = config.get('FileConverter.converter.maxDownloadBytes');
 const cfgDownloadTimeout = config.get('FileConverter.converter.downloadTimeout');
@@ -1146,7 +1147,8 @@ function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, g
     //copy to avoid modification of global cfgSpawnOptions
     const spawnOptions = Object.assign({}, tenSpawnOptions);
     ctx.logger.warn('TEST LOG process.env: %j', process.env);
-    spawnOptions.env = Object.assign({}, process.env, spawnOptions.env);
+    //spawnOptions.env = Object.assign({}, process.env, spawnOptions.env);
+    spawnOptions.env = getChildEnv(process.env, spawnOptions.env);
     if (authorProps.lastModifiedBy && authorProps.modified) {
       spawnOptions.env['LAST_MODIFIED_BY'] = authorProps.lastModifiedBy;
       spawnOptions.env['MODIFIED'] = authorProps.modified;
@@ -1397,3 +1399,6 @@ function run() {
   });
 }
 exports.run = run;
+
+//for tests
+exports.spawnProcess = spawnProcess;
