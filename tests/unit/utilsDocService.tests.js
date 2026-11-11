@@ -292,7 +292,7 @@ describe('utilsDocService image processing', () => {
       expect(utilsDocService.getSpreadsheetJsonParams(undefined)).toEqual({});
     });
 
-    test('keeps the active sheet and the layout as they are by default', () => {
+    test('passes the layout on without a printType unless entireWorkbook is true', () => {
       const layout = {ignorePrintArea: true, fitToWidth: 1};
       expect(utilsDocService.getSpreadsheetJsonParams(layout)).toEqual({spreadsheetLayout: layout});
       expect(utilsDocService.getSpreadsheetJsonParams({entireWorkbook: false})).toEqual({spreadsheetLayout: {}});
