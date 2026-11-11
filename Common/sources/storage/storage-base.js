@@ -134,7 +134,7 @@ async function listObjects(ctx, strPath, opt_specialDir) {
       return currentValue.substring(prefix.length);
     });
   } catch (e) {
-    ctx.logger.error('storage.listObjects: %s', e.stack);
+    ctx.logger.error('storage.listObjects:', e);
     return [];
   }
 }
@@ -245,7 +245,7 @@ async function healthCheck(ctx, opt_specialDir) {
     //try to prevent case, when another process can remove same tempName
     await deleteObject(ctx, tempName, opt_specialDir);
   } catch (err) {
-    ctx.logger.warn('healthCheck storage(%s) error %s', opt_specialDir, err.stack);
+    ctx.logger.warn('healthCheck storage(%s) error', opt_specialDir, err);
   }
 }
 function needServeStatic(opt_specialDir) {

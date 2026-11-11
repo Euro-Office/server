@@ -120,7 +120,7 @@ router.get('/setup/required', async (req, res) => {
       passwordValidationSchema
     });
   } catch (error) {
-    ctx.logger.error('Setup check error: %s', error.stack);
+    ctx.logger.error('Setup check error:', error);
     res.status(500).json({error: 'Internal server error'});
   }
 });
@@ -174,7 +174,7 @@ router.post('/setup', async (req, res) => {
     ctx.logger.info('AdminPanel setup completed successfully');
     res.json({message: 'Setup completed successfully'});
   } catch (error) {
-    ctx.logger.error('Setup error: %s', error.stack);
+    ctx.logger.error('Setup error:', error);
     res.status(500).json({error: error.message || 'Internal server error'});
   }
 });
@@ -213,7 +213,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
     ctx.logger.info('AdminPanel password changed successfully');
     res.json({message: 'Password changed successfully'});
   } catch (error) {
-    ctx.logger.error('Change password error: %s', error.stack);
+    ctx.logger.error('Change password error:', error);
     res.status(500).json({error: 'Internal server error'});
   }
 });
@@ -258,7 +258,7 @@ router.post('/login', async (req, res) => {
     ctx.logger.info('AdminPanel login successful');
     res.json({tenant: 'localhost', isAdmin: true});
   } catch (error) {
-    ctx.logger.error('Login error: %s', error.stack);
+    ctx.logger.error('Login error:', error);
     res.status(500).json({error: 'Internal server error'});
   }
 });
@@ -301,7 +301,7 @@ router.post('/generate-docserver-token', requireAuth, async (req, res) => {
     ctx.logger.info('Generated Document Server JWT token');
     res.json({token});
   } catch (error) {
-    ctx.logger.error('JWT token generation error: %s', error.stack);
+    ctx.logger.error('JWT token generation error:', error);
     res.status(500).json({error: 'Internal server error'});
   }
 });
