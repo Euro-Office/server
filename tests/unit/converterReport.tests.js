@@ -6,6 +6,7 @@
 
 const {describe, test, expect, afterAll, beforeEach} = require('@jest/globals');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 
@@ -100,6 +101,21 @@ describe('converter failure reports', () => {
       'error:-80',
       'spawnError:null'
     ]);
+    expect(events[0].breadcrumbs ?? []).toEqual([]);
+  });
+
+  test('outgoing requests of other tasks do not become breadcrumbs', async () => {
+    const server = http.createServer((req, res) => res.end('ok'));
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      await new Promise((resolve, reject) => {
+        http.get(`http://127.0.0.1:${server.address().port}/other-tenant/doc?id=1`, res => res.resume().on('end', resolve)).on('error', reject);
+      });
+    } finally {
+      server.close();
+    }
+    await executeTask('http', {outputformat: constants.AVS_OFFICESTUDIO_FILE_CANVAS_WORD}, {fromOrigin: true, toFile: 'Editor.bin'});
+    expect(events).toHaveLength(1);
     expect(events[0].breadcrumbs ?? []).toEqual([]);
   });
 

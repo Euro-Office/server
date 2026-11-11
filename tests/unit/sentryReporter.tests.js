@@ -39,6 +39,7 @@ describe('sentry reporter', () => {
 
   test('init uses release default and drops the SDK crash handlers and console breadcrumbs', () => {
     expect(options.sendDefaultPii).toBe(false);
+    expect(options.maxBreadcrumbs).toBe(0);
     expect(options.initialScope).toEqual({tags: {service: 'docservice'}});
     expect(options.release).toMatch(/^documentserver@/);
     const names = options

@@ -30,6 +30,8 @@ function init(service) {
     dsn: process.env.SENTRY_DSN,
     release: process.env.SENTRY_RELEASE || `documentserver@${buildVersion}`,
     sendDefaultPii: false,
+    // The breadcrumb buffer is shared by all tasks and tenants of a process, e.g. download and storage URLs of other documents
+    maxBreadcrumbs: 0,
     initialScope: {tags: {service}},
     // Crashes are reported through the existing uncaughtException handlers, which log the error and flush via logger.shutdown.
     // Console would turn every console log line (document text, other tenants) into breadcrumbs
