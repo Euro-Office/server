@@ -37,9 +37,18 @@ if (cluster.isMaster) {
   const os = require('os');
 
   const cfgMaxProcessCount = config.get('FileConverter.converter.maxprocesscount');
+  const cfgWorkerCount = config.has('FileConverter.converter.workercount') ? config.get('FileConverter.converter.workercount') : null;
 
   let workersCount = 0;
   const updateWorkersCount = function () {
+    // An explicit count is independent of CPU availability and the legacy multiplier.
+    if (Number.isSafeInteger(cfgWorkerCount) && cfgWorkerCount > 0) {
+      workersCount = cfgWorkerCount;
+      return;
+    }
+    if (cfgWorkerCount != null) {
+      operationContext.global.logger.warn('Invalid FileConverter.converter.workercount: %s; using automatic worker count', cfgWorkerCount);
+    }
     const numCPUs = os.cpus().length;
     const availableParallelism = os.availableParallelism?.();
     operationContext.global.logger.warn('num of CPUs: %d; availableParallelism: %s', numCPUs, availableParallelism);
