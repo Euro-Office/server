@@ -261,7 +261,41 @@ async function notifyLicenseExpiration(ctx, endDate) {
   }
 }
 
+//Asc.c_oAscPrintType.EntireWorkbook of sdkjs
+const c_oAscPrintTypeEntireWorkbook = 1;
+
+/**
+ * JsonParams of a spreadsheet conversion. `spreadsheetLayout.entireWorkbook: true` asks for every
+ * sheet, which the editor reads as `adjustOptions.printType`. The editor prints only the active
+ * sheet for a request without any params (no layout, watermark or other); with any params it
+ * already prints every sheet, so `entireWorkbook: false` cannot select the active sheet.
+ * With `entireWorkbook: true` sheets print at 100% unless the layout sets `fitToWidth`,
+ * `fitToHeight` or `scale`; setting one of them leaves the others to the editor.
+ * @param {object} spreadsheetLayout The `spreadsheetLayout` of the conversion request.
+ * @returns {object} JsonParams to merge into the command's.
+ */
+function getSpreadsheetJsonParams(spreadsheetLayout) {
+  if (!spreadsheetLayout) {
+    return {};
+  }
+  if ('object' !== typeof spreadsheetLayout || Array.isArray(spreadsheetLayout)) {
+    return {spreadsheetLayout};
+  }
+  const {entireWorkbook, ...layout} = spreadsheetLayout;
+  const jsonParams = {spreadsheetLayout: layout};
+  if (true === entireWorkbook) {
+    jsonParams.adjustOptions = {printType: c_oAscPrintTypeEntireWorkbook};
+    //with any layout the editor fits every sheet onto few pages, unless it is told how to scale.
+    //100% also overrides a sheet's own fit-to-page setting, see https://github.com/Euro-Office/sdkjs/issues/140
+    if (null == layout.fitToWidth && null == layout.fitToHeight && null == layout.scale) {
+      Object.assign(layout, {fitToWidth: 0, fitToHeight: 0, scale: 100});
+    }
+  }
+  return jsonParams;
+}
+
 module.exports.processImageOptimal = processImageOptimal;
 module.exports.determineOptimalFormat = determineOptimalFormat;
 module.exports.localeToLCID = localeToLCID;
 module.exports.notifyLicenseExpiration = notifyLicenseExpiration;
+module.exports.getSpreadsheetJsonParams = getSpreadsheetJsonParams;
