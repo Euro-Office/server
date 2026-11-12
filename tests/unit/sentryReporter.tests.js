@@ -37,11 +37,14 @@ describe('sentry reporter', () => {
     delete process.env.SENTRY_DSN;
   });
 
-  test('init uses release default and drops the SDK crash handlers', () => {
+  test('init uses release default and drops the SDK crash handlers and console breadcrumbs', () => {
     expect(options.sendDefaultPii).toBe(false);
+    expect(options.maxBreadcrumbs).toBe(0);
     expect(options.initialScope).toEqual({tags: {service: 'docservice'}});
     expect(options.release).toMatch(/^documentserver@/);
-    const names = options.integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}]).map(i => i.name);
+    const names = options
+      .integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}, {name: 'Console'}])
+      .map(i => i.name);
     expect(names).toEqual(['Http']);
     expect(reporters.appenders()).toEqual({sentry: {type: reporter}});
   });
@@ -72,6 +75,16 @@ describe('sentry reporter', () => {
     expect(withPii.user).toEqual({id: 'u1'});
     expect(withPii.extra.fileName).toBe('report.docx');
     expect(Sentry.captureMessage.mock.calls[2][1].user).toBeUndefined();
+  });
+
+  test('maps the REPORT context to tags and extends the template fingerprint', () => {
+    const REPORT = {tags: {'converter.binary': 'x2t', 'converter.exitCode': 139, 'converter.signal': null}, fingerprint: ['binary:x2t']};
+    appender({...logEvent('ERROR', 'ExitCode (code=%s)', 139), context: {REPORT}});
+    const [, context] = Sentry.captureMessage.mock.calls[0];
+    expect(context.tags).toEqual({logger: 'nodeJS', 'converter.binary': 'x2t', 'converter.exitCode': '139'});
+    expect(context.fingerprint).toEqual(['ExitCode (code=%s)', 'binary:x2t']);
+    appender({...logEvent('ERROR', new Error('boom')), context: {REPORT}});
+    expect(Sentry.captureException.mock.calls[0][1].fingerprint).toBeUndefined();
   });
 
   test('ignores events below error', () => {

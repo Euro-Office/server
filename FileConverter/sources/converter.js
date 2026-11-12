@@ -1004,45 +1004,73 @@ function writeProcessOutputToLog(ctx, childRes, isDebug) {
       if (isDebug) {
         ctx.logger.debug('stdout:%s', childRes.stdout);
       } else {
-        ctx.logger.error('stdout:%s', childRes.stdout);
+        ctx.logger.warn('stdout:%s', childRes.stdout);
       }
     }
     if (undefined !== childRes.stderr) {
       if (isDebug) {
         ctx.logger.debug('stderr:%s', childRes.stderr);
       } else {
-        ctx.logger.error('stderr:%s', childRes.stderr);
+        ctx.logger.warn('stderr:%s', childRes.stderr);
       }
     }
   }
 }
-function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeout) {
-  let exitCode = 0;
-  let exitSignal = null;
-  if (childRes) {
-    exitCode = childRes.status;
-    exitSignal = childRes.signal;
-  }
+function getProcessError(childRes, isTimeout) {
+  const exitCode = childRes.status;
   //CONVERT_CELLLIMITS is not an error, but an indicator that data was lost during opening (can be displayed as an error)
-  if ((0 !== exitCode && constants.CONVERT_CELLLIMITS !== -exitCode) || null !== exitSignal) {
-    if (-1 !== exitCodesReturn.indexOf(-exitCode)) {
-      error = -exitCode;
-    } else if (isTimeout) {
-      error = constants.CONVERT_TIMEOUT;
-    } else {
-      error = constants.CONVERT;
-    }
-    if (-1 !== exitCodesMinorError.indexOf(error)) {
-      writeProcessOutputToLog(ctx, childRes, true);
-      ctx.logger.debug('ExitCode (code=%d;signal=%s;error:%d)', exitCode, exitSignal, error);
-    } else {
-      writeProcessOutputToLog(ctx, childRes, false);
-      ctx.logger.error('ExitCode (code=%d;signal=%s;error:%d)', exitCode, exitSignal, error);
-      yield* processUploadToStorageErrorFile(ctx, dataConvert, tempDirs, childRes, exitCode, exitSignal, error);
-    }
-  } else {
+  if ((0 === exitCode || constants.CONVERT_CELLLIMITS === -exitCode) && null === childRes.signal) {
+    return constants.NO_ERROR;
+  }
+  if (-1 !== exitCodesReturn.indexOf(-exitCode)) {
+    return -exitCode;
+  }
+  return isTimeout ? constants.CONVERT_TIMEOUT : constants.CONVERT;
+}
+/**
+ * Logs the result of one x2t or docbuilder run. Major failures are logged as errors with a REPORT context for error reporters.
+ */
+function logProcessResult(ctx, childRes, isTimeout, builderParams, dataConvert, isRetry) {
+  const error = getProcessError(childRes, isTimeout);
+  const {status, signal, code} = childRes;
+  if (constants.NO_ERROR === error || -1 !== exitCodesMinorError.indexOf(error)) {
     writeProcessOutputToLog(ctx, childRes, true);
-    ctx.logger.debug('ExitCode (code=%d;signal=%s;error:%d)', exitCode, exitSignal, error);
+    ctx.logger.debug('ExitCode (code=%s;signal=%s;error:%d)', status, signal, error);
+    return;
+  }
+  writeProcessOutputToLog(ctx, childRes, false);
+  const binary = builderParams ? 'docbuilder' : 'x2t';
+  //set for errors from spawning itself (ENOENT, EACCES, EAGAIN), not for exits
+  const spawnError = typeof code === 'string' ? code : null;
+  const formatFrom = formatChecker.getFormatFromString(path.extname(dataConvert.fileFrom || '').substring(1));
+  ctx.logger.addContext('REPORT', {
+    tags: {
+      'converter.binary': binary,
+      'converter.exitCode': status,
+      'converter.signal': signal,
+      'converter.error': error,
+      'converter.spawnError': spawnError,
+      'converter.formatFrom': formatChecker.getStringFromFormat(formatFrom),
+      'converter.formatTo': formatChecker.getStringFromFormat(dataConvert.formatTo),
+      'converter.retry': isRetry ? 'ooxml' : null
+    },
+    fingerprint: [`binary:${binary}`, `exitCode:${status}`, `signal:${signal}`, `error:${error}`, `spawnError:${spawnError}`]
+  });
+  try {
+    ctx.logger.error('ExitCode (code=%s;signal=%s;error:%d)', status, signal, error);
+  } finally {
+    ctx.logger.removeContext('REPORT');
+  }
+}
+function* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeout) {
+  if (childRes) {
+    const processError = getProcessError(childRes, isTimeout);
+    if (constants.NO_ERROR !== processError) {
+      error = processError;
+      if (-1 === exitCodesMinorError.indexOf(error)) {
+        yield* processUploadToStorageErrorFile(ctx, dataConvert, tempDirs, childRes, childRes.status, childRes.signal, error);
+      }
+    }
   }
   let existFile = false;
   try {
@@ -1165,7 +1193,7 @@ function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, g
     childRes = yield spawnAsyncPromise;
   } catch (err) {
     if (null === err.status) {
-      ctx.logger.error('error spawnAsync %s', err.stack);
+      ctx.logger.warn('error spawnAsync %s', err.stack);
     } else {
       ctx.logger.debug('error spawnAsync %s', err.stack);
     }
@@ -1263,6 +1291,7 @@ function* ExecuteTask(ctx, task) {
   let isTimeout = false;
   if (constants.NO_ERROR === error) {
     ({childRes, isTimeout} = yield* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, getTaskTime, task, isInJwtToken));
+    logProcessResult(ctx, childRes, isTimeout, builderParams, dataConvert, false);
     const canRollback =
       childRes &&
       0 !== childRes.status &&
@@ -1282,6 +1311,7 @@ function* ExecuteTask(ctx, task) {
       dataConvert.formatTo = constants.AVS_OFFICESTUDIO_FILE_OTHER_OOXML;
       dataConvert.fileTo = dataConvert.fileTo.slice(0, -extOld.length) + extNew;
       ({childRes, isTimeout} = yield* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, getTaskTime, task, isInJwtToken));
+      logProcessResult(ctx, childRes, isTimeout, builderParams, dataConvert, true);
     }
     if (clientStatsD) {
       clientStatsD.timing('conv.spawnSync', new Date() - curDate);
@@ -1395,3 +1425,4 @@ function run() {
   });
 }
 exports.run = run;
+exports.ExecuteTask = ExecuteTask;
