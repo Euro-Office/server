@@ -36,6 +36,7 @@ const sqlBase = require('./databaseConnectors/baseConnector');
 const utilsDocService = require('./utilsDocService');
 const docsCoServer = require('./DocsCoServer');
 const taskResult = require('./taskresult');
+const newFileTemplateUtils = require('./newFileTemplateUtils');
 const wopiUtils = require('./wopiUtils');
 const wopiClient = require('./wopiClient');
 const utils = require('./../../Common/sources/utils');
@@ -1776,7 +1777,7 @@ exports.downloadFile = function (req, res) {
       let authorization;
       let isInJwtToken = false;
       let errorDescription;
-      let headers, fromTemplate;
+      let headers, fromTemplate, requestedTemplateExt;
       const authRes = yield docsCoServer.getRequestParams(ctx, req);
       if (authRes.code === constants.NO_ERROR) {
         const decoded = authRes.params;
@@ -1792,7 +1793,8 @@ exports.downloadFile = function (req, res) {
         } else if (wopiClient.isWopiJwtToken(decoded)) {
           if (decoded.fileInfo.Size === 0) {
             //editnew case
-            fromTemplate = pathModule.extname(decoded.fileInfo.BaseFileName).substring(1);
+            requestedTemplateExt = pathModule.extname(decoded.fileInfo.BaseFileName).substring(1);
+            fromTemplate = newFileTemplateUtils.getNewFileTemplateExt(requestedTemplateExt);
           } else {
             ({url, headers} = yield wopiUtils.getWopiFileUrl(ctx, decoded.fileInfo, decoded.userAuth));
             const filterStatus = yield wopiClient.checkIpFilter(ctx, url);
@@ -1822,7 +1824,7 @@ exports.downloadFile = function (req, res) {
         return;
       }
       if (fromTemplate) {
-        ctx.logger.debug('downloadFile from file template: %s', fromTemplate);
+        ctx.logger.debug('downloadFile from file template: requested=%s template=%s', requestedTemplateExt, fromTemplate);
         const locale = constants.TEMPLATES_DEFAULT_LOCALE;
         const fileTemplatePath = pathModule.join(tenNewFileTemplate, locale, 'new.' + fromTemplate);
         res.sendFile(pathModule.resolve(fileTemplatePath));
