@@ -709,13 +709,37 @@ function* addTask(data, priority, opt_queue, opt_expiration) {
   const realQueue = opt_queue ? opt_queue : queue;
   yield realQueue.addTask(data, priority, opt_expiration);
 }
-function* addResponse(data, opt_queue) {
+function* addResponse(data, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addResponse(data);
+  yield realQueue.addResponse(data, opt_requireConfirm);
 }
-function* addDelayed(data, ttl, opt_queue) {
+// A delayed retry whose response could not be published goes back into the
+// delayed queue for another round of this length (a final save's round waits
+// as long as its next infrastructure retry would: each round uses one up).  If
+// that fails too, the dead letter is requeued after this wait, at most
+// DEAD_LETTER_MAX_REQUEUES times (counted here: a requeued dead letter comes
+// back unchanged). Failed abandonment shares this budget; exhaustion leaves
+// the delivery unacknowledged until the broker redelivers it after recovery.
+const DEAD_LETTER_REQUEUE_DELAY_MS = 2000;
+const DEAD_LETTER_MAX_REQUEUES = 30;
+// Per process: a letter that moved to another instance is forgotten here after
+// an hour.
+const deadLetterRequeues = new Map();
+function countDeadLetterRequeue(key) {
+  const now = Date.now();
+  for (const [entryKey, entry] of deadLetterRequeues) {
+    if (now - entry.at > 3600000) {
+      deadLetterRequeues.delete(entryKey);
+    }
+  }
+  const entry = deadLetterRequeues.get(key);
+  const count = (entry?.count || 0) + 1;
+  deadLetterRequeues.set(key, {...entry, count, at: now});
+  return count;
+}
+function* addDelayed(data, ttl, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addDelayed(data, ttl);
+  yield realQueue.addDelayed(data, ttl, opt_requireConfirm);
 }
 function* removeResponse(data) {
   yield queue.removeResponse(data);
@@ -801,12 +825,14 @@ function parseUrl(ctx, callbackUrl) {
 }
 
 async function getCallback(ctx, id, opt_userIndex) {
+  const selectRes = await taskResult.select(ctx, id);
+  return getCallbackFromRow(ctx, selectRes[0], opt_userIndex);
+}
+function getCallbackFromRow(ctx, row, opt_userIndex) {
   let callbackUrl = null;
   let baseUrl = null;
   let wopiParams = null;
-  const selectRes = await taskResult.select(ctx, id);
-  if (selectRes.length > 0) {
-    const row = selectRes[0];
+  if (row) {
     if (row.callback) {
       callbackUrl = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, row.callback, opt_userIndex);
       wopiParams = wopiClient.parseWopiCallback(ctx, callbackUrl, row.callback);
@@ -933,6 +959,20 @@ async function getForceSaveUrl(ctx, baseUrl, convertInfo) {
   return null;
 }
 
+// A losing Form/Internal request can still report an active force-save.
+// Reread the store because checkAndStartForceSave returns undefined for both
+// an active save and a missing winner; storage errors must propagate.
+async function markForceSaveInProgress(ctx, docId, type, res) {
+  if (res.startedForceSave || (commonDefines.c_oAscForceSaveTypes.Form !== type && commonDefines.c_oAscForceSaveTypes.Internal !== type)) {
+    return;
+  }
+  const forceSave = await editorData.getForceSave(ctx, docId);
+  if (forceSave?.started && !forceSave.ended) {
+    res.ok = true;
+    res.inProgress = true;
+  }
+}
+
 async function applyForceSaveCache(
   ctx,
   docId,
@@ -982,6 +1022,7 @@ async function applyForceSaveCache(
         await editorData.checkAndSetForceSave(ctx, docId, forceSave.time, forceSave.index, false, false, null);
         res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
         res.ok = !!res.startedForceSave;
+        await markForceSaveInProgress(ctx, docId, type, res);
       }
     } else {
       res.notModified = true;
@@ -1002,6 +1043,7 @@ async function applyForceSaveCache(
     }
     res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
     res.ok = !!res.startedForceSave;
+    await markForceSaveInProgress(ctx, docId, type, res);
     return res;
   } else if (commonDefines.c_oAscForceSaveTypes.Form === type || commonDefines.c_oAscForceSaveTypes.Internal === type) {
     res.ok = true;
@@ -1296,32 +1338,98 @@ function* startRPC(ctx, conn, responseKey, data) {
   }
   ctx.logger.debug('startRPC end');
 }
-function handleDeadLetter(data, ack) {
+// Optional queue injection exercises dead-letter recovery without starting the HTTP server.
+exports.handleDeadLetter = handleDeadLetter;
+function handleDeadLetter(data, ack, opt_nack, opt_isDeliveryLive, opt_queue) {
   return co(function* () {
     const ctx = new operationContext.Context();
+    let requeue = false;
+    let shouldAck = true;
+    let cmd;
+    let requeueKey;
+    let abandoning = false;
+    const isLive = () => !opt_isDeliveryLive || opt_isDeliveryLive();
+    function* abandon() {
+      abandoning = true;
+      const entry = deadLetterRequeues.get(requeueKey);
+      deadLetterRequeues.set(requeueKey, {...entry, abandoning: true, count: entry?.count || 0, at: Date.now()});
+      yield canvasService.abandonSfcRetry(ctx, cmd);
+      deadLetterRequeues.delete(requeueKey);
+    }
     try {
+      if (!isLive()) {
+        return;
+      }
       let isRequeued = false;
       const task = new commonDefines.TaskQueueData(JSON.parse(data));
       if (task) {
         ctx.initFromTaskQueueData(task);
+        cmd = task.getCmd();
+        requeueKey = `${ctx.tenant}/${cmd.getDocId()}/${cmd.getSaveKey()}/${cmd.getAttempt()}`;
         yield ctx.initTenantCache();
-        const cmd = task.getCmd();
+        if (!isLive()) {
+          return;
+        }
+        // A failed terminal transition must resume abandonment, not publication.
+        if ('sfc' === cmd.getCommand() && deadLetterRequeues.get(requeueKey)?.abandoning) {
+          yield* abandon();
+          return;
+        }
         ctx.logger.warn('handleDeadLetter start: %s', data);
         const forceSave = cmd.getForceSave();
         if (forceSave && commonDefines.c_oAscForceSaveTypes.Timeout == forceSave.getType()) {
           const actualForceSave = yield editorData.getForceSave(ctx, cmd.getDocId());
+          if (!isLive()) {
+            return;
+          }
           //check that there are no new changes
           if (actualForceSave && forceSave.getTime() === actualForceSave.time && forceSave.getIndex() === actualForceSave.index) {
             //requeue task
-            yield* addTask(task, constants.QUEUE_PRIORITY_VERY_LOW, undefined, getForceSaveExpiration(ctx));
+            yield* addTask(task, constants.QUEUE_PRIORITY_VERY_LOW, opt_queue, getForceSaveExpiration(ctx));
             isRequeued = true;
           }
         } else if (!forceSave && task.getFromChanges()) {
-          yield* addTask(task, constants.QUEUE_PRIORITY_NORMAL, undefined);
+          yield* addTask(task, constants.QUEUE_PRIORITY_NORMAL, opt_queue);
           isRequeued = true;
         } else if (cmd.getAttempt()) {
           ctx.logger.warn('handleDeadLetter addResponse delayed = %d', cmd.getAttempt());
-          yield* addResponse(task);
+          // The dead letter is the only copy of a delayed retry, with all its
+          // state.  Publish it with broker confirmation.
+          try {
+            yield* addResponse(task, opt_queue, true);
+            if (isLive()) {
+              deadLetterRequeues.delete(requeueKey);
+            }
+          } catch (err) {
+            if (!isLive()) {
+              return;
+            }
+            // Response channel unavailable: put the retry back into the delayed
+            // queue for another round rather than hold or spin on the dead
+            // letter (which would block other dead letters on ActiveMQ).  Each
+            // round counts against the save's infrastructure budget; past it the save
+            // is given up as after its own retries, within the window its pending
+            // status lasts (isUpdateVersionExpired).
+            ctx.logger.warn('handleDeadLetter addResponse error: %s', err.stack);
+            const isSfc = 'sfc' === cmd.getCommand();
+            if (isSfc && canvasService.isSfcRetryBudgetExhausted(ctx, cmd)) {
+              yield* abandon();
+            } else {
+              // A fixed short round would use the budget up long before the
+              // window that the save's pending status lasts.
+              const delay = isSfc ? canvasService.getSfcInfraRetryDelay(ctx, cmd) : DEAD_LETTER_REQUEUE_DELAY_MS;
+              cmd.setAttempt((cmd.getAttempt() || 0) + 1);
+              try {
+                yield* addDelayed(task, delay, opt_queue, true);
+                if (isLive()) {
+                  deadLetterRequeues.delete(requeueKey);
+                }
+              } catch (delayErr) {
+                requeue = !!opt_nack;
+                throw delayErr;
+              }
+            }
+          }
         } else {
           //simulate error response
           cmd.setStatusInfo(constants.CONVERT_DEAD_LETTER);
@@ -1331,8 +1439,42 @@ function handleDeadLetter(data, ack) {
       ctx.logger.warn('handleDeadLetter end: requeue = %s', isRequeued);
     } catch (err) {
       ctx.logger.error('handleDeadLetter error: %s', err.stack);
+      if (!isLive()) {
+        return;
+      }
+      if ('sfc' === cmd?.getCommand()) {
+        // Keep a valid final save until recovery or its terminal transition succeeds.
+        // Without a nack callback it remains unacked for broker redelivery.
+        shouldAck = false;
+        const count = countDeadLetterRequeue(requeueKey);
+        requeue = !!opt_nack && count <= DEAD_LETTER_MAX_REQUEUES;
+        if (!abandoning && count > DEAD_LETTER_MAX_REQUEUES) {
+          try {
+            yield* abandon();
+            shouldAck = true;
+            requeue = false;
+          } catch (abandonErr) {
+            ctx.logger.error('handleDeadLetter abandonment error: %s', abandonErr.stack);
+          }
+        }
+        if (!shouldAck && count > DEAD_LETTER_MAX_REQUEUES) {
+          ctx.logger.error('handleDeadLetter: automatic requeues exhausted; delivery remains unacknowledged for broker redelivery');
+        }
+      }
     } finally {
-      ack();
+      if (shouldAck && !requeue && isLive()) {
+        ack();
+      }
+    }
+    if (requeue && isLive()) {
+      yield new Promise(resolve => setTimeout(resolve, DEAD_LETTER_REQUEUE_DELAY_MS));
+      try {
+        if (isLive()) {
+          opt_nack();
+        }
+      } catch (err) {
+        ctx.logger.error('handleDeadLetter requeue error: %s', err.stack);
+      }
     }
   });
 }
@@ -1513,41 +1655,126 @@ function* bindEvents(ctx, docId, callback, baseUrl, opt_userAction, opt_userData
   }
   return null;
 }
-const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
-  //wopi unlock
-  const getRes = yield getCallback(ctx, docId, opt_userIndex);
-  if (getRes && getRes.wopiParams && getRes.wopiParams.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
-    const unlockRes = yield wopiClient.unlock(ctx, getRes.wopiParams);
-    const unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
-    if (unlockInfo && unlockRes) {
-      yield canvasService.commandOpenStartPromise(ctx, docId, undefined, unlockInfo);
+const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesMask) {
+  let unlockInfo;
+  const unlock = async lockedRow => {
+    const getRes = opt_changesMask ? getCallbackFromRow(ctx, lockedRow, opt_userIndex) : await getCallback(ctx, docId, opt_userIndex);
+    if (getRes?.wopiParams?.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
+      // Unlock is best effort: a retry may get 409 (already unlocked), and an
+      // expired lock or token must not prevent a save from completing.
+      if (await wopiClient.unlock(ctx, getRes.wopiParams)) {
+        unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
+      }
+    }
+  };
+  if (opt_changesMask) {
+    // Read credentials and send UNLOCK while this save still owns the row.
+    // The preceding storage cleanup has already released its lock.
+    if (!(yield taskResult.withCleanupOwnership(ctx, opt_changesMask, unlock))) {
+      return false;
+    }
+  } else {
+    yield unlock();
+  }
+  if (unlockInfo) {
+    if (opt_changesMask) {
+      // A write on another connection would deadlock inside the ownership
+      // lock. Append conditionally after releasing it; never upsert a new row.
+      const task = new taskResult.TaskResultData();
+      task.tenant = ctx.tenant;
+      task.key = docId;
+      task.callback = unlockInfo;
+      const updated = yield taskResult.updateIf(ctx, task, opt_changesMask);
+      return updated.affectedRows > 0;
+    }
+    yield canvasService.commandOpenStartPromise(ctx, docId, undefined, unlockInfo);
+  }
+  return true;
+});
+// opt_changesMask: the task row as the caller holds it.  Nothing is cleaned if
+// the row no longer matches it (false: the caller's next attempt finds out),
+// and the changes are deleted only while it still does.
+// opt_cleanupOptions: {preserveSavedClaim} keeps the saved-state entries a
+// final save still in flight needs (see savedState.js); {skipWopiUnlock} skips
+// the WOPI UNLOCK (and its task-row update) at the end.
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_changesMask, opt_cleanupOptions) {
+  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
+  if (opt_changesMask) {
+    const selectRes = yield taskResult.select(ctx, docId);
+    const row = selectRes[0];
+    if (!canvasService.taskResultMatchesMask(row, opt_changesMask)) {
+      // Editor data, forgotten files and the WOPI lock are a new owner's now.
+      return false;
     }
   }
-});
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
-  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  yield editorData.cleanDocumentOnExit(ctx, docId);
+  const cleanupResult = preserveSavedClaim
+    ? yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId, {preserveSavedClaim: true})
+    : yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
+  if (cleanupResult !== true) {
+    return false;
+  }
   if (preStopFlag && editorStatProxy?.deleteKey) {
     yield editorStatProxy.deleteKey(docId);
   }
   //remove changes
   if (deleteChanges) {
-    yield taskResult.restoreInitialPassword(ctx, docId);
-    sqlBase.deleteChanges(ctx, docId, null);
+    // Conditional like the change deletion: a session that took the row over
+    // since the check above keeps its password.
+    yield taskResult.restoreInitialPassword(ctx, docId, opt_changesMask);
+    if (opt_changesMask) {
+      yield taskResult.deleteChangesIf(ctx, opt_changesMask);
+    } else {
+      // A failed deletion fails the cleanup (an encrypted save
+      // answers saveFile with 400): changes left behind silently would be
+      // replayed by the next open on top of the file that already has them.
+      yield sqlBase.deleteChangesPromise(ctx, docId, null);
+    }
     //delete forgotten after successful send on callbackUrl
-    yield storage.deletePath(ctx, docId, tenForgottenFiles);
+    if (opt_changesMask) {
+      const cleaned = yield taskResult.withCleanupOwnership(ctx, opt_changesMask, () => storage.deletePath(ctx, docId, tenForgottenFiles));
+      if (!cleaned) {
+        return false;
+      }
+    } else {
+      yield storage.deletePath(ctx, docId, tenForgottenFiles);
+    }
   }
-  yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  if (opt_cleanupOptions?.skipWopiUnlock === true) {
+    return true;
+  }
+  return yield unlockWopiDoc(ctx, docId, opt_userIndex, opt_changesMask);
 }
-function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges) {
+/**
+ * Clean up after the final viewer leaves, while preserving a saved-state claim
+ * that an in-flight callback may still need to acknowledge.
+ *
+ * It never sends a WOPI UNLOCK.  The lock belongs to the editors: an editor's own exit
+ * releases it when there was no save, and the final save releases it in its
+ * cleanup (or leaves it to the host's lock expiry when it is abandoned).  An
+ * UNLOCK here has no ownership mask and would race a final save still in
+ * flight: the host could reject its PutFile or let a third party lock the file
+ * mid-save.
+ */
+function* cleanDocumentAfterFinalViewerExit(ctx, docId) {
+  return yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, undefined, {preserveSavedClaim: true, skipWopiUnlock: true});
+}
+// opt_closeStatus ({sent}) lets a retried caller send the status only once:
+// it is skipped when `sent` is true and set to true once the status was sent.
+function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges, opt_closeStatus) {
   const userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
-  // We send that everyone is gone and there are no changes (to set the status on the server about the end of editing)
-  yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
+  if (!opt_closeStatus?.sent) {
+    // We send that everyone is gone and there are no changes (to set the status on the server about the end of editing)
+    yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
+    if (opt_closeStatus) {
+      opt_closeStatus.sent = true;
+    }
+  }
   //if the user entered the document, the connection was broken, all information was deleted on the server,
   //when the connection is restored, the userIndex will be saved and it will match the userIndex of the next user
-  yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
+  return yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
 }
 
 function createSaveTimer(ctx, docId, opt_userId, opt_userIndex, opt_userLcid, opt_queue, opt_noDelay, opt_initShardKey) {
@@ -1771,6 +1998,7 @@ exports.getIsPreStop = getIsPreStop;
 exports.hasChanges = hasChanges;
 exports.cleanDocumentOnExitPromise = co.wrap(cleanDocumentOnExit);
 exports.cleanDocumentOnExitNoChangesPromise = co.wrap(cleanDocumentOnExitNoChanges);
+exports.cleanDocumentAfterFinalViewerExitPromise = co.wrap(cleanDocumentAfterFinalViewerExit);
 exports.unlockWopiDoc = unlockWopiDoc;
 exports.setForceSave = setForceSave;
 exports.startForceSave = startForceSave;
@@ -2067,6 +2295,7 @@ exports.install = function (server, app, callbackFunction) {
       return;
     }
     let hvals;
+    let localPresenceEmpty = false;
     let participantsTimestamp;
     const tmpUser = conn.user;
     const isView = tmpUser.view;
@@ -2085,7 +2314,8 @@ exports.install = function (server, app, callbackFunction) {
         yield removePresence(ctx, conn);
         hvals = yield editorData.getPresence(ctx, docId, connections);
         participantsTimestamp = Date.now();
-        if (hvals.length <= 0) {
+        localPresenceEmpty = hvals.length <= 0;
+        if (localPresenceEmpty) {
           yield editorData.removePresenceDocument(ctx, docId);
         }
       }
@@ -2189,8 +2419,8 @@ exports.install = function (server, app, callbackFunction) {
           );
         }
       } else {
-        if (preStopFlag && hvals?.length <= 0 && editorStatProxy?.deleteKey) {
-          yield editorStatProxy.deleteKey(docId);
+        if (localPresenceEmpty) {
+          yield* cleanDocumentAfterFinalViewerExit(ctx, docId);
         }
       }
       const sessionType = isView ? 'view' : 'edit';
@@ -3070,25 +3300,31 @@ exports.install = function (server, app, callbackFunction) {
           commonDefines.FileStatus.SaveVersion === status ||
           (!bIsRestore &&
             commonDefines.FileStatus.UpdateVersion === status &&
-            Date.now() - result[0]['status_info'] * 60000 > tenExpUpdateVersionStatus)
+            canvasService.isUpdateVersionExpired(ctx, result[0], tenExpUpdateVersionStatus))
         ) {
-          let newStatus = commonDefines.FileStatus.Ok;
+          let updated;
           if (commonDefines.FileStatus.UpdateVersion === status) {
-            ctx.logger.warn('UpdateVersion expired');
-            //FileStatus.None to open file again from new url
-            newStatus = commonDefines.FileStatus.None;
+            // An expired save: open the file again from the integrator's URL
+            // (FileStatus.None), unless the save left its changes behind (an
+            // abandoned save, or a cleanup that never ran): then resume from the
+            // cache with them, so that they are neither lost nor applied twice.
+            const newStatus = yield canvasService.takeOverAbandonedSaveForOpen(ctx, docId, result[0]);
+            updated = undefined !== newStatus;
+          } else {
+            const newStatus = commonDefines.FileStatus.Ok;
+            // Update the status of the file (the build is in progress, you need to stop it)
+            const updateMask = new taskResult.TaskResultData();
+            updateMask.tenant = ctx.tenant;
+            updateMask.key = docId;
+            updateMask.status = status;
+            updateMask.statusInfo = result[0]['status_info'];
+            const updateTask = new taskResult.TaskResultData();
+            updateTask.status = newStatus;
+            updateTask.statusInfo = constants.NO_ERROR;
+            const updateIfRes = yield taskResult.updateIf(ctx, updateTask, updateMask);
+            updated = updateIfRes.affectedRows > 0;
           }
-          // Update the status of the file (the build is in progress, you need to stop it)
-          const updateMask = new taskResult.TaskResultData();
-          updateMask.tenant = ctx.tenant;
-          updateMask.key = docId;
-          updateMask.status = status;
-          updateMask.statusInfo = result[0]['status_info'];
-          const updateTask = new taskResult.TaskResultData();
-          updateTask.status = newStatus;
-          updateTask.statusInfo = constants.NO_ERROR;
-          const updateIfRes = yield taskResult.updateIf(ctx, updateTask, updateMask);
-          if (!(updateIfRes.affectedRows > 0)) {
+          if (!updated) {
             // error version
             //log level is debug because error handled via refreshFile
             yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'Update Version error', constants.UPDATE_VERSION_CODE, true);

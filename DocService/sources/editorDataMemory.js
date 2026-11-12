@@ -94,6 +94,8 @@ EditorCommon.prototype._checkAndUnlock = function (ctx, name, docId, fencingToke
 function EditorData() {
   EditorCommon.call(this);
   this.forceSaveTimer = {};
+  this.savedClaims = {};
+  this.savedCallbackAccepted = {};
 }
 EditorData.prototype = Object.create(EditorCommon.prototype);
 EditorData.prototype.constructor = EditorData;
@@ -191,11 +193,69 @@ EditorData.prototype.setSaved = async function (ctx, docId, status) {
   const data = this._getDocumentData(ctx, docId);
   data.saved = status;
 };
-EditorData.prototype.getdelSaved = async function (ctx, docId) {
+// Saved-state claims and accepted callbacks are kept per tenant, document and
+// final-save operation.
+function operationKey(operationId) {
+  return operationId || '__legacy__';
+}
+function getDocumentEntries(store, ctx, docId) {
+  return store[ctx.tenant]?.[docId];
+}
+function setOperationEntry(store, ctx, docId, operationId, value) {
+  const tenantEntries = store[ctx.tenant] || (store[ctx.tenant] = {});
+  const documentEntries = tenantEntries[docId] || (tenantEntries[docId] = {});
+  documentEntries[operationKey(operationId)] = value;
+}
+// Without opt_operationId (undefined) every entry of the document goes; null
+// addresses the legacy operation.
+function deleteDocumentEntries(store, ctx, docId, opt_operationId) {
+  const tenantEntries = store[ctx.tenant];
+  const documentEntries = tenantEntries?.[docId];
+  if (!documentEntries) {
+    return;
+  }
+  if (opt_operationId !== undefined) {
+    delete documentEntries[operationKey(opt_operationId)];
+  }
+  if (opt_operationId === undefined || Object.keys(documentEntries).length === 0) {
+    delete tenantEntries[docId];
+  }
+  if (Object.keys(tenantEntries).length === 0) {
+    delete store[ctx.tenant];
+  }
+}
+EditorData.prototype.getdelSaved = async function (ctx, docId, operationId) {
+  // Saved results are claimed per operation and acknowledged explicitly.  A
+  // retry therefore sees the same value instead of consuming the result again.
   const data = this._getDocumentData(ctx, docId);
-  const res = data.saved;
+  const documentClaims = getDocumentEntries(this.savedClaims, ctx, docId);
+  if (documentClaims && Object.hasOwn(documentClaims, operationKey(operationId))) {
+    return documentClaims[operationKey(operationId)];
+  }
+  if (data.saved === null || data.saved === undefined) {
+    return null;
+  }
+  const saved = data.saved;
+  setOperationEntry(this.savedClaims, ctx, docId, operationId, saved);
   data.saved = null;
-  return res;
+  return saved;
+};
+EditorData.prototype.ackSaved = async function (ctx, docId, operationId) {
+  // Release only this operation's claim; another concurrent save may still be
+  // using a different claim for the same document.
+  deleteDocumentEntries(this.savedClaims, ctx, docId, operationId ?? null);
+  return true;
+};
+EditorData.prototype.setSavedCallbackAccepted = async function (ctx, docId, operationId, accepted) {
+  // This in-memory marker closes the same-worker redelivery gap while the
+  // durable task-row acceptance marker is being written.
+  setOperationEntry(this.savedCallbackAccepted, ctx, docId, operationId, accepted);
+};
+EditorData.prototype.getSavedCallbackAccepted = async function (ctx, docId, operationId) {
+  return getDocumentEntries(this.savedCallbackAccepted, ctx, docId)?.[operationKey(operationId)];
+};
+EditorData.prototype.clearSavedCallbackAccepted = async function (ctx, docId, operationId) {
+  deleteDocumentEntries(this.savedCallbackAccepted, ctx, docId, operationId ?? null);
 };
 EditorData.prototype.setForceSave = async function (ctx, docId, time, index, baseUrl, changeInfo, convertInfo) {
   const data = this._getDocumentData(ctx, docId);
@@ -231,15 +291,45 @@ EditorData.prototype.removeForceSave = async function (ctx, docId) {
   data.forceSave = undefined;
 };
 
-EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId) {
+EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId, cleanupOptions) {
+  const preserveSavedClaim = cleanupOptions?.preserveSavedClaim === true;
   const tenantData = this.data[ctx.tenant];
   if (tenantData) {
+    const prevData = tenantData[docId];
     delete tenantData[docId];
+    // Final-viewer cleanup can run while a final save for the last editor is
+    // still in flight (viewers do not block the save), so keep what that save
+    // still reads:
+    // - data.saved (set only for a corrupted save): wiping it would make the
+    //   later getdelSaved return null, so the corrupted save would be reported
+    //   as a success and its changes deleted;
+    // - data.forceSave: the final save reads it for lastsave/notmodified, and a
+    //   form/internal force-save in flight dereferences it in setForceSave.
+    if (preserveSavedClaim && prevData && (prevData.saved != null || prevData.forceSave != null)) {
+      const keptData = this._getDocumentData(ctx, docId);
+      if (prevData.saved != null) {
+        keptData.saved = prevData.saved;
+      }
+      if (prevData.forceSave != null) {
+        keptData.forceSave = prevData.forceSave;
+      }
+    }
   }
   const tenantTimer = this.forceSaveTimer[ctx.tenant];
   if (tenantTimer) {
     delete tenantTimer[docId];
   }
+  if ((savedClaimId === undefined || savedClaimId === null) && !preserveSavedClaim) {
+    // Claim-less terminal cleanup also drops claims and acceptance markers
+    // that saves left behind without completing (as the Redis backend
+    // recovers abandoned claims), so that they do not accumulate.  An owner
+    // passes its claim id and acknowledges it itself; a retry keeps the
+    // claimed value in its command and does not need the entry again. Final-viewer
+    // cleanup preserves these entries while the callback may still be active.
+    deleteDocumentEntries(this.savedClaims, ctx, docId);
+    deleteDocumentEntries(this.savedCallbackAccepted, ctx, docId);
+  }
+  return true;
 };
 
 EditorData.prototype.addForceSaveTimerNX = async function (ctx, docId, expireAt) {

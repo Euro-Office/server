@@ -524,6 +524,7 @@
       },
       "callbackBackoffOptions": {
         "retries": 3,
+        "infraRetries": 60,
         "timeout": {
           "factor": 2,
           "minTimeout": 1000,
