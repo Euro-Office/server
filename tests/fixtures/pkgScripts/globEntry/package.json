@@ -1,0 +1,9 @@
+{
+  "name": "glob-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "scripts": [
+      "./sources/*.js"
+    ]
+  }
+}

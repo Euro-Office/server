@@ -1,0 +1,9 @@
+{
+  "name": "non-string-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "scripts": [
+      12345
+    ]
+  }
+}
