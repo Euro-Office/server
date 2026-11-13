@@ -7,8 +7,8 @@
 #### BASE ####
 FROM ubuntu:24.04 AS web-base
     RUN apt-get update && \
-        apt-get install -y ca-certificates curl gnupg openjdk-21-jdk wget zip brotli bzip2 && \
-        curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+        apt-get install -y ca-certificates curl gnupg openjdk-21-jdk wget zip brotli bzip2 gcc && \
+        curl -fsSL https://deb.nodesource.com/setup_26.x | bash - && \
         apt-get install -y nodejs && \
         npm install -g @yao-pkg/pkg@6.24.0 grunt-cli && \
         rm -rf /var/lib/apt/lists/*
@@ -61,7 +61,8 @@ FROM web-base AS server
         cd /server/Metrics && \
         pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/metrics" && \
         cd /server/AdminPanel/server && \
-        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/adminpanel"
+        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/adminpanel" && \
+        gcc -O2 -o "${BUILD_ROOT}/x2t-sandbox" /server/FileConverter/sandbox/x2t-sandbox.c
 
     ENV APP_NAME=${COMPANY_NAME}
 

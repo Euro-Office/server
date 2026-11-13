@@ -51,7 +51,6 @@ const tenantManager = require('./../../Common/sources/tenantManager');
 const {detectCertType} = require('./signing/pdfSigningCore');
 const {signPdfFile: signPdfFileKms} = require('./signing/pdfAwsKmsSigner');
 const {signPdfFile: signPdfFileCsc} = require('./signing/pdfCscSigner');
-const {getChildEnv} = require('./childEnv');
 
 const cfgMaxDownloadBytes = config.get('FileConverter.converter.maxDownloadBytes');
 const cfgDownloadTimeout = config.get('FileConverter.converter.downloadTimeout');
@@ -61,6 +60,8 @@ const cfgFontDir = config.get('FileConverter.converter.fontDir');
 const cfgPresentationThemesDir = config.get('FileConverter.converter.presentationThemesDir');
 const cfgX2tPath = config.get('FileConverter.converter.x2tPath');
 const cfgDocbuilderPath = config.get('FileConverter.converter.docbuilderPath');
+const cfgSandboxPath = config.util.getConfigSources && config.has('FileConverter.converter.sandboxPath')
+  ? config.get('FileConverter.converter.sandboxPath') : null;
 const cfgArgs = config.get('FileConverter.converter.args');
 const cfgSpawnOptions = config.util.cloneDeep(config.get('FileConverter.converter.spawnOptions'));
 const cfgErrorFiles = config.get('FileConverter.converter.errorfiles');
@@ -1146,16 +1147,16 @@ function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, g
     const tenSpawnOptions = ctx.getCfg('FileConverter.converter.spawnOptions', cfgSpawnOptions);
     //copy to avoid modification of global cfgSpawnOptions
     const spawnOptions = Object.assign({}, tenSpawnOptions);
-    //spawnOptions.env = Object.assign({}, process.env, spawnOptions.env);
-    spawnOptions.env = getChildEnv(process.env, spawnOptions.env);
-    ctx.logger.warn('TEST LOG spawnOptions.env: %j', spawnOptions.env);
+    spawnOptions.env = Object.assign({}, process.env, spawnOptions.env);
     if (authorProps.lastModifiedBy && authorProps.modified) {
       spawnOptions.env['LAST_MODIFIED_BY'] = authorProps.lastModifiedBy;
       spawnOptions.env['MODIFIED'] = authorProps.modified;
     }
-    ctx.logger.warn('TEST LOG spawnOptions: %j', Object.assign({}, spawnOptions, {env: Object.keys(spawnOptions.env)}));
-    ctx.logger.warn('TEST LOG childArgs: %j', childArgs);
-    const spawnAsyncPromise = spawnAsync(processPath, childArgs, spawnOptions);
+    const tenSandboxPath = ctx.getCfg('FileConverter.converter.sandboxPath', cfgSandboxPath);
+    const [spawnPath, spawnArgs] = tenSandboxPath
+      ? [tenSandboxPath, [processPath, ...childArgs]]
+      : [processPath, childArgs];
+    const spawnAsyncPromise = spawnAsync(spawnPath, spawnArgs, spawnOptions);
     childRes = spawnAsyncPromise.child;
     const waitMS = Math.max(0, task.getVisibilityTimeout() * 1000 - (new Date().getTime() - getTaskTime.getTime()));
     timeoutId = setTimeout(() => {
@@ -1400,6 +1401,3 @@ function run() {
   });
 }
 exports.run = run;
-
-//for tests
-exports.spawnProcess = spawnProcess;
