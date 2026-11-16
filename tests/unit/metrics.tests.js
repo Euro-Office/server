@@ -97,3 +97,45 @@ describe('getConvertTaskQueueLength', () => {
     await expect(new TaskQueueRabbitMQ().getConvertTaskQueueLength()).resolves.toBeNull();
   });
 });
+
+describe('summarizeDocuments', () => {
+  const at = (docId, userId, connect, lastAction, extra = {}) => ({
+    docId,
+    fileName: `${docId}.docx`,
+    sessionTimeConnect: connect,
+    sessionTimeLastAction: lastAction,
+    user: {idOriginal: userId},
+    ...extra
+  });
+
+  test('groups connections per document with users, modes and timings, without the document key', () => {
+    const result = metrics.summarizeDocuments(
+      [
+        at('a', 'u1', 1000, 5000),
+        at('a', 'u1', 2000, 3000),
+        at('a', 'u2', 1500, 4000, {user: {idOriginal: 'u2', view: true}}),
+        at('b', 'u3', 500, 600)
+      ],
+      10
+    );
+    expect(result.total).toBe(2);
+    expect(result.documents).toEqual([
+      {fileName: 'a.docx', users: 2, connections: {edit: 2, view: 1, liveview: 0}, openedAt: 1000, lastActionAt: 5000},
+      {fileName: 'b.docx', users: 1, connections: {edit: 1, view: 0, liveview: 0}, openedAt: 500, lastActionAt: 600}
+    ]);
+  });
+
+  test('limits the list to the largest documents but counts all in totals and distribution', () => {
+    const connections = [];
+    for (let doc = 0; doc < 30; doc++) {
+      const users = doc === 0 ? 25 : doc < 5 ? 7 : doc < 10 ? 3 : 1;
+      for (let user = 0; user < users; user++) {
+        connections.push(at(`doc${doc}`, `user${user}`, 0, 0));
+      }
+    }
+    const result = metrics.summarizeDocuments(connections, 5);
+    expect(result.total).toBe(30);
+    expect(result.distribution).toEqual({1: 20, '2-5': 5, '6-20': 4, '>20': 1});
+    expect(result.documents.map(d => d.users)).toEqual([25, 7, 7, 7, 7]);
+  });
+});

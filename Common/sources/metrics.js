@@ -51,6 +51,51 @@ function countConnections(connections) {
   return {modes, documents: documents.size};
 }
 
+const DOCUMENT_SIZES = [
+  ['1', 1],
+  ['2-5', 5],
+  ['6-20', 20],
+  ['>20', Infinity]
+];
+
+/**
+ * Group connections by document. Distribution and totals cover all documents, the list only the largest ones.
+ * @param {Array} connections Active connections of this process
+ * @param {number} limit Maximum number of documents in the list
+ * @returns {{total: number, distribution: Object<string, number>, documents: Array}}
+ */
+function summarizeDocuments(connections, limit) {
+  const byDoc = new Map();
+  for (const conn of connections) {
+    let doc = byDoc.get(conn.docId);
+    if (!doc) {
+      doc = {
+        fileName: conn.fileName ?? null,
+        users: new Set(),
+        connections: {edit: 0, view: 0, liveview: 0},
+        openedAt: Infinity,
+        lastActionAt: 0
+      };
+      byDoc.set(conn.docId, doc);
+    }
+    doc.connections[connectionMode(conn)]++;
+    if (conn.user?.idOriginal) {
+      doc.users.add(conn.user.idOriginal);
+    }
+    doc.openedAt = Math.min(doc.openedAt, conn.sessionTimeConnect ?? Infinity);
+    doc.lastActionAt = Math.max(doc.lastActionAt, conn.sessionTimeLastAction ?? conn.sessionTimeConnect ?? 0);
+  }
+  const distribution = Object.fromEntries(DOCUMENT_SIZES.map(([label]) => [label, 0]));
+  const documents = [...byDoc.values()].map(doc => {
+    const users = doc.users.size;
+    distribution[DOCUMENT_SIZES.find(([, max]) => users <= max)[0]]++;
+    return {...doc, users, openedAt: Number.isFinite(doc.openedAt) ? doc.openedAt : null, lastActionAt: doc.lastActionAt || null};
+  });
+  // ponytail: full sort per request, a partial top-N selection if documents per node reach 100k
+  documents.sort((a, b) => b.users - a.users || b.connections.edit - a.connections.edit);
+  return {total: byDoc.size, distribution, documents: documents.slice(0, limit)};
+}
+
 function withTimeout(promise, ms) {
   let timer;
   const timeout = new Promise((_resolve, reject) => {
@@ -190,6 +235,7 @@ module.exports = {
   register,
   conversionsCompleted,
   countConnections,
+  summarizeDocuments,
   registerDocServiceMetrics,
   registerHostMetrics,
   handler
