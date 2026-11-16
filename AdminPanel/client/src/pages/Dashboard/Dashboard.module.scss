@@ -1,0 +1,146 @@
+// SPDX-FileCopyrightText: 2026 Euro-Office contributors
+// SPDX-License-Identifier: AGPL-3.0-only
+
+.dashboard {
+  padding: 0;
+}
+
+.warning {
+  color: #dc3545;
+  margin-bottom: 16px;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px;
+  margin-bottom: 16px;
+}
+
+.stat {
+  min-width: 120px;
+}
+
+.statValue {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.statLabel {
+  font-size: 13px;
+  color: #444;
+}
+
+.statHint {
+  font-size: 12px;
+  color: #888;
+}
+
+.meter {
+  margin-top: 12px;
+  max-width: 560px;
+}
+
+.meterHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.meterTrack {
+  height: 8px;
+  background: #e2e2e2;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.meterFill {
+  height: 100%;
+  background: #446995;
+}
+
+.critical {
+  background: #dc3545;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+
+  th,
+  td {
+    text-align: left;
+    padding: 6px 16px 6px 0;
+    border-bottom: 1px solid #eee;
+  }
+
+  th {
+    font-weight: 600;
+  }
+}
+
+.flagged {
+  color: #dc3545;
+  font-weight: 600;
+}
+
+.sortBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 8px;
+
+  button {
+    border: 1px solid #ccc;
+    background: white;
+    border-radius: 4px;
+    padding: 2px 10px;
+    cursor: pointer;
+  }
+
+  .sortActive {
+    background: #446995;
+    border-color: #446995;
+    color: white;
+  }
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+
+  > div {
+    background: white;
+    border: 1px solid #e2e2e2;
+    border-radius: 8px;
+    padding: 16px;
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+
+  > div {
+    margin-bottom: 0;
+  }
+}
+
+.wideGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+  gap: 16px;
+  align-items: start;
+
+  > div {
+    margin-bottom: 0;
+  }
+}

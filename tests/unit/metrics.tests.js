@@ -4,8 +4,13 @@
  */
 'use strict';
 
-const {describe, test, expect, jest, beforeAll} = require('@jest/globals');
+const {describe, test, expect, jest, beforeAll, afterAll} = require('@jest/globals');
+const express = require('../../AdminPanel/server/node_modules/express');
+const jwt = require('../../Common/node_modules/jsonwebtoken');
 const metrics = require('../../Common/sources/metrics');
+const statsRouter = require('../../AdminPanel/server/sources/routes/stats/router');
+const {createHistory, histogramQuantile} = require('../../AdminPanel/server/sources/routes/stats/history');
+const adminPanelJwtSecret = require('../../AdminPanel/server/sources/jwtSecret');
 const TaskQueueRabbitMQ = require('../../Common/sources/taskqueueRabbitMQ');
 
 const editor = (docId, userId) => ({docId, user: {idOriginal: userId}});
@@ -34,8 +39,40 @@ describe('countConnections', () => {
   });
 });
 
-describe('docservice metrics', () => {
+describe('histogramQuantile', () => {
+  test('interpolates inside the bucket that holds the rank', () => {
+    expect(
+      histogramQuantile(
+        [
+          {le: 1, count: 0},
+          {le: 2, count: 10},
+          {le: Infinity, count: 10}
+        ],
+        0.5
+      )
+    ).toBeCloseTo(1.5);
+  });
+
+  test('returns the highest finite bound when the rank falls into +Inf', () => {
+    expect(
+      histogramQuantile(
+        [
+          {le: 1, count: 1},
+          {le: Infinity, count: 10}
+        ],
+        0.95
+      )
+    ).toBe(1);
+  });
+
+  test('returns null without observations', () => {
+    expect(histogramQuantile([{le: Infinity, count: 0}], 0.5)).toBeNull();
+  });
+});
+
+describe('docservice metrics through the dashboard summary', () => {
   let queueLength;
+  const docServiceMetrics = async () => metrics.parsePrometheusText(await metrics.register.metrics());
 
   beforeAll(() => {
     const connections = [editor('doc1', 'alice'), editor('doc1', 'bob'), viewer('doc2', 'carol')];
@@ -48,23 +85,71 @@ describe('docservice metrics', () => {
     metrics.conversionsCompleted.inc({result: 'error'});
   });
 
-  test('serves sessions, queue, conversions and host in the Prometheus text format', async () => {
+  test('summarizes sessions, conversions, host and processes from the Prometheus text', async () => {
     queueLength = () => Promise.resolve(7);
-    const text = await metrics.register.metrics();
-    expect(text).toContain('eo_connections{mode="edit"} 2');
-    expect(text).toContain('eo_users{mode="view"} 1');
-    expect(text).toContain('eo_documents_open 2');
-    expect(text).toContain('eo_conversion_queue_tasks{queue="convert"} 7');
-    expect(text).toContain('eo_conversion_tasks_completed_total{result="error"} 1');
-    expect(text).toMatch(/eo_host_load_average\{period="1m"\} \d/);
-    expect(text).toContain(`eo_host_disk_bytes{path="${__dirname}",type="total"}`);
-    expect(text).not.toContain('/path/that/does/not/exist');
-    expect(text).toContain('process_cpu_seconds_total');
+    const summary = statsRouter.summarize({docService: await docServiceMetrics(), adminPanel: []});
+
+    expect(summary.docServiceAvailable).toBe(true);
+    expect(summary.server).toMatchObject({buildVersion: expect.any(String), database: {type: expect.any(String)}});
+    expect(summary.server.database).not.toHaveProperty('pass');
+    expect(summary.sessions).toEqual({connections: {edit: 2, view: 1, liveview: 0}, users: {edit: 2, view: 1, liveview: 0}, documents: 2});
+    expect(summary.conversions).toEqual({ok: 2, error: 1, queue: 7});
+    expect(Object.keys(summary.host.load)).toEqual(['1m', '5m', '15m']);
+    expect(summary.host.memory.total).toBeGreaterThan(summary.host.memory.used);
+    expect(summary.host.disks).toEqual([{path: __dirname, total: expect.any(Number), available: expect.any(Number)}]);
+    expect(summary.processes.map(p => p.name)).toEqual(['docservice', 'adminpanel']);
+    expect(summary.processes[0].cpuSeconds).toBeGreaterThan(0);
   });
 
-  test('leaves the queue out when the queue cannot be read', async () => {
+  test('leaves the queue empty when the queue cannot be read', async () => {
     queueLength = () => Promise.reject(new Error('channel closed'));
-    expect(await metrics.register.metrics()).not.toContain('eo_conversion_queue_tasks{');
+    const summary = statsRouter.summarize({docService: await docServiceMetrics(), adminPanel: []});
+    expect(summary.conversions.queue).toBeNull();
+  });
+
+  test('reports only the admin panel when docservice is unreachable', () => {
+    const summary = statsRouter.summarize({docService: null, adminPanel: []});
+    expect(summary).toMatchObject({docServiceAvailable: false, converterAvailable: false, x2t: null});
+    expect(summary.processes.map(p => p.name)).toEqual(['adminpanel']);
+    expect(summary).not.toHaveProperty('sessions');
+  });
+});
+
+describe('admin panel stats routes', () => {
+  let server;
+  let url;
+  const cookie = `accessToken=${jwt.sign({tenant: 'localhost', isAdmin: true}, adminPanelJwtSecret)}`;
+
+  beforeAll(done => {
+    const app = express();
+    app.use('/stats', statsRouter);
+    server = app.listen(0, () => {
+      url = `http://127.0.0.1:${server.address().port}/stats`;
+      done();
+    });
+  });
+  afterAll(done => {
+    server.close(done);
+  });
+
+  test.each(['resources', 'history'])('/%s rejects requests without the admin session cookie', async route => {
+    expect((await fetch(`${url}/${route}`)).status).toBe(401);
+  });
+
+  test('/resources samples on first use and returns the summary', async () => {
+    const response = await fetch(`${url}/resources`, {headers: {Cookie: cookie}});
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.collectedAt).toEqual(expect.any(Number));
+    const adminPanel = body.processes.find(p => p.name === 'adminpanel');
+    expect(adminPanel.cpuSeconds).toBeGreaterThan(0);
+    expect(adminPanel.residentMemoryBytes ?? adminPanel.heapUsedBytes).toBeGreaterThan(0);
+  });
+
+  test('/history returns the samples after a time', async () => {
+    const body = await (await fetch(`${url}/history?since=0`, {headers: {Cookie: cookie}})).json();
+    expect(body.intervalMs).toBe(30000);
+    expect(body.samples.length).toBeGreaterThan(0);
   });
 });
 
@@ -158,5 +243,102 @@ describe('parsePrometheusText', () => {
     expect(parsed[0].values).toEqual([{labels: {worker: '1'}, value: 1, metricName: 'eo_x2t_running'}]);
     expect(parsed[1].values[0]).toMatchObject({metricName: 'eo_x2t_duration_seconds_bucket', labels: {le: '1', worker: '1'}});
     expect(parsed[2].values[0]).toEqual({labels: {path: 'C:\\tmp "x"'}, value: Infinity, metricName: 'odd'});
+  });
+});
+
+describe('converter summary', () => {
+  const converterText = [
+    '# TYPE process_cpu_seconds_total counter',
+    'process_cpu_seconds_total{worker="primary"} 1',
+    'process_cpu_seconds_total{worker="1"} 3',
+    'process_cpu_seconds_total{worker="2"} 4',
+    '# TYPE process_resident_memory_bytes gauge',
+    'process_resident_memory_bytes{worker="primary"} 100',
+    'process_resident_memory_bytes{worker="1"} 200',
+    'process_resident_memory_bytes{worker="2"} 300',
+    '# TYPE eo_x2t_running gauge',
+    'eo_x2t_running{worker="1"} 1',
+    'eo_x2t_running{worker="2"} 1',
+    '# TYPE eo_x2t_duration_seconds histogram',
+    'eo_x2t_duration_seconds_bucket{le="1",tool="x2t",result="ok",worker="1"} 2',
+    'eo_x2t_duration_seconds_bucket{le="+Inf",tool="x2t",result="ok",worker="1"} 2',
+    'eo_x2t_duration_seconds_count{tool="x2t",result="ok",worker="1"} 2',
+    'eo_x2t_duration_seconds_bucket{le="1",tool="x2t",result="error",worker="2"} 0',
+    'eo_x2t_duration_seconds_bucket{le="+Inf",tool="x2t",result="error",worker="2"} 1',
+    'eo_x2t_duration_seconds_count{tool="x2t",result="error",worker="2"} 1',
+    'eo_x2t_duration_seconds_bucket{le="1",tool="x2t",result="timeout",worker="2"} 0',
+    'eo_x2t_duration_seconds_bucket{le="+Inf",tool="x2t",result="timeout",worker="2"} 1',
+    'eo_x2t_duration_seconds_count{tool="x2t",result="timeout",worker="2"} 1'
+  ].join('\n');
+
+  test('lists the primary and workers and sums x2t over workers', () => {
+    const summary = statsRouter.summarize({docService: null, adminPanel: [], converter: metrics.parsePrometheusText(converterText)});
+    expect(summary.converterAvailable).toBe(true);
+    expect(summary.processes.map(p => [p.name, p.cpuSeconds, p.residentMemoryBytes])).toEqual([
+      ['adminpanel', null, null],
+      ['converter', 1, 100],
+      ['converter worker 1', 3, 200],
+      ['converter worker 2', 4, 300]
+    ]);
+    expect(summary.x2t).toMatchObject({running: 2, failed: 2, durationSeconds: {count: 4}});
+    expect(summary.x2t.durationSeconds.p50).toBeCloseTo(1);
+  });
+});
+
+describe('dashboard history', () => {
+  const proc = (name, cpuSeconds, residentMemoryBytes = 100) => ({name, cpuSeconds, residentMemoryBytes, startTimeSeconds: 1});
+  const summary = (t, {cpu = 0, ok = 0, workerCpu = 0, fast = 0, slow = 0} = {}) => ({
+    collectedAt: t,
+    sessions: {connections: {edit: 2, view: 1, liveview: 0}},
+    conversions: {ok, error: 1},
+    x2t: {
+      durationSeconds: {
+        buckets: [
+          {le: 1, count: fast},
+          {le: 2, count: fast + slow},
+          {le: Infinity, count: fast + slow}
+        ]
+      }
+    },
+    host: {memory: {used: 600}},
+    processes: [proc('docservice', cpu, 300), proc('adminpanel', 0), proc('converter', 0, 50), proc('converter worker 1', workerCpu, 70)]
+  });
+
+  test('first sample has values but no rates', () => {
+    const history = createHistory();
+    history.add(summary(1000));
+    expect(history.since(0)[0]).toMatchObject({t: 1000, conversionsOk: null, x2tP50: null, memory: {host: 600, docservice: 300, converter: 120}});
+    expect(history.since(0)[0].cpu).toEqual({docservice: null, converter: null, adminpanel: null});
+    expect(history.latest().processes[0].cpu).toBeNull();
+  });
+
+  test('rates and x2t quantiles cover the interval between two samples', () => {
+    const history = createHistory();
+    history.add(summary(1000, {cpu: 1, ok: 10, fast: 5}));
+    history.add(summary(31000, {cpu: 4, ok: 25, workerCpu: 3, fast: 5, slow: 4}));
+    const sample = history.since(0)[1];
+    expect(sample.cpu.docservice).toBeCloseTo(0.1);
+    expect(sample.cpu.converter).toBeCloseTo(0.1);
+    expect(sample.conversionsOk).toBeCloseTo(30);
+    expect(sample.conversionsFailed).toBe(0);
+    expect(sample.x2tP50).toBeGreaterThan(1);
+    expect(sample.x2tP50).toBeLessThanOrEqual(2);
+    expect(history.latest().processes[0].cpu).toBeCloseTo(0.1);
+  });
+
+  test('a counter reset from a restart gives no rate instead of a negative one', () => {
+    const history = createHistory();
+    history.add(summary(1000, {ok: 50}));
+    history.add(summary(31000, {ok: 2}));
+    expect(history.since(0)[1].conversionsOk).toBeNull();
+  });
+
+  test('keeps only the newest samples and returns the ones after a time', () => {
+    const history = createHistory(3);
+    for (let t = 1; t <= 5; t++) {
+      history.add(summary(t * 1000));
+    }
+    expect(history.since(0).map(s => s.t)).toEqual([3000, 4000, 5000]);
+    expect(history.since(4000).map(s => s.t)).toEqual([5000]);
   });
 });

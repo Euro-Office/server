@@ -44,7 +44,7 @@ describe('admin panel server routes', () => {
     child.kill();
   });
 
-  test.each(['stat'])('/%s requires the admin session', async route => {
+  test.each(['stat', 'stats/resources', 'stats/history'])('/%s requires the admin session', async route => {
     expect((await fetch(`${url}/${route}`)).status).toBe(401);
   });
 });

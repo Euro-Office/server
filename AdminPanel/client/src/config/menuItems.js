@@ -5,16 +5,16 @@ import EmailConfig from '../pages/NotitifcationConfig/NotificationConfig';
 import FileLimits from '../pages/FileLimits/FileLimits';
 import RequestFiltering from '../pages/RequestFiltering/RequestFiltering';
 import LoggerConfig from '../pages/LoggerConfig/LoggerConfig';
-import Statistics from '../pages/Statistics';
 import ChangePassword from '../pages/ChangePassword/ChangePassword';
 import HealthCheck from '../pages/HealthCheck/HealthCheck';
 import AiIntegration from '../pages/AiIntegration';
 import Settings from '../pages/Settings/Settings';
 import Example from '../pages/Example/Example';
 import Forgotten from '../pages/Forgotten/Forgotten';
+import Dashboard from '../pages/Dashboard/Dashboard';
 
 export const menuItems = [
-  {key: 'statistics', label: 'Statistics', path: '/statistics', component: Statistics, iconIndex: 1},
+  {key: 'dashboard', label: 'Dashboard', path: '/dashboard', component: Dashboard, iconIndex: 1},
   {key: 'ai-integration', label: 'AI Integration', path: '/ai-integration', component: AiIntegration, iconIndex: 2},
   {key: 'example', label: 'Example', path: '/example', component: Example, iconIndex: 3},
   {key: 'file-limits', label: 'File Limits', path: '/file-limits', component: FileLimits, iconIndex: 4},

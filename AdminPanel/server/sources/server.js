@@ -44,6 +44,7 @@ const configRouter = require('./routes/config/router');
 const adminpanelRouter = require('./routes/adminpanel/router');
 const wopiRouter = require('./routes/wopi/router');
 const fontsRouter = require('./routes/fonts/router');
+const statsRouter = require('./routes/stats/router');
 const cookieParser = require('cookie-parser');
 const {validateJWT} = require('./middleware/auth');
 const passwordManager = require('./passwordManager');
@@ -129,6 +130,8 @@ function disableCache(req, res, next) {
 app.use('/admin/api/v1/config', disableCache, configRouter);
 app.use('/admin/api/v1/wopi', disableCache, wopiRouter);
 app.use('/admin/api/v1/fonts', disableCache, fontsRouter);
+app.use('/admin/api/v1/stats', disableCache, statsRouter);
+statsRouter.startSampling();
 app.use('/admin/api/v1', disableCache, adminpanelRouter);
 app.get('/admin/api/v1/stat', disableCache, cookieParser(), validateJWT, async (req, res) => {
   await infoRouter.licenseInfo(req, res);
