@@ -165,3 +165,28 @@ describe('converter failure reports', () => {
     ]);
   });
 });
+
+describe('converter x2t metrics', () => {
+  const metrics = require('../../Common/sources/metrics');
+  const workerMetrics = metrics.registerConverterWorker('1');
+  converter.setWorkerMetrics(workerMetrics);
+  const runs = async result =>
+    (await workerMetrics.x2tDuration.get()).values.find(v => v.metricName === 'eo_x2t_duration_seconds_count' && v.labels.result === result)?.value ??
+    0;
+
+  test('records failed and successful x2t runs and returns to zero running', async () => {
+    delete process.env.FAKE_X2T;
+    await executeTask('metricsfail', {savekey: 'sk'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx'});
+    expect(await runs('error')).toBeGreaterThanOrEqual(1);
+
+    process.env.FAKE_X2T = 'odf';
+    await executeTask(
+      'metricsok',
+      {savekey: 'sk', outputformat: constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_ODT},
+      {fromOrigin: true, fromChanges: true, toFile: 'output.odt'}
+    );
+    delete process.env.FAKE_X2T;
+    expect(await runs('ok')).toBe(1);
+    expect((await workerMetrics.x2tRunning.get()).values[0].value).toBe(0);
+  });
+});

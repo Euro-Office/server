@@ -32,6 +32,7 @@ const config = moduleReloader.requireConfigWithRuntime();
 const logger = require('./../../Common/sources/logger');
 const operationContext = require('./../../Common/sources/operationContext');
 const runtimeConfigManager = require('./../../Common/sources/runtimeConfigManager');
+const metrics = require('./../../Common/sources/metrics');
 
 if (cluster.isMaster) {
   const os = require('os');
@@ -79,8 +80,17 @@ if (cluster.isMaster) {
   updateWorkersCount();
   operationContext.global.logger.warn('update cluster with %s workers', workersCount);
   updateWorkers();
+
+  // /etc/.../default.json is a conffile on deb: a locally modified copy keeps lacking this key after upgrades
+  const cfgMetricsPort = config.has('FileConverter.converter.metricsPort') ? config.get('FileConverter.converter.metricsPort') : 0;
+  if (cfgMetricsPort) {
+    metrics.startClusterMetricsServer(cfgMetricsPort).on('error', err => {
+      operationContext.global.logger.warn('converter metrics server error: %s', err.message);
+    });
+  }
 } else {
   const converter = require('./converter');
+  converter.setWorkerMetrics(metrics.registerConverterWorker(String(cluster.worker.id)));
   converter.run();
   //Initialize watch here to avoid circular import with operationContext
   runtimeConfigManager.initRuntimeConfigWatcher(operationContext.global).catch(err => {

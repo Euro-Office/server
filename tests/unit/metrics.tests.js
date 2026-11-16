@@ -139,3 +139,24 @@ describe('summarizeDocuments', () => {
     expect(result.documents.map(d => d.users)).toEqual([25, 7, 7, 7, 7]);
   });
 });
+
+describe('parsePrometheusText', () => {
+  test('reads types, labels with escapes, infinite values and histogram series', () => {
+    const parsed = metrics.parsePrometheusText(
+      [
+        '# HELP eo_x2t_running help',
+        '# TYPE eo_x2t_running gauge',
+        'eo_x2t_running{worker="1"} 1',
+        '# TYPE eo_x2t_duration_seconds histogram',
+        'eo_x2t_duration_seconds_bucket{le="1",worker="1"} 2',
+        '# TYPE odd gauge',
+        'odd{path="C:\\\\tmp \\"x\\""} +Inf',
+        ''
+      ].join('\n')
+    );
+    expect(parsed.map(m => m.name)).toEqual(['eo_x2t_running', 'eo_x2t_duration_seconds', 'odd']);
+    expect(parsed[0].values).toEqual([{labels: {worker: '1'}, value: 1, metricName: 'eo_x2t_running'}]);
+    expect(parsed[1].values[0]).toMatchObject({metricName: 'eo_x2t_duration_seconds_bucket', labels: {le: '1', worker: '1'}});
+    expect(parsed[2].values[0]).toEqual({labels: {path: 'C:\\tmp "x"'}, value: Infinity, metricName: 'odd'});
+  });
+});

@@ -5,6 +5,7 @@
 'use strict';
 
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const client = require('@prometheus-io/client');
 const utils = require('./utils');
@@ -231,6 +232,97 @@ async function handler(req, res) {
   }
 }
 
+/**
+ * process_start_time_seconds is dropped when the cluster registry aggregates, so converter processes report their own
+ */
+function registerClusterStartTime() {
+  new client.Gauge({
+    name: 'eo_cluster_process_start_time_seconds',
+    help: 'Start time of a converter process, kept per worker in the cluster metrics',
+    registers: [register]
+  }).set(Math.round(Date.now() / 1000 - process.uptime()));
+}
+
+/**
+ * Set up a converter worker: label its metrics with the worker id and answer metric requests of the primary
+ * @param {string} workerId Cluster worker id
+ * @returns {{x2tRunning: client.Gauge, x2tDuration: client.Histogram}}
+ */
+function registerConverterWorker(workerId) {
+  register.setDefaultLabels({worker: workerId});
+  registerClusterStartTime();
+  client.ClusterRegistry.setRegistries([register]);
+  new client.ClusterRegistry();
+  return {
+    x2tRunning: new client.Gauge({
+      name: 'eo_x2t_running',
+      help: 'x2t or docbuilder processes running in this converter worker',
+      registers: [register]
+    }),
+    x2tDuration: new client.Histogram({
+      name: 'eo_x2t_duration_seconds',
+      help: 'Duration of x2t and docbuilder runs',
+      labelNames: ['tool', 'result'],
+      buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+      registers: [register]
+    })
+  };
+}
+
+/**
+ * Serve the metrics of the converter primary and all its workers on 127.0.0.1
+ * @param {number} port Port to listen on
+ * @returns {http.Server}
+ */
+function startClusterMetricsServer(port) {
+  register.setDefaultLabels({worker: 'primary'});
+  registerClusterStartTime();
+  client.ClusterRegistry.setRegistries([register]);
+  const aggregator = new client.ClusterRegistry();
+  return http
+    .createServer(async (req, res) => {
+      if (req.method !== 'GET' || !req.url.startsWith('/metrics')) {
+        res.writeHead(404).end();
+        return;
+      }
+      try {
+        const text = await aggregator.clusterMetrics();
+        res.writeHead(200, {'Content-Type': aggregator.contentType}).end(text);
+      } catch (err) {
+        res.writeHead(500).end(err.message);
+      }
+    })
+    .listen(port, '127.0.0.1');
+}
+
+/**
+ * Parse the Prometheus text format into the shape of Registry.getMetricsAsJSON()
+ * @param {string} text Prometheus text exposition
+ * @returns {Array<{name: string, type: string, values: Array<{labels: object, value: number, metricName: string}>}>}
+ */
+function parsePrometheusText(text) {
+  const metrics = [];
+  let current = null;
+  for (const line of text.split('\n')) {
+    const type = line.match(/^# TYPE (\S+) (\S+)/);
+    if (type) {
+      current = {name: type[1], type: type[2], values: []};
+      metrics.push(current);
+      continue;
+    }
+    const sample = line.match(/^([a-zA-Z_:][\w:]*)(?:\{(.*)\})? (\S+)/);
+    if (!sample || !current) {
+      continue;
+    }
+    const labels = {};
+    for (const [, key, val] of (sample[2] ?? '').matchAll(/(\w+)="((?:[^"\\]|\\.)*)"/g)) {
+      labels[key] = val.replace(/\\(.)/g, (_m, c) => (c === 'n' ? '\n' : c));
+    }
+    current.values.push({labels, value: Number(sample[3].replace(/Inf$/, 'Infinity')), metricName: sample[1]});
+  }
+  return metrics;
+}
+
 module.exports = {
   register,
   conversionsCompleted,
@@ -238,5 +330,8 @@ module.exports = {
   summarizeDocuments,
   registerDocServiceMetrics,
   registerHostMetrics,
+  registerConverterWorker,
+  startClusterMetricsServer,
+  parsePrometheusText,
   handler
 };

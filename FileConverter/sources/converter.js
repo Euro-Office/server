@@ -153,6 +153,7 @@ const cfgExternalRequestAction = config.get('externalRequest.action');
 const MAX_OPEN_FILES = 200;
 const TEMP_PREFIX = 'ASC_CONVERT';
 let queue = null;
+let workerMetrics = null;
 const clientStatsD = statsDClient.getClient();
 const exitCodesReturn = [
   constants.CONVERT_PARAMS,
@@ -1169,6 +1170,8 @@ function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, g
     childArgs.push(dataConvert.fileFrom);
   }
   let timeoutId;
+  const spawnStart = Date.now();
+  workerMetrics?.x2tRunning.inc();
   try {
     const tenSpawnOptions = ctx.getCfg('FileConverter.converter.spawnOptions', cfgSpawnOptions);
     //copy to avoid modification of global cfgSpawnOptions
@@ -1201,6 +1204,11 @@ function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, g
   }
   if (undefined !== timeoutId) {
     clearTimeout(timeoutId);
+  }
+  if (workerMetrics) {
+    workerMetrics.x2tRunning.dec();
+    const result = isTimeout ? 'timeout' : 0 === childRes?.status ? 'ok' : 'error';
+    workerMetrics.x2tDuration.observe({tool: builderParams ? 'docbuilder' : 'x2t', result}, (Date.now() - spawnStart) / 1000);
   }
   return {childRes, isTimeout};
 }
@@ -1424,5 +1432,11 @@ function run() {
     }
   });
 }
+/**
+ * @param {{x2tRunning: object, x2tDuration: object}} metricsOfWorker Metrics to record x2t runs in, from metrics.registerConverterWorker
+ */
+exports.setWorkerMetrics = metricsOfWorker => {
+  workerMetrics = metricsOfWorker;
+};
 exports.run = run;
 exports.ExecuteTask = ExecuteTask;
