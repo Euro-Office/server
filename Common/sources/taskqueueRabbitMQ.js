@@ -602,6 +602,29 @@ TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl) {
     }
   });
 };
+/**
+ * Number of conversion tasks waiting in the queue.
+ * Uses a short-lived channel: a failed check closes its channel, which must not hit the channels tasks are published on.
+ * @returns {Promise<number|null>} null if the queue is not RabbitMQ or not connected
+ */
+TaskQueueRabbitMQ.prototype.getConvertTaskQueueLength = async function () {
+  if (commonDefines.c_oAscQueueType.rabbitmq !== cfgQueueType || !this.connection) {
+    return null;
+  }
+  const channel = await rabbitMQCore.createChannelPromise(this.connection);
+  channel.on('error', () => {});
+  try {
+    return await new Promise((resolve, reject) => {
+      channel.checkQueue(cfgRabbitQueueConvertTask.name, (err, ok) => (err ? reject(err) : resolve(ok.messageCount)));
+    });
+  } finally {
+    try {
+      channel.close(() => {});
+    } catch {
+      // Already closed by the broker after a failed check
+    }
+  }
+};
 TaskQueueRabbitMQ.prototype.close = function () {
   const t = this;
   return co(function* () {

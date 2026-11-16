@@ -44,6 +44,7 @@ const commonDefines = require('./../../Common/sources/commondefines');
 const storage = require('./../../Common/sources/storage/storage-base');
 const formatChecker = require('./../../Common/sources/formatchecker');
 const statsDClient = require('./../../Common/sources/statsdclient');
+const metrics = require('./../../Common/sources/metrics');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
 const config = require('config');
@@ -2001,6 +2002,7 @@ exports.receiveTask = function (data, ack) {
         ctx.initFromTaskQueueData(task);
         yield ctx.initTenantCache();
         ctx.logger.info('receiveTask start: %s', data);
+        metrics.conversionsCompleted.inc({result: cmd.getStatusInfo() ? 'error' : 'ok'});
         const updateTask = yield getUpdateResponse(ctx, cmd);
         const updateRes = yield taskResult.update(ctx, updateTask);
         if (updateRes.affectedRows > 0) {

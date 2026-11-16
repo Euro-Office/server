@@ -4717,6 +4717,7 @@ function getConnections() {
 }
 
 exports.getConnections = getConnections;
+exports.getConvertQueueLength = () => (queue ? queue.getConvertTaskQueueLength() : Promise.resolve(null));
 
 /**
  * Get shutdown status
