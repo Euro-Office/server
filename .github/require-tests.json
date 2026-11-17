@@ -1,0 +1,4 @@
+{
+  "tests": ["tests/*", "*.tests.js", "*.spec.js"],
+  "ignore": ["*/resources/*", "*/translations/*", "branding/*", "license/*", "3d-party-lic-report/*", "3rd-Party.txt", "dictionaries/*", ".github/*", "*.md", "LICENSE*", ".gitignore", "*npm-shrinkwrap.json", "*package-lock.json"]
+}
