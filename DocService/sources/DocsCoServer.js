@@ -1524,9 +1524,48 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
     }
   }
 });
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
+/**
+ * Whether closing the last editor has to start a save.
+ * Without changes, a regular forgotten file still has to be saved.
+ * The partial output of a CONVERT_CORRUPTED save is not the opened document, so it does not start a save.
+ * @param ctx Local context.
+ * @param {string} docId Document id.
+ * @param {boolean} hasChanges Whether the document has changes that are not saved yet.
+ * @returns {Promise<boolean>}
+ */
+async function needSaveOnClose(ctx, docId, hasChanges) {
+  if (hasChanges) {
+    return true;
+  }
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
+  //start save changes if forgotten file exists.
+  //more effective to send file without sfc, but this method is simpler by code
+  const forgotten = await storage.listObjects(ctx, docId, tenForgottenFiles);
+  const hasForgotten = utils.getForgottenRegular(forgotten, tenForgottenFilesName).length > 0;
+  ctx.logger.debug('closeDocument hasForgotten %s', hasForgotten);
+  return hasForgotten;
+}
+/**
+ * Deletes the forgotten files of a document after its changes were saved.
+ * The partial output of a CONVERT_CORRUPTED save is kept: the save started from the host file, so it does not
+ * contain the edits of that output. Only deleteForgotten removes it.
+ * @param ctx Local context.
+ * @param {string} docId Document id.
+ */
+async function deleteForgottenAfterSave(ctx, docId) {
+  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
 
+  const forgottenList = await storage.listObjects(ctx, docId, tenForgottenFiles);
+  const regularList = utils.getForgottenRegular(forgottenList, tenForgottenFilesName);
+  if (regularList.length === forgottenList.length) {
+    await storage.deletePath(ctx, docId, tenForgottenFiles);
+  } else {
+    await Promise.all(regularList.map(forgotten => storage.deleteObject(ctx, forgotten, tenForgottenFiles)));
+  }
+}
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
   yield editorData.cleanDocumentOnExit(ctx, docId);
   if (preStopFlag && editorStatProxy?.deleteKey) {
@@ -1537,7 +1576,7 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
     yield taskResult.restoreInitialPassword(ctx, docId);
     sqlBase.deleteChanges(ctx, docId, null);
     //delete forgotten after successful send on callbackUrl
-    yield storage.deletePath(ctx, docId, tenForgottenFiles);
+    yield deleteForgottenAfterSave(ctx, docId);
   }
   yield unlockWopiDoc(ctx, docId, opt_userIndex);
 }
@@ -1771,6 +1810,7 @@ exports.getIsPreStop = getIsPreStop;
 exports.hasChanges = hasChanges;
 exports.cleanDocumentOnExitPromise = co.wrap(cleanDocumentOnExit);
 exports.cleanDocumentOnExitNoChangesPromise = co.wrap(cleanDocumentOnExitNoChanges);
+exports.needSaveOnClose = needSaveOnClose;
 exports.unlockWopiDoc = unlockWopiDoc;
 exports.setForceSave = setForceSave;
 exports.startForceSave = startForceSave;
@@ -2055,9 +2095,6 @@ exports.install = function (server, app, callbackFunction) {
    * @param reason - the reason of the disconnection (either client or server-side)
    */
   function* closeDocument(ctx, conn, reason) {
-    const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
-    const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
-
     ctx.logger.info('Connection closed or timed out: reason = %s', reason);
     let userLocks,
       reconnected = false,
@@ -2161,15 +2198,7 @@ exports.install = function (server, app, callbackFunction) {
           // Just in case, remove the lock
           yield editorData.unlockSave(ctx, docId, tmpUser.id);
 
-          let needSaveChanges = bHasChanges;
-          if (!needSaveChanges) {
-            //start save changes if forgotten file exists.
-            //more effective to send file without sfc, but this method is simpler by code
-            //the partial output of a CONVERT_CORRUPTED save is not the opened document, so it does not start a save
-            const forgotten = yield storage.listObjects(ctx, docId, tenForgottenFiles);
-            needSaveChanges = utils.getForgottenRegular(forgotten, tenForgottenFilesName).length > 0;
-            ctx.logger.debug('closeDocument hasForgotten %s', needSaveChanges);
-          }
+          const needSaveChanges = yield needSaveOnClose(ctx, docId, bHasChanges);
           if (needSaveChanges && !conn.encrypted) {
             // Send changes to save server
             const user_lcid = utilsDocService.localeToLCID(conn.lang);
