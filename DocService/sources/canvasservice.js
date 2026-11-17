@@ -526,6 +526,7 @@ function commandOpenStartPromise(ctx, docId, baseUrl, opt_documentCallbackUrl, o
 }
 function* commandOpen(ctx, conn, cmd, outputData, opt_upsertRes, opt_bIsRestore) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
 
   let upsertRes;
   if (opt_upsertRes) {
@@ -558,7 +559,8 @@ function* commandOpen(ctx, conn, cmd, outputData, opt_upsertRes, opt_bIsRestore)
     if (updateIfRes.affectedRows > 0) {
       const forgotten = yield storage.listObjects(ctx, cmd.getDocId(), tenForgottenFiles);
       //replace url with forgotten file because it absorbed all lost changes
-      if (forgotten.length > 0) {
+      //the partial output of a CONVERT_CORRUPTED save has not absorbed them, so it is not opened as the document
+      if (utils.getForgottenRegular(forgotten, tenForgottenFilesName).length > 0) {
         ctx.logger.debug('commandOpen from forgotten');
         cmd.setUrl(undefined);
         cmd.setForgotten(cmd.getDocId());
@@ -1312,8 +1314,11 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted) {
     }
     if (storeForgotten && !needRetry && !isEncrypted && (!isError || isErrorCorrupted)) {
       try {
-        ctx.logger.warn('storeForgotten');
-        const forgottenName = tenForgottenFilesName + pathModule.extname(cmd.getOutputPath());
+        //CONVERT_CORRUPTED: x2t applied only a part of the changes. Keep the output under its own name,
+        //so the next open does not load it as the document and a close without edits does not save it
+        ctx.logger.warn('storeForgotten: partial=%s statusInfo=%d', isErrorCorrupted, statusInfo);
+        const forgottenBaseName = isErrorCorrupted ? utils.getForgottenPartialName(tenForgottenFilesName) : tenForgottenFilesName;
+        const forgottenName = forgottenBaseName + pathModule.extname(cmd.getOutputPath());
         yield storage.copyObject(ctx, savePathDoc, docId + '/' + forgottenName, undefined, tenForgottenFiles);
       } catch (err) {
         ctx.logger.error('Error storeForgotten: %s', err.stack);

@@ -8,6 +8,7 @@ const {Readable} = require('node:stream');
 const constants = require('../../Common/sources/constants');
 const commonDefines = require('../../Common/sources/commondefines');
 const config = require('../../DocService/node_modules/config');
+const utils = require('../../Common/sources/utils');
 
 const sqlBase = {
   UserCallback: class {
@@ -50,7 +51,10 @@ const docsCoServer = {
   unlockWopiDoc: jest.fn(),
   publish: jest.fn(),
   getIsShutdown: jest.fn(),
-  getIsPreStop: jest.fn()
+  getIsPreStop: jest.fn(),
+  addTask: jest.fn(),
+  getOpenFormatByEditor: jest.fn(),
+  sendData: jest.fn()
 };
 
 // Keep callback decisions real while replacing database, storage and host I/O.
@@ -60,10 +64,13 @@ jest.doMock('../../DocService/sources/DocsCoServer', () => docsCoServer);
 jest.doMock('../../DocService/sources/wopiClient', () => wopiClient);
 jest.doMock('../../Common/sources/storage/storage-base', () => storage);
 jest.doMock('../../DocService/sources/utilsDocService', () => ({}));
-const {commandSfcCallback} = require('../../DocService/sources/canvasservice');
+const {commandSfcCallback, openDocument} = require('../../DocService/sources/canvasservice');
 
 const docId = 'document-id';
 const outputPath = `${docId}-save/output.docx`;
+const forgottenDir = config.get('services.CoAuthoring.server.forgottenfiles');
+const forgottenFile = `${docId}/${config.get('services.CoAuthoring.server.forgottenfilesname')}.docx`;
+const forgottenPartialFile = `${docId}/${utils.getForgottenPartialName(config.get('services.CoAuthoring.server.forgottenfilesname'))}.docx`;
 const wopiParams = {userAuth: {wopiSrc: 'https://host.test/wopi/files/1', access_token: 'fixture-token'}};
 let updatedTasks;
 
@@ -100,6 +107,8 @@ beforeEach(() => {
   docsCoServer.publish.mockResolvedValue(undefined);
   docsCoServer.getIsShutdown.mockReturnValue(false);
   docsCoServer.getIsPreStop.mockReturnValue(false);
+  docsCoServer.addTask.mockImplementation(function* () {});
+  docsCoServer.getOpenFormatByEditor.mockReturnValue(constants.AVS_OFFICESTUDIO_FILE_CANVAS_WORD);
 });
 
 function createSave({force = false, status = constants.NO_ERROR, type = commonDefines.c_oAscForceSaveTypes.Timeout} = {}) {
@@ -158,13 +167,9 @@ describe('WOPI converter-error save callbacks', () => {
       expect(docsCoServer.setForceSave).toHaveBeenCalledWith(ctx, docId, cmd.getForceSave(), cmd, false, expect.any(String));
     } else {
       expect(updatedTasks.map(task => task.status)).toEqual([commonDefines.FileStatus.UpdateVersion, commonDefines.FileStatus.SaveVersion]);
-      expect(storage.copyObject).toHaveBeenCalledWith(
-        ctx,
-        outputPath,
-        `${docId}/${config.get('services.CoAuthoring.server.forgottenfilesname')}.docx`,
-        undefined,
-        config.get('services.CoAuthoring.server.forgottenfiles')
-      );
+      // The partial output is kept under its own name, so open and close do not treat it as the document.
+      expect(storage.copyObject).toHaveBeenCalledTimes(1);
+      expect(storage.copyObject).toHaveBeenCalledWith(ctx, outputPath, forgottenPartialFile, undefined, forgottenDir);
       expect(docsCoServer.cleanDocumentOnExitPromise).not.toHaveBeenCalled();
       expect(docsCoServer.editorData.cleanDocumentOnExit).toHaveBeenCalledWith(ctx, docId);
       expect(docsCoServer.unlockWopiDoc).toHaveBeenCalledWith(ctx, docId, undefined);
@@ -207,5 +212,65 @@ describe('WOPI converter-error save callbacks', () => {
       expect(wopiClient.putRelativeFile).not.toHaveBeenCalled();
       expect(JSON.parse(reply).error).not.toBe(0);
     }
+  });
+});
+
+describe('forgotten files after a final save that did not reach the host', () => {
+  test('keeps the regular forgotten name when the WOPI write fails without a converter error', async () => {
+    const {ctx, cmd} = createSave();
+    wopiClient.putFile.mockResolvedValue(undefined);
+
+    const reply = await commandSfcCallback(ctx, cmd, false);
+
+    expect(JSON.parse(reply).error).not.toBe(0);
+    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    expect(storage.copyObject).toHaveBeenCalledWith(ctx, outputPath, forgottenFile, undefined, forgottenDir);
+  });
+
+  test.each([
+    ['partial', constants.CONVERT_CORRUPTED, forgottenPartialFile],
+    ['regular', constants.NO_ERROR, forgottenFile]
+  ])('stores the non-WOPI output under the %s name when the callback is rejected', async (_name, status, expectedFile) => {
+    const {ctx, cmd} = createSave({status});
+    wopiClient.parseWopiCallback.mockReturnValue(undefined);
+    docsCoServer.sendServerRequest.mockResolvedValue('{"error":1}');
+
+    await commandSfcCallback(ctx, cmd, false);
+
+    expect(storage.copyObject).toHaveBeenCalledTimes(1);
+    expect(storage.copyObject).toHaveBeenCalledWith(ctx, outputPath, expectedFile, undefined, forgottenDir);
+  });
+
+  test('stores nothing when a non-WOPI host accepts the corrupted callback', async () => {
+    const {ctx, cmd} = createSave({status: constants.CONVERT_CORRUPTED});
+    wopiClient.parseWopiCallback.mockReturnValue(undefined);
+
+    await commandSfcCallback(ctx, cmd, false);
+
+    expect(storage.copyObject).not.toHaveBeenCalled();
+    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, docId, true, undefined);
+  });
+});
+
+describe('open with files in forgotten', () => {
+  const hostUrl = 'https://host.test/wopi/files/1/contents';
+
+  test.each([
+    ['the host when forgotten is empty', [], false],
+    ['the host when forgotten holds only the partial output', [forgottenPartialFile], false],
+    ['forgotten when it holds a regular file', [forgottenFile], true],
+    ['forgotten when a regular file is next to the partial output', [forgottenPartialFile, forgottenFile], true]
+  ])('opens from %s', async (_name, forgottenList, fromForgotten) => {
+    const {ctx} = createSave();
+    storage.listObjects.mockImplementation(async (_ctx, _path, dir) => (dir === forgottenDir ? forgottenList : []));
+    const cmd = new commonDefines.InputCommand({c: 'open', id: docId, userid: 'editor-user', format: 'docx', url: hostUrl});
+
+    await openDocument(ctx, {editorType: 'word', encrypted: false}, cmd, {isInsert: true});
+
+    expect(storage.listObjects).toHaveBeenCalledWith(ctx, docId, forgottenDir);
+    expect(docsCoServer.addTask).toHaveBeenCalledTimes(1);
+    const queuedCmd = docsCoServer.addTask.mock.calls[0][0].getCmd();
+    expect(queuedCmd.getForgotten()).toBe(fromForgotten ? docId : undefined);
+    expect(queuedCmd.getUrl()).toBe(fromForgotten ? undefined : hostUrl);
   });
 });

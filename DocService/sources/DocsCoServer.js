@@ -2056,6 +2056,7 @@ exports.install = function (server, app, callbackFunction) {
    */
   function* closeDocument(ctx, conn, reason) {
     const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+    const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
 
     ctx.logger.info('Connection closed or timed out: reason = %s', reason);
     let userLocks,
@@ -2164,8 +2165,9 @@ exports.install = function (server, app, callbackFunction) {
           if (!needSaveChanges) {
             //start save changes if forgotten file exists.
             //more effective to send file without sfc, but this method is simpler by code
+            //the partial output of a CONVERT_CORRUPTED save is not the opened document, so it does not start a save
             const forgotten = yield storage.listObjects(ctx, docId, tenForgottenFiles);
-            needSaveChanges = forgotten.length > 0;
+            needSaveChanges = utils.getForgottenRegular(forgotten, tenForgottenFilesName).length > 0;
             ctx.logger.debug('closeDocument hasForgotten %s', needSaveChanges);
           }
           if (needSaveChanges && !conn.encrypted) {
@@ -4459,7 +4461,11 @@ function* findForgottenFile(ctx, docId) {
   const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
 
   const forgottenList = yield storage.listObjects(ctx, docId, tenForgottenFiles);
-  return forgottenList.find(forgotten => tenForgottenFilesName === pathModule.basename(forgotten, pathModule.extname(forgotten)));
+  //the partial output of a CONVERT_CORRUPTED save is returned only if there is no regular forgotten file
+  return (
+    forgottenList.find(forgotten => tenForgottenFilesName === pathModule.basename(forgotten, pathModule.extname(forgotten))) ||
+    forgottenList.find(forgotten => utils.isForgottenPartial(forgotten, tenForgottenFilesName))
+  );
 }
 
 function* commandLicense(ctx) {
