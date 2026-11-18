@@ -591,6 +591,38 @@ exports.axios = axios;
 exports.httpRequest = httpRequest;
 exports.postRequestPromise = postRequestPromise;
 exports.downloadUrlPromise = downloadUrlPromise;
+/**
+ * Maps internal error constants to the public error codes of the conversion and docbuilder responses.
+ * @openapi
+ * components:
+ *   schemas:
+ *     ConvertErrorCode:
+ *       type: integer
+ *       description: Public error code of the conversion and docbuilder services, mapped from the internal constants.
+ *       oneOf:
+ *         - const: 0
+ *           description: No error. Also returned for CONVERT_CELLLIMITS, in which case the response has no result URL.
+ *         - const: -1
+ *           description: Unknown error, including storage, upload and request stream errors.
+ *         - const: -2
+ *           description: Conversion timeout (CONVERT_TIMEOUT, CONVERT_DEAD_LETTER).
+ *         - const: -3
+ *           description: Conversion failed (CONVERT, CONVERT_NEED_PARAMS, CONVERT_LIBREOFFICE, CONVERT_CORRUPTED, CONVERT_UNKNOWN_FORMAT, CONVERT_READ_FILE, CONVERT_TEMPORARY).
+ *         - const: -4
+ *           description: Downloading the source file failed (CONVERT_DOWNLOAD).
+ *         - const: -5
+ *           description: Wrong or missing password, or unsupported DRM (CONVERT_PASSWORD, CONVERT_DRM, CONVERT_DRM_UNSUPPORTED).
+ *         - const: -6
+ *           description: Database or queue error (TASK_QUEUE, TASK_RESULT).
+ *         - const: -7
+ *           description: Invalid request parameters (CONVERT_PARAMS).
+ *         - const: -8
+ *           description: Missing, invalid or expired token (VKEY, VKEY_ENCRYPT, VKEY_KEY_EXPIRE, VKEY_USER_COUNT_EXCEED).
+ *         - const: -9
+ *           description: The source format could not be detected (CONVERT_DETECT).
+ *         - const: -10
+ *           description: The source exceeds the configured size limits (CONVERT_LIMITS).
+ */
 exports.mapAscServerErrorToOldError = function (error) {
   let res = -1;
   switch (error) {
