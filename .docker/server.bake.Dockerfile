@@ -26,23 +26,23 @@ FROM web-base AS server
 
     ENV PRODUCT_VERSION=${PRODUCT_VERSION}
 
-    COPY server/Common/package*.json /server/Common/
-    RUN --mount=type=cache,target=/root/.npm cd /server/Common && npm install
+    COPY server/Common/package.json server/Common/npm-shrinkwrap.json /server/Common/
+    RUN --mount=type=cache,target=/root/.npm cd /server/Common && npm ci
 
-    COPY server/DocService/package*.json /server/DocService/
-    RUN --mount=type=cache,target=/root/.npm cd /server/DocService && npm install
+    COPY server/DocService/package.json server/DocService/npm-shrinkwrap.json /server/DocService/
+    RUN --mount=type=cache,target=/root/.npm cd /server/DocService && npm ci
 
-    COPY server/FileConverter/package*.json /server/FileConverter/
-    RUN --mount=type=cache,target=/root/.npm cd /server/FileConverter && npm install
+    COPY server/FileConverter/package.json server/FileConverter/npm-shrinkwrap.json /server/FileConverter/
+    RUN --mount=type=cache,target=/root/.npm cd /server/FileConverter && npm ci
 
-    COPY server/Metrics/package*.json /server/Metrics/
-    RUN --mount=type=cache,target=/root/.npm cd /server/Metrics && npm install
+    COPY server/Metrics/package.json server/Metrics/npm-shrinkwrap.json /server/Metrics/
+    RUN --mount=type=cache,target=/root/.npm cd /server/Metrics && npm ci
 
     COPY server/AdminPanel/server/package*.json /server/AdminPanel/server/
-    RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/server && npm install
+    RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/server && npm ci
 
     COPY server/AdminPanel/client/package*.json /server/AdminPanel/client/
-    RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/client && npm install
+    RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/client && npm ci
 
     COPY server/ /server
 

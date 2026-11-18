@@ -318,7 +318,7 @@ function discovery(req, res) {
       }
       xmlDiscovery.up();
     } catch (err) {
-      ctx.logger.error('wopiDiscovery error:%s', err.stack);
+      ctx.logger.error('wopiDiscovery error:', err);
     } finally {
       res.setHeader('Content-Type', 'text/xml');
       res.send(xml.end());
@@ -342,7 +342,7 @@ function collaboraCapabilities(req, res) {
       yield ctx.initTenantCache();
       ctx.logger.info('collaboraCapabilities start');
     } catch (err) {
-      ctx.logger.error('collaboraCapabilities error:%s', err.stack);
+      ctx.logger.error('collaboraCapabilities error:', err);
     } finally {
       utils.fillResponseSimple(res, JSON.stringify(output), 'application/json');
       ctx.logger.info('collaboraCapabilities end');
@@ -516,7 +516,7 @@ function parsePutFileResponse(ctx, postRes) {
       //collabora nexcloud connector
       body = JSON.parse(postRes.body);
     } catch (e) {
-      ctx.logger.debug('wopi PutFile body parse error: %s', e.stack);
+      ctx.logger.debug('wopi PutFile body parse error:', e);
     }
   }
   return body;
@@ -732,14 +732,14 @@ function getEditorHtml(req, res) {
       const secret = yield tenantManager.getTenantSecret(ctx, commonDefines.c_oAscSecretType.Browser);
       params.token = jwt.sign(params, utils.getJwtHsKey(secret), options);
     } catch (err) {
-      ctx.logger.error('wopiEditor error: %s', err.stack);
+      ctx.logger.error('wopiEditor error:', err);
       params.fileInfo = {};
     } finally {
       ctx.logger.debug('wopiEditor render params=%j', params);
       try {
         res.render('editor-wopi', params);
       } catch (err) {
-        ctx.logger.error('wopiEditor error:%s', err.stack);
+        ctx.logger.error('wopiEditor error:', err);
         res.sendStatus(400);
       }
       ctx.logger.info('wopiEditor end');
@@ -800,13 +800,13 @@ function getConverterHtml(req, res) {
         params.statusHandler += `&token=${encodeURIComponent(token)}`;
       }
     } catch (err) {
-      ctx.logger.error('convert-and-edit error:%s', err.stack);
+      ctx.logger.error('convert-and-edit error:', err);
     } finally {
       ctx.logger.debug('convert-and-edit render params=%j', params);
       try {
         res.render('convert-and-edit-wopi', params);
       } catch (err) {
-        ctx.logger.error('convert-and-edit error:%s', err.stack);
+        ctx.logger.error('convert-and-edit error:', err);
         res.sendStatus(400);
       }
       ctx.logger.info('convert-and-edit end');
@@ -858,7 +858,7 @@ function putFile(ctx, wopiParams, data, dataStream, dataSize, userLastChangeId, 
       }
     } catch (err) {
       const errorMsg = getWopiErrorMessage(err.statusCode);
-      ctx.logger.error('wopi PutFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+      ctx.logger.error('wopi PutFile error status=%d (%s):', err.statusCode, errorMsg, err);
     } finally {
       ctx.logger.info('wopi PutFile end');
     }
@@ -904,7 +904,7 @@ function putRelativeFile(ctx, wopiSrc, access_token, data, dataStream, dataSize,
       res = JSON.parse(postRes.body);
     } catch (err) {
       const errorMsg = getWopiErrorMessage(err.statusCode);
-      ctx.logger.error('wopi putRelativeFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+      ctx.logger.error('wopi putRelativeFile error status=%d (%s):', err.statusCode, errorMsg, err);
     } finally {
       ctx.logger.info('wopi putRelativeFile end');
     }
@@ -969,7 +969,7 @@ async function renameFile(ctx, wopiParams, name) {
     }
   } catch (err) {
     const errorMsg = getWopiErrorMessage(err.statusCode);
-    ctx.logger.error('wopi RenameFile error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+    ctx.logger.error('wopi RenameFile error status=%d (%s):', err.statusCode, errorMsg, err);
   } finally {
     ctx.logger.info('wopi RenameFile end');
   }
@@ -1003,7 +1003,7 @@ async function refreshFile(ctx, wopiParams, baseUrl) {
     res.token = jwt.sign(res, utils.getJwtHsKey(secret), options);
   } catch (err) {
     res = undefined;
-    ctx.logger.error('wopi error RefreshFile:%s', err.stack);
+    ctx.logger.error('wopi error RefreshFile:', err);
   } finally {
     ctx.logger.info('wopi RefreshFile end');
   }
@@ -1046,7 +1046,7 @@ async function checkFileInfo(ctx, wopiSrc, access_token, opt_sc) {
     result = JSON.parse(getRes.body);
   } catch (err) {
     const errorMsg = getWopiErrorMessage(err.statusCode);
-    ctx.logger.error('wopi checkFileInfo error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+    ctx.logger.error('wopi checkFileInfo error status=%d (%s):', err.statusCode, errorMsg, err);
     result = {
       error: true,
       statusCode: err.statusCode
@@ -1101,7 +1101,7 @@ async function lock(ctx, command, lockId, fileInfo, userAuth) {
     res.error = true;
     res.statusCode = err.statusCode;
     const errorMsg = getWopiErrorMessage(err.statusCode);
-    ctx.logger.error('wopi %s error status=%d (%s):%s', command, err.statusCode, errorMsg, err.stack);
+    ctx.logger.error('wopi %s error status=%d (%s):', command, err.statusCode, errorMsg, err);
   } finally {
     ctx.logger.info('wopi %s end', command);
   }
@@ -1150,7 +1150,7 @@ async function unlock(ctx, wopiParams) {
     res = true;
   } catch (err) {
     const errorMsg = getWopiErrorMessage(err.statusCode);
-    ctx.logger.error('wopi Unlock error status=%d (%s):%s', err.statusCode, errorMsg, err.stack);
+    ctx.logger.error('wopi Unlock error status=%d (%s):', err.statusCode, errorMsg, err);
   } finally {
     ctx.logger.info('wopi Unlock end');
   }
@@ -1222,9 +1222,9 @@ async function dummyGetFile(req, res) {
   } catch (err) {
     if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
       //xhr.abort case
-      ctx.logger.debug('dummyGetFile error: %s', err.stack);
+      ctx.logger.debug('dummyGetFile error:', err);
     } else {
-      ctx.logger.error('dummyGetFile error:%s', err.stack);
+      ctx.logger.error('dummyGetFile error:', err);
     }
   } finally {
     if (!res.headersSent) {

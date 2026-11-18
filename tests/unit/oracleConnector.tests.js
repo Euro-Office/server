@@ -235,7 +235,7 @@ describe('Oracle conditional change deletion transaction', () => {
 
     expect(connection.close).toHaveBeenCalledTimes(2);
     expect(connection.close).toHaveBeenLastCalledWith({drop: true});
-    expect(ctx.logger.error).toHaveBeenCalledWith(expect.stringContaining('connection drop error'));
+    expect(ctx.logger.error).toHaveBeenCalledWith(expect.stringContaining('connection drop error'), expect.any(Error));
   });
 
   test.each(['pool creation', 'connection acquisition'])('can retry a failed %s', async stage => {

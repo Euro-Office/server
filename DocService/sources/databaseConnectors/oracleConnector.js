@@ -170,7 +170,7 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
     return output;
   } catch (error) {
     if (!noLog) {
-      ctx.logger.error(`sqlQuery() error while executing query: ${sqlCommand}\n${error.stack}`);
+      ctx.logger.error('sqlQuery() error while executing query: %s', sqlCommand, error);
     }
 
     throw error;
@@ -181,7 +181,7 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
         await connection.close();
       } catch (error) {
         if (!noLog) {
-          ctx.logger.error(`connection.close() error while executing query: ${sqlCommand}\n${error.stack}`);
+          ctx.logger.error('connection.close() error while executing query: %s', sqlCommand, error);
         }
       }
     }
@@ -226,7 +226,7 @@ async function executeBunch(ctx, sqlCommand, values = [], options, noLog = false
     return {affectedRows: result?.rowsAffected ?? 0};
   } catch (error) {
     if (!noLog) {
-      ctx.logger.error(`executeBunch() error while executing query: ${sqlCommand}\n${error.stack}`);
+      ctx.logger.error('executeBunch() error while executing query: %s', sqlCommand, error);
     }
 
     throw error;
@@ -236,7 +236,7 @@ async function executeBunch(ctx, sqlCommand, values = [], options, noLog = false
         await connection.close();
       } catch (error) {
         if (!noLog) {
-          ctx.logger.error(`connection.close() error while executing batched query: ${sqlCommand}\n${error.stack}`);
+          ctx.logger.error('connection.close() error while executing batched query: %s', sqlCommand, error);
         }
       }
     }
@@ -264,13 +264,13 @@ async function withLockedTaskRow(ctx, docId, action) {
     await connection.commit();
   } catch (error) {
     operationError = error;
-    ctx.logger.error(`withLockedTaskRow() error: ${error.stack}`);
+    ctx.logger.error('withLockedTaskRow() error:', error);
     if (connection) {
       try {
         await connection.rollback();
       } catch (rollbackError) {
         dropConnection = true;
-        ctx.logger.error(`withLockedTaskRow() rollback error: ${rollbackError.stack}`);
+        ctx.logger.error('withLockedTaskRow() rollback error:', rollbackError);
       }
     }
   } finally {
@@ -278,11 +278,11 @@ async function withLockedTaskRow(ctx, docId, action) {
       try {
         await connection.close({drop: dropConnection});
       } catch (error) {
-        ctx.logger.error(`withLockedTaskRow() connection.close() error: ${error.stack}`);
+        ctx.logger.error('withLockedTaskRow() connection.close() error:', error);
         try {
           await connection.close({drop: true});
         } catch (dropError) {
-          ctx.logger.error(`withLockedTaskRow() connection drop error: ${dropError.stack}`);
+          ctx.logger.error('withLockedTaskRow() connection drop error:', dropError);
           if (!operationError) {
             operationError = error;
           }

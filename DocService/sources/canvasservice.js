@@ -1162,7 +1162,7 @@ function* commandImgurls(ctx, conn, cmd, outputData) {
           urlParsed = urlModule.parse(urlSource);
         } catch (e) {
           data = undefined;
-          ctx.logger.error('error commandImgurls download: url = %s; %s', urlSource, e.stack);
+          ctx.logger.error('error commandImgurls download: url = %s;', urlSource, e);
           if (e.code === 'EMSGSIZE') {
             errorCode = constants.UPLOAD_CONTENT_LENGTH;
           } else {
@@ -1408,7 +1408,7 @@ function* releaseShutdownEntry(ctx, cmd, docId) {
       yield docsCoServer.editorStat.removeShutdown(cmd.getRedisKey() || redisKeyShutdown, docId);
     }
   } catch (err) {
-    ctx.logger.error('commandSfcCallback: could not release the shutdown entry: %s', err.stack);
+    ctx.logger.error('commandSfcCallback: could not release the shutdown entry:', err);
   }
 }
 function* releaseSaveState(ctx, cmd, docId, operationId) {
@@ -1421,7 +1421,7 @@ function* releaseSaveState(ctx, cmd, docId, operationId) {
     }
     yield docsCoServer.editorData.clearSavedCallbackAccepted(ctx, docId, operationId);
   } catch (err) {
-    ctx.logger.error('commandSfcCallback: could not release the saved state: %s', err.stack);
+    ctx.logger.error('commandSfcCallback: could not release the saved state:', err);
   }
 }
 // Returns true when the row was still this save's (released, or its own
@@ -1475,7 +1475,7 @@ function* abandonSfcRetry(ctx, cmd) {
   try {
     released = yield* releaseAbandonedTaskRow(ctx, cmd, docId, operationId);
   } catch (err) {
-    ctx.logger.error('commandSfcCallback: could not release the task row: %s', err.stack);
+    ctx.logger.error('commandSfcCallback: could not release the task row:', err);
   }
   yield* releaseSaveState(ctx, cmd, docId, operationId);
   if (released) {
@@ -1487,7 +1487,7 @@ function* abandonSfcRetry(ctx, cmd) {
       const success = cmd.getCallbackAccepted() === true && cmd.getSavedState()?.success === true;
       yield docsCoServer.publish(ctx, {type: commonDefines.c_oPublishType.updateVersion, ctx, docId, success});
     } catch (err) {
-      ctx.logger.error('commandSfcCallback: could not publish updateVersion: %s', err.stack);
+      ctx.logger.error('commandSfcCallback: could not publish updateVersion:', err);
     }
   }
   yield* releaseShutdownEntry(ctx, cmd, docId);
@@ -1521,7 +1521,7 @@ function* scheduleSfcRetryUntilConfirmed(ctx, cmd, opt_isDeliveryLive) {
       yield* scheduleSfcRetry(ctx, cmd);
       return true;
     } catch (err) {
-      ctx.logger.error('receiveTask retry scheduling error: %s', err.stack);
+      ctx.logger.error('receiveTask retry scheduling error:', err);
       if ((cmd.getAttempt() || 0) === attempt) {
         // Failed before the attempt was counted: count it here to stay bounded.
         cmd.setAttempt(attempt + 1);
@@ -2032,7 +2032,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           outputSfc.setUrl(url);
           outputSfc.setExtName(pathModule.extname(savePathDoc));
         } catch (e) {
-          ctx.logger.error('Error commandSfcCallback: %s', e.stack);
+          ctx.logger.error('Error commandSfcCallback:', e);
         }
         if (outputSfc.getUrl() && outputSfc.getUsers().length > 0) {
           outputSfc.setStatus(statusOk);
@@ -2080,7 +2080,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
                 ctx.logger.warn('sendServerRequest returned an error: data = %s', replyStr);
               }
             } catch (err) {
-              ctx.logger.error('sendServerRequest error: url = %s;data = %j %s', uri, outputSfc, err.stack);
+              ctx.logger.error('sendServerRequest error: url = %s;data = %j', uri, outputSfc, err);
             }
           }
         }
@@ -2140,7 +2140,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
                   replyStr = yield docsCoServer.sendServerRequest(ctx, uri, outputSfc, checkAndFixAuthorizationLength);
                 }
               } catch (err) {
-                ctx.logger.error('sendServerRequest error: url = %s;data = %j %s', uri, outputSfc, err.stack);
+                ctx.logger.error('sendServerRequest error: url = %s;data = %j', uri, outputSfc, err);
                 const retryHttpStatus = new MultiRange(tenCallbackBackoffOptions.httpStatus);
                 if (!isEncrypted && !docsCoServer.getIsShutdown() && (!err.statusCode || retryHttpStatus.has(err.statusCode.toString()))) {
                   // Count only HTTP attempts here: infrastructure retries must
@@ -2380,7 +2380,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           forgottenStored = true;
         }
       } catch (err) {
-        ctx.logger.error('Error storeForgotten: %s', err.stack);
+        ctx.logger.error('Error storeForgotten:', err);
         if (!isSfcm) {
           throw err;
         }
@@ -2549,7 +2549,7 @@ function* commandSendMMCallback(ctx, cmd) {
       replyStr = yield docsCoServer.sendServerRequest(ctx, uri, outputSfc);
     } catch (err) {
       replyStr = null;
-      ctx.logger.error('sendServerRequest error: url = %s;data = %j %s', uri, outputSfc, err.stack);
+      ctx.logger.error('sendServerRequest error: url = %s;data = %j', uri, outputSfc, err);
     }
     const replyData = docsCoServer.parseReplyData(ctx, replyStr);
     if (!(replyData && commonDefines.c_oAscServerCommandErrors.NoError == replyData.error)) {
@@ -2619,7 +2619,7 @@ exports.openDocument = function (ctx, conn, cmd, opt_upsertRes, opt_bIsRestore) 
         clientStatsD.timing('coauth.openDocument.' + cmd.getCommand(), new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error openDocument: %s', e.stack);
+      ctx.logger.error('Error openDocument:', e);
       if (!outputData) {
         outputData = new OutputData();
       }
@@ -2722,7 +2722,7 @@ exports.downloadAs = function (req, res) {
         clientStatsD.timing('coauth.downloadAs.' + cmd.getCommand(), new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error downloadAs: %s', e.stack);
+      ctx.logger.error('Error downloadAs:', e);
       res.sendStatus(400);
     }
   });
@@ -2779,7 +2779,7 @@ exports.saveFile = function (req, res) {
         clientStatsD.timing('coauth.saveFile', new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error saveFile: %s', e.stack);
+      ctx.logger.error('Error saveFile:', e);
       res.sendStatus(400);
     }
   });
@@ -2857,7 +2857,7 @@ exports.printFile = function (req, res) {
         clientStatsD.timing('coauth.printFile', new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error printFile: %s', e.stack);
+      ctx.logger.error('Error printFile:', e);
       res.sendStatus(400);
     } finally {
       ctx.logger.info('End printFile');
@@ -3005,12 +3005,12 @@ exports.downloadFile = function (req, res) {
       }
     } catch (err) {
       if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
-        ctx.logger.debug('Error downloadFile: %s', err.stack);
+        ctx.logger.debug('Error downloadFile:', err);
         if (!res.headersSent) {
           res.sendStatus(499);
         }
       } else {
-        ctx.logger.error('Error downloadFile: %s', err.stack);
+        ctx.logger.error('Error downloadFile:', err);
         //catch errors because status may be sent while piping to response
         if (!res.headersSent) {
           try {
@@ -3024,7 +3024,7 @@ exports.downloadFile = function (req, res) {
               res.sendStatus(400);
             }
           } catch (err) {
-            ctx.logger.error('Error downloadFile: %s', err.stack);
+            ctx.logger.error('Error downloadFile:', err);
           }
         }
       }
@@ -3034,7 +3034,7 @@ exports.downloadFile = function (req, res) {
         try {
           stream.destroy();
         } catch (destroyErr) {
-          ctx.logger.warn('Error destroying stream: %s', destroyErr.stack);
+          ctx.logger.warn('Error destroying stream:', destroyErr);
         }
       }
       ctx.logger.info('End downloadFile');
@@ -3091,7 +3091,7 @@ exports.saveFromChanges = function (ctx, docId, statusInfo, optFormat, opt_userI
         clientStatsD.timing('coauth.saveFromChanges', new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error saveFromChanges: %s', e.stack);
+      ctx.logger.error('Error saveFromChanges:', e);
     }
   });
 };
@@ -3219,7 +3219,7 @@ exports.receiveTask = function (data, ack, opt_isDeliveryLive) {
         }
       }
     } catch (err) {
-      ctx.logger.error('receiveTask error: %s', err.stack);
+      ctx.logger.error('receiveTask error:', err);
       const cmd = task && task.getCmd();
       if (cmd && 'sfc' === cmd.getCommand()) {
         shouldAck = yield* scheduleSfcRetryUntilConfirmed(ctx, cmd, opt_isDeliveryLive);

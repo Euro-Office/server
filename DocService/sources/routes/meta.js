@@ -103,7 +103,7 @@ router.get('/config', async (req, res) => {
 
     res.json(clientConfig);
   } catch (err) {
-    ctx.logger.error('meta/config error: %s', err.stack);
+    ctx.logger.error('meta/config error:', err);
     res.sendStatus(500);
   }
 });

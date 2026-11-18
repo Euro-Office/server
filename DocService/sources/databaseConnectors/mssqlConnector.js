@@ -380,7 +380,7 @@ async function withTaskResultLock(ctx, docId, condition, action) {
       try {
         await transaction.rollback();
       } catch (rollbackError) {
-        ctx.logger.error('withTaskResultLock rollback error: %s', rollbackError.stack);
+        ctx.logger.error('withTaskResultLock rollback error:', rollbackError);
       }
     }
     throw error;

@@ -415,7 +415,7 @@ function* pushBackRedeliveredRabbit(taskqueue, message, ack) {
         yield taskqueue.addResponse(taskqueue.simulateErrorResponse(data));
       }
     } catch (err) {
-      operationContext.global.logger.error('checkRedelivered error: %s', err.stack);
+      operationContext.global.logger.error('checkRedelivered error:', err);
     } finally {
       ack();
     }
@@ -432,7 +432,7 @@ function* pushBackRedeliveredActive(taskqueue, context, ack) {
           yield taskqueue.addResponse(taskqueue.simulateErrorResponse(context.message.body));
         }
       } catch (err) {
-        operationContext.global.logger.error('checkRedelivered error: %s', err.stack);
+        operationContext.global.logger.error('checkRedelivered error:', err);
       } finally {
         ack();
       }
