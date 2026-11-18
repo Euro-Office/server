@@ -286,4 +286,45 @@ describe('utilsDocService image processing', () => {
       expect(result.length).toBeLessThan(100000); // Should be well compressed
     });
   });
+
+  describe('getSpreadsheetJsonParams', () => {
+    test('is empty without a layout', () => {
+      expect(utilsDocService.getSpreadsheetJsonParams(undefined)).toEqual({});
+    });
+
+    test('passes the layout on without a printType unless entireWorkbook is true', () => {
+      const layout = {ignorePrintArea: true, fitToWidth: 1};
+      expect(utilsDocService.getSpreadsheetJsonParams(layout)).toEqual({spreadsheetLayout: layout});
+      expect(utilsDocService.getSpreadsheetJsonParams({entireWorkbook: false})).toEqual({spreadsheetLayout: {}});
+    });
+
+    test('entireWorkbook asks the editor for every sheet, leaves fit and scale unset and is not passed on as layout', () => {
+      const jsonParams = utilsDocService.getSpreadsheetJsonParams({entireWorkbook: true, orientation: 'landscape'});
+      expect(jsonParams).toStrictEqual({
+        spreadsheetLayout: {orientation: 'landscape'},
+        adjustOptions: {printType: 1}
+      });
+    });
+
+    test('entireWorkbook keeps the fit or scale of the request', () => {
+      for (const layout of [{fitToWidth: 1}, {fitToHeight: 2}, {fitToWidth: 0, fitToHeight: 0}, {scale: 50}]) {
+        const jsonParams = utilsDocService.getSpreadsheetJsonParams({entireWorkbook: true, ...layout});
+        expect(jsonParams).toStrictEqual({spreadsheetLayout: layout, adjustOptions: {printType: 1}});
+      }
+    });
+
+    test('entireWorkbook passes a null fit or scale on unchanged', () => {
+      const jsonParams = utilsDocService.getSpreadsheetJsonParams({entireWorkbook: true, fitToWidth: null, scale: null});
+      expect(jsonParams.spreadsheetLayout).toStrictEqual({fitToWidth: null, scale: null});
+    });
+
+    test('passes anything but an object on as it is', () => {
+      expect(utilsDocService.getSpreadsheetJsonParams('x')).toEqual({spreadsheetLayout: 'x'});
+      expect(utilsDocService.getSpreadsheetJsonParams([1])).toEqual({spreadsheetLayout: [1]});
+    });
+
+    test('only the boolean true counts', () => {
+      expect(utilsDocService.getSpreadsheetJsonParams({entireWorkbook: 'true'}).adjustOptions).toBeUndefined();
+    });
+  });
 });
