@@ -1866,6 +1866,23 @@ function checkJwtHeader(ctx, req, opt_header, opt_prefix, opt_secretType) {
     return null;
   });
 }
+/**
+ * Reads the parameters of a server API request and checks its inbox JWT.
+ * @openapi
+ * components:
+ *   securitySchemes:
+ *     inboxJwt:
+ *       type: http
+ *       scheme: bearer
+ *       bearerFormat: JWT
+ *       description: >-
+ *         Required when `services.CoAuthoring.token.enable.request.inbox` is true. The token is signed
+ *         with the inbox secret and sent either as `token` in the JSON body (or query string) or in the
+ *         `token.inbox.header` header with the `token.inbox.prefix` prefix (default `Authorization: Bearer`).
+ *         A body token takes precedence over the header. The decoded claims, and the claims inside its
+ *         `payload` and `query` objects, are merged into the request parameters; with
+ *         `services.CoAuthoring.server.tokenRequiredParams` (default true) the parameters outside the token are ignored.
+ */
 function getRequestParams(ctx, req, _opt_isNotInBody) {
   return co(function* () {
     const tenTokenEnableRequestInbox = ctx.getCfg('services.CoAuthoring.token.enable.request.inbox', cfgTokenEnableRequestInbox);
@@ -4598,6 +4615,28 @@ exports.setLicenseInfo = async function (globalCtx, data, original) {
     await utilsDocService.notifyLicenseExpiration(ctx, licenseInfo.endDate);
   }
 };
+/**
+ * Checks database, editor data, pubsub, queue and storage.
+ * @openapi
+ * paths:
+ *   /healthcheck:
+ *     get:
+ *       operationId: healthcheck
+ *       tags: [Health]
+ *       summary: Health check
+ *       description: Checks the database, Redis, pubsub, queue and storage connections. Always answers HTTP 200; the body says whether all checks passed.
+ *       security: []
+ *       responses:
+ *         '200':
+ *           description: The string `true` if all checks passed, `false` otherwise.
+ *           content:
+ *             text/plain:
+ *               schema:
+ *                 type: string
+ *                 enum: ['true', 'false']
+ *         '403':
+ *           $ref: '#/components/responses/IpFilterDenied'
+ */
 exports.healthCheck = function (req, res) {
   return co(function* () {
     let output = false;
@@ -4865,6 +4904,318 @@ function* commandHandle(ctx, params, req, output) {
   Object.assign(output, forgottenData);
 }
 
+/**
+ * Command service.
+ * @openapi
+ * paths:
+ *   /command:
+ *     post:
+ *       operationId: command
+ *       tags: [Command]
+ *       summary: Run a document command
+ *       description: >-
+ *         Runs the command given by `c`. Parameters are read from the JSON body, or from the query string
+ *         if the body is not valid JSON. Errors are returned with HTTP 200 in `error`.
+ *       security:
+ *         - inboxJwt: []
+ *         - {}
+ *       parameters:
+ *         - $ref: '#/components/parameters/ShardKey'
+ *       requestBody:
+ *         required: true
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/CommandRequest'
+ *       responses:
+ *         '200':
+ *           $ref: '#/components/responses/CommandResult'
+ *         '403':
+ *           $ref: '#/components/responses/IpFilterDenied'
+ *   /coauthoring/CommandService.ashx:
+ *     post:
+ *       operationId: commandLegacy
+ *       tags: [Command]
+ *       summary: Run a document command (legacy path)
+ *       description: >-
+ *         Runs the command given by `c`. Parameters are read from the JSON body, or from the query string
+ *         if the body is not valid JSON. Errors are returned with HTTP 200 in `error`. Same as `POST /command`.
+ *       security:
+ *         - inboxJwt: []
+ *         - {}
+ *       parameters:
+ *         - $ref: '#/components/parameters/ShardKey'
+ *       requestBody:
+ *         required: true
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/CommandRequest'
+ *       responses:
+ *         '200':
+ *           $ref: '#/components/responses/CommandResult'
+ *         '403':
+ *           $ref: '#/components/responses/IpFilterDenied'
+ *     get:
+ *       operationId: commandLegacyGet
+ *       tags: [Command]
+ *       summary: Run a document command (legacy path, query string)
+ *       description: >-
+ *         Runs the command given by `c`. Parameters are read from the JSON body, or from the query string
+ *         if the body is not valid JSON. Errors are returned with HTTP 200 in `error`. Same as `POST /command` with the parameters in the query string.
+ *       security:
+ *         - inboxJwt: []
+ *         - {}
+ *       parameters:
+ *         - $ref: '#/components/parameters/ShardKey'
+ *         - name: params
+ *           in: query
+ *           style: form
+ *           explode: true
+ *           schema:
+ *             $ref: '#/components/schemas/CommandRequest'
+ *       responses:
+ *         '200':
+ *           $ref: '#/components/responses/CommandResult'
+ *         '403':
+ *           $ref: '#/components/responses/IpFilterDenied'
+ * components:
+ *   responses:
+ *     CommandResult:
+ *       description: Command result.
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CommandResponse'
+ *   schemas:
+ *     CommandRequest:
+ *       oneOf:
+ *         - $ref: '#/components/schemas/CommandInfo'
+ *         - $ref: '#/components/schemas/CommandDrop'
+ *         - $ref: '#/components/schemas/CommandSaved'
+ *         - $ref: '#/components/schemas/CommandForcesave'
+ *         - $ref: '#/components/schemas/CommandMeta'
+ *         - $ref: '#/components/schemas/CommandGetForgotten'
+ *         - $ref: '#/components/schemas/CommandDeleteForgotten'
+ *         - $ref: '#/components/schemas/CommandGetForgottenList'
+ *         - $ref: '#/components/schemas/CommandVersion'
+ *         - $ref: '#/components/schemas/CommandLicense'
+ *       discriminator:
+ *         propertyName: c
+ *         mapping:
+ *           info: '#/components/schemas/CommandInfo'
+ *           drop: '#/components/schemas/CommandDrop'
+ *           saved: '#/components/schemas/CommandSaved'
+ *           forcesave: '#/components/schemas/CommandForcesave'
+ *           meta: '#/components/schemas/CommandMeta'
+ *           getForgotten: '#/components/schemas/CommandGetForgotten'
+ *           deleteForgotten: '#/components/schemas/CommandDeleteForgotten'
+ *           getForgottenList: '#/components/schemas/CommandGetForgottenList'
+ *           version: '#/components/schemas/CommandVersion'
+ *           license: '#/components/schemas/CommandLicense'
+ *     CommandInfo:
+ *       type: object
+ *       description: Notifies the callback with the current document status (1 or 4) and returns the connected users. Fails with error 1 if the document was never opened.
+ *       required: [c, key]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: info
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *         callback:
+ *           type: string
+ *           format: uri
+ *           description: URL to notify instead of the stored callback. Subject to the IP filter.
+ *         userdata:
+ *           description: Passed to the callback as `userdata`.
+ *     CommandDrop:
+ *       type: object
+ *       description: Disconnects users from the document.
+ *       required: [c, key]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: drop
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *         users:
+ *           type: [array, string]
+ *           items:
+ *             type: string
+ *           description: User ids to disconnect, as an array or a JSON string. All users if omitted.
+ *     CommandSaved:
+ *       type: object
+ *       description: Reports the result of processing a save callback. A `status` other than `"1"` marks the save as failed.
+ *       required: [c, key]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: saved
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *         status:
+ *           type: string
+ *           description: The string `1` on success.
+ *         conv:
+ *           type: string
+ *           description: Logged only.
+ *     CommandForcesave:
+ *       type: object
+ *       description: Saves the document while editing continues; the result arrives as callback status 6. Returns error 4 if there are no changes since the last save.
+ *       required: [c, key]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: forcesave
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *         userdata:
+ *           description: Passed to the callback as `userdata`.
+ *     CommandMeta:
+ *       type: object
+ *       description: Sends new metadata to all connected editors.
+ *       required: [c, key]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: meta
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *         meta:
+ *           type: object
+ *           description: Forwarded to the editors as is, for example with a new `title`.
+ *     CommandGetForgotten:
+ *       type: object
+ *       description: Returns a temporary URL of the forgotten file of `key` (a document whose save callback was not accepted).
+ *       required: [c, key]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: getForgotten
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *     CommandDeleteForgotten:
+ *       type: object
+ *       description: Deletes the forgotten file of `key`.
+ *       required: [c, key]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: deleteForgotten
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *     CommandGetForgottenList:
+ *       type: object
+ *       description: Lists the keys that have a forgotten file. `key` is not needed.
+ *       required: [c]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: getForgottenList
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *     CommandVersion:
+ *       type: object
+ *       description: Returns the server version. `key` is not needed.
+ *       required: [c]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: version
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *     CommandLicense:
+ *       type: object
+ *       description: Returns license and usage information. `key` is not needed.
+ *       required: [c]
+ *       properties:
+ *         c:
+ *           type: string
+ *           const: license
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *     CommandResponse:
+ *       type: object
+ *       required: [error]
+ *       properties:
+ *         key:
+ *           type: string
+ *           description: The `key` of the request.
+ *         error:
+ *           $ref: '#/components/schemas/CommandErrorCode'
+ *         users:
+ *           type: array
+ *           items:
+ *             type: string
+ *           description: For `info`, ids of the connected users.
+ *         version:
+ *           type: string
+ *           description: For `version`, server version as `<version>.<build>`.
+ *         url:
+ *           type: string
+ *           format: uri
+ *           description: For `getForgotten`, temporary URL of the forgotten file.
+ *         keys:
+ *           type: array
+ *           items:
+ *             type: string
+ *           description: For `getForgottenList`, keys with a forgotten file.
+ *         license:
+ *           type: object
+ *           description: For `license`, license file parameters.
+ *         server:
+ *           type: object
+ *           description: For `license`, server license state.
+ *         quota:
+ *           type: object
+ *           description: For `license`, unique users in the current license period.
+ *           properties:
+ *             users:
+ *               type: object
+ *             users_view:
+ *               type: object
+ */
 // Command from the server (specifically teamlab)
 exports.commandFromServer = function (req, res) {
   return co(function* () {
