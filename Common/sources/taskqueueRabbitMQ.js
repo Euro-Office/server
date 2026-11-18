@@ -113,7 +113,7 @@ function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
         );
       }
       if (isAddResponseReceive) {
-        taskqueue.channelConvertResponseReceive = yield rabbitMQCore.createChannelPromise(conn);
+        taskqueue.channelConvertResponseReceive = markClosedOnClose(yield rabbitMQCore.createChannelPromise(conn));
         if (!bAssertResponseQueue) {
           const filteredResponseOptions = rabbitMQCore.filterQueueOptions(
             {...cfgRabbitQueueConvertResponse.options},
@@ -126,9 +126,21 @@ function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
           cfgRabbitQueueConvertResponse.name,
           message => {
             if (message) {
-              taskqueue.emit('response', message.content.toString(), () => {
-                taskqueue.channelConvertResponseReceive && taskqueue.channelConvertResponseReceive.ack(message);
-              });
+              // Settle only on the channel that delivered the message.  A final save
+              // can take long enough for a reconnect: the broker has then requeued
+              // the message, and an unknown delivery tag would close the new channel.
+              const channel = taskqueue.channelConvertResponseReceive;
+              const isLive = () => null != channel && !channel.isClosed && channel === taskqueue.channelConvertResponseReceive;
+              taskqueue.emit(
+                'response',
+                message.content.toString(),
+                () => {
+                  if (isLive()) {
+                    channel.ack(message);
+                  }
+                },
+                isLive
+              );
             }
           },
           optionsReceive
@@ -146,7 +158,7 @@ function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
         yield rabbitMQCore.assertQueuePromise(taskqueue.channelDelayed, cfgRabbitQueueDelayed.name, optionsDelayedQueue);
       }
       if (isEmitDead) {
-        taskqueue.channelConvertDead = yield rabbitMQCore.createChannelPromise(conn);
+        taskqueue.channelConvertDead = markClosedOnClose(yield rabbitMQCore.createChannelPromise(conn));
         yield rabbitMQCore.assertExchangePromise(
           taskqueue.channelConvertDead,
           cfgRabbitExchangeConvertDead.name,
@@ -163,9 +175,25 @@ function initRabbit(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
           message => {
             if (null != taskqueue.channelConvertDead) {
               if (message) {
-                taskqueue.emit('dead', message.content.toString(), () => {
-                  taskqueue.channelConvertDead.ack(message);
-                });
+                // Settle only on the channel that delivered the message (see the
+                // response consumer).
+                const channel = taskqueue.channelConvertDead;
+                const isLive = () => null != channel && !channel.isClosed && channel === taskqueue.channelConvertDead;
+                taskqueue.emit(
+                  'dead',
+                  message.content.toString(),
+                  () => {
+                    if (isLive()) {
+                      channel.ack(message);
+                    }
+                  },
+                  () => {
+                    if (isLive()) {
+                      channel.nack(message, false, true);
+                    }
+                  },
+                  isLive
+                );
               }
             }
           },
@@ -257,12 +285,31 @@ function initActive(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
         const receiver = yield activeMQCore.openReceiverPromise(conn, optionsConvertResponse);
         //todo ?consumer.dispatchAsync=false&consumer.prefetchSize=1
         receiver.add_credit(1);
+        // Up to ACTIVE_RESPONSE_WINDOW responses are processed at once, so that a
+        // final save holding its delivery for its retry window (receiveTask) does
+        // not stop the others, while a backlog after an outage is not taken all
+        // at once.
+        let unsettled = 0;
         receiver.on('message', context => {
           if (context) {
-            taskqueue.emit('response', context.message.body, () => {
-              context.delivery.accept();
+            if (++unsettled < ACTIVE_RESPONSE_WINDOW) {
               receiver.add_credit(1);
-            });
+            }
+            const isLive = () => receiver === taskqueue.channelConvertResponseReceive;
+            taskqueue.emit(
+              'response',
+              context.message.body,
+              () => {
+                // Settle and restore credit only on the live delivering link.
+                if (isLive()) {
+                  if (unsettled-- >= ACTIVE_RESPONSE_WINDOW) {
+                    receiver.add_credit(1);
+                  }
+                  context.delivery.accept();
+                }
+              },
+              isLive
+            );
           }
         });
         taskqueue.channelConvertResponseReceive = receiver;
@@ -291,10 +338,24 @@ function initActive(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
         receiver.add_credit(1);
         receiver.on('message', context => {
           if (context) {
-            taskqueue.emit('dead', context.message.body, () => {
-              context.delivery.accept();
-              receiver.add_credit(1);
-            });
+            const isLive = () => receiver === taskqueue.channelConvertDead;
+            taskqueue.emit(
+              'dead',
+              context.message.body,
+              () => {
+                if (isLive()) {
+                  context.delivery.accept();
+                  receiver.add_credit(1);
+                }
+              },
+              () => {
+                if (isLive()) {
+                  context.delivery.release();
+                  receiver.add_credit(1);
+                }
+              },
+              isLive
+            );
           }
         });
         taskqueue.channelConvertDead = receiver;
@@ -310,6 +371,15 @@ function initActive(taskqueue, isAddTask, isAddResponse, isAddTaskReceive, isAdd
     }
   });
 }
+// A consumer channel can close on its own (consumer timeout, a channel
+// error) while the connection stays up; the broker then requeues its unacked
+// deliveries.  Mark it, so that their handlers know.
+function markClosedOnClose(channel) {
+  channel.on('close', () => {
+    channel.isClosed = true;
+  });
+  return channel;
+}
 function clear(taskqueue) {
   taskqueue.channelConvertTask = null;
   taskqueue.channelConvertTaskReceive = null;
@@ -318,6 +388,15 @@ function clear(taskqueue) {
   taskqueue.channelConvertResponseReceive = null;
   taskqueue.channelDelayed = null;
   //todo clear all listeners
+  // Fail the publishes still waiting for the broker (ActiveMQ): they will never
+  // be settled on the lost link, and their callers must not wait forever.
+  for (const pending of [taskqueue.channelConvertTaskData, taskqueue.channelConvertResponseData, taskqueue.channelDelayedData]) {
+    for (const id in pending || {}) {
+      const callback = pending[id];
+      delete pending[id];
+      callback(new Error('[AMQP] connection lost before the message was settled'));
+    }
+  }
   taskqueue.channelConvertTaskData = {};
   taskqueue.channelConvertResponseData = {};
   taskqueue.channelDelayedData = {};
@@ -431,6 +510,8 @@ function addResponseActive(taskqueue, content, callback) {
   const delivery = taskqueue.channelConvertResponse.send(msg);
   if (delivery) {
     taskqueue.channelConvertResponseData[delivery.id] = callback;
+  } else {
+    callback(new Error('[AMQP] message was not sent'));
   }
 }
 function closeRabbit(conn) {
@@ -448,6 +529,8 @@ function addDelayedActive(taskqueue, content, ttl, callback) {
   const delivery = taskqueue.channelDelayed.send(msg);
   if (delivery) {
     taskqueue.channelDelayedData[delivery.id] = callback;
+  } else {
+    callback(new Error('[AMQP] message was not sent'));
   }
 }
 
@@ -478,6 +561,8 @@ function healthCheckActive(taskqueue) {
   return Promise.resolve(taskqueue.connection.is_open());
 }
 
+// Responses an ActiveMQ consumer processes at once.
+const ACTIVE_RESPONSE_WINDOW = 16;
 function initSenderActive(sender, senderData) {
   const processEvent = function (context, res) {
     const id = context?.delivery?.id;
@@ -491,7 +576,7 @@ function initSenderActive(sender, senderData) {
   sender.on('accepted', context => {
     processEvent(context, null);
   });
-  sender.on('rejected ', context => {
+  sender.on('rejected', context => {
     const error = context.delivery?.remote_state?.error;
     processEvent(context, new Error('[AMQP] message is rejected (error=' + error + ')'));
   });
@@ -501,7 +586,7 @@ function initSenderActive(sender, senderData) {
     const err = new Error('[AMQP] message is released (delivery_failed=' + delivery_failed + ', undeliverable_here=' + undeliverable_here + ')');
     processEvent(context, err);
   });
-  sender.on('modified ', context => {
+  sender.on('modified', context => {
     const delivery_failed = context.delivery?.remote_state?.delivery_failed;
     const undeliverable_here = context.delivery?.remote_state?.undeliverable_here;
     const err = new Error('[AMQP] message is modified (delivery_failed=' + delivery_failed + ', undeliverable_here=' + undeliverable_here + ')');
@@ -567,7 +652,7 @@ TaskQueueRabbitMQ.prototype.addTask = function (task, priority, opt_expiration, 
   task.setVisibilityTimeout(cfgVisibilityTimeout);
   return addTaskString(this, JSON.stringify(task), priority, opt_expiration);
 };
-TaskQueueRabbitMQ.prototype.addResponse = function (task) {
+TaskQueueRabbitMQ.prototype.addResponse = function (task, opt_requireConfirm) {
   const t = this;
   return new Promise((resolve, reject) => {
     const content = Buffer.from(JSON.stringify(task));
@@ -579,15 +664,17 @@ TaskQueueRabbitMQ.prototype.addResponse = function (task) {
           resolve();
         }
       });
+    } else if (opt_requireConfirm) {
+      reject(new Error('Response channel is unavailable; response was not persisted'));
     } else {
       resolve();
     }
   });
 };
-TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl) {
+TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl, opt_requireConfirm) {
   const t = this;
   return new Promise((resolve, reject) => {
-    const content = new Buffer(JSON.stringify(task));
+    const content = Buffer.from(JSON.stringify(task));
     if (null != t.channelDelayed) {
       addDelayed(t, content, ttl, (err, _ok) => {
         if (null != err) {
@@ -596,6 +683,8 @@ TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl) {
           resolve();
         }
       });
+    } else if (opt_requireConfirm) {
+      reject(new Error('Delayed-task channel is unavailable; retry was not persisted'));
     } else {
       t.addDelayedStore.push({task: content, ttl});
       resolve();

@@ -96,6 +96,34 @@ function closePool() {
   pool.end();
 }
 
+async function withTaskResultLock(ctx, docId, condition, action) {
+  const client = await pool.connect();
+  let discard;
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query(`SELECT 1 FROM ${cfgTableResult} WHERE tenant=$1 AND id=$2 FOR UPDATE`, [ctx.tenant, docId]);
+    let owned = false;
+    if (locked.rowCount > 0) {
+      const result = await client.query(`SELECT * FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values);
+      owned = result.rowCount > 0;
+      if (owned) {
+        await action(result.rows[0]);
+      }
+    }
+    await client.query('COMMIT');
+    return owned;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      discard = rollbackError;
+    }
+    throw error;
+  } finally {
+    client.release(discard);
+  }
+}
+
 function addSqlParameter(val, values) {
   values.push(val);
   return '$' + values.length;
@@ -250,11 +278,19 @@ function insertChanges(ctx, tableChanges, startIndex, objChanges, docId, index, 
   );
 }
 
+// See baseConnector getOwnershipCheckFallback: a READ COMMITTED snapshot does
+// not see a concurrent UPDATE of the row, FOR SHARE waits for it and rechecks.
+function getOwnershipCheck(table, where) {
+  return `SELECT 1 FROM ${table} WHERE ${where} FOR SHARE`;
+}
+
 module.exports = {
   sqlQuery,
   closePool,
   addSqlParameter,
   concatParams,
   upsert,
-  insertChanges
+  insertChanges,
+  getOwnershipCheck,
+  withTaskResultLock
 };

@@ -7,6 +7,10 @@ on:
       - 'tests/integration/databaseTests/**'
       - 'DocService/sources/databaseConnectors/baseConnector.js'
       - 'DocService/sources/databaseConnectors/oracleConnector.js'
+      - 'DocService/sources/canvasservice.js'
+      - 'DocService/sources/DocsCoServer.js'
+      - 'DocService/sources/taskresult.js'
+      - 'DocService/sources/wopiClient.js'
       - '**/package.json'
       - '**/npm-shrinkwrap.json'
       - '.github/workflows/oracleDatabaseTests.yml'
@@ -49,6 +53,14 @@ jobs:
         run: |
           docker cp ./schema/oracle/createdb.sql oracle:/
           docker exec oracle sqlplus -s onlyoffice/onlyoffice@//localhost/onlyoffice "@/createdb.sql"
+
+      - name: Allow concurrency tests to observe database lock waits
+        run: |
+          docker exec -i oracle sqlplus -s "sys/admin@//localhost/onlyoffice as sysdba" <<'SQL'
+          WHENEVER SQLERROR EXIT FAILURE
+          GRANT SELECT ON sys.v_$session TO onlyoffice;
+          EXIT;
+          SQL
 
       - name: Run Jest
         run: npm run "integration database tests"
