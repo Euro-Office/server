@@ -30,6 +30,7 @@ jobs:
             ./Common/npm-shrinkwrap.json
             ./DocService/npm-shrinkwrap.json
             ./FileConverter/npm-shrinkwrap.json
+            ./AdminPanel/server/package-lock.json
 
       - name: Install modules
         run: |
@@ -37,6 +38,7 @@ jobs:
           npm --prefix Common ci
           npm --prefix DocService ci
           npm --prefix FileConverter ci
+          npm --prefix AdminPanel/server ci
 
       - name: Run unit and RabbitMQ integration tests
         run: npm test
