@@ -15,8 +15,9 @@ ${REDIS_TIME_MILLIS}
 -- terminal cleanup, an unowned saved claim is recovered as abandoned. The
 -- operation that owns a claim passes its id in ARGV[2], so its claim remains
 -- available for acknowledgement after cleanup. Claim-less viewer cleanup sets
--- ARGV[3] so an active callback claim remains leased while the other state is
--- removed; its lease handles abandoned-claim recovery.
+-- ARGV[3] so the in-flight final save's state -- the unclaimed saved status, the
+-- saved claim and the force-save entry -- is kept while the other state is
+-- removed; the claim lease handles abandoned-claim recovery.
 local now = redisTimeMillis()
 local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now)
 if #expired > 0 then
@@ -44,11 +45,16 @@ if claimOwner and ARGV[2] ~= '' and claimOwner ~= ARGV[2] then
   -- stale worker must not clean up the document or the newer claim.
   return {2, version}
 end
-if claimOwner and ARGV[2] == '' and ARGV[3] == '1' then
-  -- This is claim-less final-viewer cleanup. Presence is gone, but a callback
-  -- may still be using the claim, so remove the document state while leaving
-  -- the claim leased for acknowledgement or abandoned-claim recovery.
-  redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7], KEYS[8], KEYS[10])
+if ARGV[2] == '' and ARGV[3] == '1' then
+  -- Final-viewer cleanup that may run while a final save for the last editor
+  -- is still in flight. Remove only the presence, lock and message state and
+  -- keep the unclaimed saved status (KEYS[8]), the saved claim (KEYS[9]) and
+  -- the force-save entry (KEYS[10]) so the in-flight save can still consume
+  -- them. This holds even when no claim exists yet: a corrupted save writes the
+  -- saved status before any claim, and deleting it here would make getdelSaved
+  -- return null, so the corrupted save would be reported as a success and its
+  -- changes deleted (mirrors editorDataMemory's preserveSavedClaim).
+  redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7])
   return {3, version}
 end
 if claimOwner and ARGV[2] ~= '' and claimOwner == ARGV[2] then

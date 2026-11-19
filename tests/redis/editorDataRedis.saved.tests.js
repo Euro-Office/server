@@ -339,3 +339,50 @@ describe('editorDataRedis saved-state claims', () => {
     assert.equal(await stores[0]._command(['HGET', malformedKey, 'value']), '1');
   });
 });
+
+describe('editorDataRedis final-viewer cleanup preserves in-flight save state', () => {
+  let store;
+
+  beforeEach(() => {
+    store = new EditorData();
+  });
+
+  afterEach(async () => {
+    await store.close();
+  });
+
+  test('keeps an unclaimed corrupted saved status (no silent data loss)', async () => {
+    // A final save for the last editor can still be in flight when the last
+    // viewer leaves (viewers do not block the save). The save has not claimed
+    // the saved status yet, so final-viewer cleanup must preserve it; otherwise
+    // getdelSaved returns null, consumeSavedState reports the corrupted save as
+    // a success and the save deletes its changes.
+    const ctx = context('final-viewer-keeps-saved');
+    await store.setSaved(ctx, 'document', '2');
+    assert.equal(await store.cleanDocumentOnExit(ctx, 'document', undefined, {preserveSavedClaim: true}), true);
+    assert.equal(await store.getdelSaved(ctx, 'document', 'save-key'), '2');
+  });
+
+  test('keeps an in-flight force-save entry', async () => {
+    const ctx = context('final-viewer-keeps-forcesave');
+    await store.setForceSave(ctx, 'document', 1, 2, 'https://callback.example.test/save', undefined, undefined);
+    assert.equal(await store.cleanDocumentOnExit(ctx, 'document', undefined, {preserveSavedClaim: true}), true);
+    const forceSave = await store.getForceSave(ctx, 'document');
+    assert.equal(forceSave.time, 1);
+    assert.equal(forceSave.index, 2);
+    assert.equal(forceSave.started, false);
+    assert.equal(forceSave.ended, false);
+  });
+
+  test.each([
+    ['owner', 'save-key'],
+    ['claim-less', undefined]
+  ])('%s cleanup without preserveSavedClaim still wipes the saved status and force-save', async (_name, savedClaimId) => {
+    const ctx = context(`final-viewer-wipes-${_name}`);
+    await store.setSaved(ctx, 'document', '2');
+    await store.setForceSave(ctx, 'document', 1, 2, 'https://callback.example.test/save', undefined, undefined);
+    assert.equal(await store.cleanDocumentOnExit(ctx, 'document', savedClaimId), true);
+    assert.equal(await store.getdelSaved(ctx, 'document', 'save-key'), null);
+    assert.equal(await store.getForceSave(ctx, 'document'), null);
+  });
+});
