@@ -102,7 +102,7 @@ const checkFileExpire = function (expireSeconds) {
               ctx.logger.debug('checkFileExpire expire but presence: editorsCount = %d', editorsCount);
             }
           } catch (error) {
-            ctx.logger.error('checkFileExpire file error: %s', error.stack);
+            ctx.logger.error('checkFileExpire file error:', error);
             // Continue processing other files
           }
         }
@@ -111,7 +111,7 @@ const checkFileExpire = function (expireSeconds) {
       ctx.initDefault();
       ctx.logger.info('checkFileExpire end: removedCount = %d', removedCount);
     } catch (e) {
-      ctx.logger.error('checkFileExpire error: %s', e.stack);
+      ctx.logger.error('checkFileExpire error:', e);
     } finally {
       setTimeout(checkFileExpire, currentExpFilesStep);
     }
@@ -165,14 +165,14 @@ const checkDocumentExpire = function () {
       ctx.initDefault();
       ctx.logger.info('checkDocumentExpire end: startSaveCount = %d, removedCount = %d', startSaveCount, removedCount);
     } catch (e) {
-      ctx.logger.error('checkDocumentExpire error: %s', e.stack);
+      ctx.logger.error('checkDocumentExpire error:', e);
     } finally {
       try {
         if (queue) {
           yield queue.close();
         }
       } catch (e) {
-        ctx.logger.error('checkDocumentExpire error: %s', e.stack);
+        ctx.logger.error('checkDocumentExpire error:', e);
       }
 
       setTimeout(checkDocumentExpire, currentExpDocumentsStep);
@@ -243,7 +243,7 @@ const forceSaveTimeout = function () {
       ctx.initDefault();
       ctx.logger.info('forceSaveTimeout end');
     } catch (e) {
-      ctx.logger.error('forceSaveTimeout error: %s', e.stack);
+      ctx.logger.error('forceSaveTimeout error:', e);
     } finally {
       try {
         if (queue) {
@@ -253,7 +253,7 @@ const forceSaveTimeout = function () {
           yield pubsub.close();
         }
       } catch (e) {
-        ctx.logger.error('forceSaveTimeout cleanup error: %s', e.stack);
+        ctx.logger.error('forceSaveTimeout cleanup error:', e);
       }
       setTimeout(forceSaveTimeout, ms(currentForceSaveStep));
     }

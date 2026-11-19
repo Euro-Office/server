@@ -84,7 +84,7 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
     return output ?? {rows: [], affectedRows: 0};
   } catch (error) {
     if (!noLog) {
-      ctx.logger.error(`sqlQuery() error while executing query: ${sqlCommand}\n${error.stack}`);
+      ctx.logger.error('sqlQuery() error while executing query: %s', sqlCommand, error);
     }
 
     throw error;
@@ -95,7 +95,7 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
         connection.release();
       } catch (error) {
         if (!noLog) {
-          ctx.logger.error(`connection.release() error while executing query: ${sqlCommand}\n${error.stack}`);
+          ctx.logger.error('connection.release() error while executing query: %s', sqlCommand, error);
         }
       }
     }
@@ -104,6 +104,38 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
 
 async function closePool() {
   return await pool.end();
+}
+
+async function withTaskResultLock(ctx, docId, condition, action) {
+  const connection = await pool.getConnection();
+  let discard = false;
+  try {
+    await connection.beginTransaction();
+    const [locked] = await connection.query(`SELECT 1 FROM ${cfgTableResult} WHERE tenant=? AND id=? FOR UPDATE`, [ctx.tenant, docId]);
+    let owned = false;
+    if (locked.length > 0) {
+      const [result] = await connection.query(`SELECT * FROM ${cfgTableResult} WHERE ${condition.sql} FOR UPDATE`, condition.values);
+      owned = result.length > 0;
+      if (owned) {
+        await action(result[0]);
+      }
+    }
+    await connection.commit();
+    return owned;
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (_rollbackError) {
+      discard = true;
+    }
+    throw error;
+  } finally {
+    if (discard) {
+      connection.destroy();
+    } else {
+      connection.release();
+    }
+  }
 }
 
 function addSqlParameter(parameter, accumulatedArray) {
@@ -171,3 +203,5 @@ module.exports.closePool = closePool;
 module.exports.addSqlParameter = addSqlParameter;
 module.exports.concatParams = concatParams;
 module.exports.upsert = upsert;
+module.exports.withTaskResultLock = withTaskResultLock;
+module.exports.getAdditionalCondition = parameter => `CAST(additional AS BINARY)=CAST(${parameter} AS BINARY)`;

@@ -16,6 +16,7 @@ jest.mock('../../Common/node_modules/@sentry/node', () => ({
 
 const Sentry = require('../../Common/node_modules/@sentry/node');
 const levels = require('../../Common/node_modules/log4js/lib/levels');
+const logger = require('../../Common/sources/logger');
 const reporters = require('../../Common/sources/reporters');
 const reporter = require('../../Common/sources/reporters/sentry');
 
@@ -37,11 +38,14 @@ describe('sentry reporter', () => {
     delete process.env.SENTRY_DSN;
   });
 
-  test('init uses release default and drops the SDK crash handlers', () => {
+  test('init uses release default and drops the SDK crash handlers and console breadcrumbs', () => {
     expect(options.sendDefaultPii).toBe(false);
+    expect(options.maxBreadcrumbs).toBe(0);
     expect(options.initialScope).toEqual({tags: {service: 'docservice'}});
     expect(options.release).toMatch(/^documentserver@/);
-    const names = options.integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}]).map(i => i.name);
+    const names = options
+      .integrations([{name: 'Http'}, {name: 'OnUncaughtException'}, {name: 'OnUnhandledRejection'}, {name: 'Console'}])
+      .map(i => i.name);
     expect(names).toEqual(['Http']);
     expect(reporters.appenders()).toEqual({sentry: {type: reporter}});
   });
@@ -74,6 +78,16 @@ describe('sentry reporter', () => {
     expect(Sentry.captureMessage.mock.calls[2][1].user).toBeUndefined();
   });
 
+  test('maps the REPORT context to tags and extends the template fingerprint', () => {
+    const REPORT = {tags: {'converter.binary': 'x2t', 'converter.exitCode': 139, 'converter.signal': null}, fingerprint: ['binary:x2t']};
+    appender({...logEvent('ERROR', 'ExitCode (code=%s)', 139), context: {REPORT}});
+    const [, context] = Sentry.captureMessage.mock.calls[0];
+    expect(context.tags).toEqual({logger: 'nodeJS', 'converter.binary': 'x2t', 'converter.exitCode': '139'});
+    expect(context.fingerprint).toEqual(['ExitCode (code=%s)', 'binary:x2t']);
+    appender({...logEvent('ERROR', new Error('boom')), context: {REPORT}});
+    expect(Sentry.captureException.mock.calls[0][1].fingerprint).toBeUndefined();
+  });
+
   test('ignores events below error', () => {
     appender(logEvent('WARN', 'warning %s', 'x'));
     expect(Sentry.captureMessage).not.toHaveBeenCalled();
@@ -100,6 +114,16 @@ describe('sentry reporter', () => {
       err,
       expect.objectContaining({level: 'fatal', fingerprint: ['convert failed', '{{ default }}']})
     );
+  });
+
+  test('logger passes Errors on with only name, message, stack and code', () => {
+    logger.configureLogger({});
+    const err = Object.assign(new TypeError('Request failed'), {code: 'ECONNREFUSED', config: {headers: {Authorization: 'secret'}}});
+    logger.getLogger('nodeJS').error('download error:', err);
+    const [captured, {extra}] = Sentry.captureException.mock.calls[0];
+    expect(captured).toMatchObject({name: 'TypeError', message: 'Request failed', stack: err.stack, code: 'ECONNREFUSED'});
+    expect(captured.config).toBeUndefined();
+    expect(extra.message).not.toContain('secret');
   });
 
   test('uses default grouping when the first argument is an Error', () => {

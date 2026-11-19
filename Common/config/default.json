@@ -280,6 +280,7 @@
     "modulusOld": "",
     "exponentOld": 65537,
     "privateKeyOld": "",
+    "sendAuthorizationHeader": false,
     "refreshLockInterval": "10m",
     "dummy": {
       "enable": false,
@@ -524,6 +525,7 @@
       },
       "callbackBackoffOptions": {
         "retries": 3,
+        "infraRetries": 60,
         "timeout": {
           "factor": 2,
           "minTimeout": 1000,
@@ -550,6 +552,7 @@
       "downloadAttemptMaxCount": 3,
       "downloadAttemptDelay": 1000,
       "maxprocesscount": 1,
+      "workercount": null,
       "fontDir": "null",
       "presentationThemesDir": "null",
       "x2tPath": "null",

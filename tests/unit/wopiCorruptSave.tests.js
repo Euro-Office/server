@@ -22,7 +22,10 @@ const taskResult = {
   TaskResultData: class {},
   select: jest.fn(),
   updateIf: jest.fn(),
-  removeIf: jest.fn()
+  removeIf: jest.fn(),
+  claimIf: jest.fn(),
+  deleteChangesIf: jest.fn(),
+  withCleanupOwnership: jest.fn()
 };
 const storage = {
   listObjects: jest.fn(),
@@ -41,14 +44,21 @@ const wopiClient = {
 };
 const docsCoServer = {
   c_oAscServerStatus: {MustSave: 2, Corrupted: 3, MustSaveForce: 6, CorruptedForce: 7},
-  editorData: {getForceSave: jest.fn(), getdelSaved: jest.fn(), cleanDocumentOnExit: jest.fn()},
+  editorData: {
+    getForceSave: jest.fn(),
+    getdelSaved: jest.fn(),
+    getSavedCallbackAccepted: jest.fn(),
+    setSavedCallbackAccepted: jest.fn(),
+    clearSavedCallbackAccepted: jest.fn(),
+    ackSaved: jest.fn()
+  },
   getEditorsCountPromise: jest.fn(),
   getCallback: jest.fn(),
   sendServerRequest: jest.fn(),
   parseReplyData: jest.fn(),
   setForceSave: jest.fn(),
   cleanDocumentOnExitPromise: jest.fn(),
-  unlockWopiDoc: jest.fn(),
+  addDelayed: jest.fn(),
   publish: jest.fn(),
   getIsShutdown: jest.fn(),
   getIsPreStop: jest.fn(),
@@ -82,6 +92,12 @@ beforeEach(() => {
     return {affectedRows: 1};
   });
   taskResult.removeIf.mockResolvedValue({affectedRows: 1});
+  taskResult.claimIf.mockResolvedValue({affectedRows: 1});
+  taskResult.deleteChangesIf.mockResolvedValue({affectedRows: 1});
+  taskResult.withCleanupOwnership.mockImplementation(async (_ctx, _mask, action) => {
+    await action();
+    return true;
+  });
   storage.listObjects.mockResolvedValue([]);
   storage.getObject.mockResolvedValue(Buffer.from('{"changes":[]}'));
   storage.getSignedUrl.mockImplementation(async (_ctx, _base, path) => `https://download.test/${path}`);
@@ -98,12 +114,15 @@ beforeEach(() => {
   docsCoServer.getCallback.mockResolvedValue({wopiParams});
   docsCoServer.editorData.getForceSave.mockResolvedValue(undefined);
   docsCoServer.editorData.getdelSaved.mockResolvedValue(undefined);
-  docsCoServer.editorData.cleanDocumentOnExit.mockResolvedValue(undefined);
+  docsCoServer.editorData.getSavedCallbackAccepted.mockResolvedValue(undefined);
+  docsCoServer.editorData.setSavedCallbackAccepted.mockResolvedValue(undefined);
+  docsCoServer.editorData.clearSavedCallbackAccepted.mockResolvedValue(undefined);
+  docsCoServer.editorData.ackSaved.mockResolvedValue(undefined);
   docsCoServer.sendServerRequest.mockResolvedValue('{"error":0}');
   docsCoServer.parseReplyData.mockImplementation((_ctx, reply) => (reply ? JSON.parse(reply) : undefined));
   docsCoServer.setForceSave.mockImplementation(function* () {});
-  docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(undefined);
-  docsCoServer.unlockWopiDoc.mockResolvedValue(undefined);
+  docsCoServer.cleanDocumentOnExitPromise.mockResolvedValue(true);
+  docsCoServer.addDelayed.mockImplementation(function* () {});
   docsCoServer.publish.mockResolvedValue(undefined);
   docsCoServer.getIsShutdown.mockReturnValue(false);
   docsCoServer.getIsPreStop.mockReturnValue(false);
@@ -151,7 +170,7 @@ describe('WOPI converter-error save callbacks', () => {
     if (force) {
       expect(docsCoServer.setForceSave).toHaveBeenCalledWith(ctx, docId, cmd.getForceSave(), cmd, true, expect.any(String));
     } else {
-      expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, docId, true, undefined);
+      expect(docsCoServer.cleanDocumentOnExitPromise.mock.calls[0].slice(0, 3)).toEqual([ctx, docId, true]);
     }
   });
 
@@ -170,9 +189,9 @@ describe('WOPI converter-error save callbacks', () => {
       // The partial output is kept under its own name, so open and close do not treat it as the document.
       expect(storage.copyObject).toHaveBeenCalledTimes(1);
       expect(storage.copyObject).toHaveBeenCalledWith(ctx, outputPath, forgottenPartialFile, undefined, forgottenDir);
-      expect(docsCoServer.cleanDocumentOnExitPromise).not.toHaveBeenCalled();
-      expect(docsCoServer.editorData.cleanDocumentOnExit).toHaveBeenCalledWith(ctx, docId);
-      expect(docsCoServer.unlockWopiDoc).toHaveBeenCalledWith(ctx, docId, undefined);
+      // The cleanup keeps the changes and the forgotten files (deleteChanges is false).
+      expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledTimes(1);
+      expect(docsCoServer.cleanDocumentOnExitPromise.mock.calls[0].slice(0, 3)).toEqual([ctx, docId, false]);
     }
   });
 
@@ -248,7 +267,7 @@ describe('forgotten files after a final save that did not reach the host', () =>
     await commandSfcCallback(ctx, cmd, false);
 
     expect(storage.copyObject).not.toHaveBeenCalled();
-    expect(docsCoServer.cleanDocumentOnExitPromise).toHaveBeenCalledWith(ctx, docId, true, undefined);
+    expect(docsCoServer.cleanDocumentOnExitPromise.mock.calls[0].slice(0, 3)).toEqual([ctx, docId, true]);
   });
 });
 

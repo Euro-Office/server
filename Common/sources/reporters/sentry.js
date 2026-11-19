@@ -30,9 +30,12 @@ function init(service) {
     dsn: process.env.SENTRY_DSN,
     release: process.env.SENTRY_RELEASE || `documentserver@${buildVersion}`,
     sendDefaultPii: false,
+    // The breadcrumb buffer is shared by all tasks and tenants of a process, e.g. download and storage URLs of other documents
+    maxBreadcrumbs: 0,
     initialScope: {tags: {service}},
-    // Crashes are reported through the existing uncaughtException handlers, which log the error and flush via logger.shutdown
-    integrations: defaults => defaults.filter(i => i.name !== 'OnUncaughtException' && i.name !== 'OnUnhandledRejection'),
+    // Crashes are reported through the existing uncaughtException handlers, which log the error and flush via logger.shutdown.
+    // Console would turn every console log line (document text, other tenants) into breadcrumbs
+    integrations: defaults => defaults.filter(i => !['OnUncaughtException', 'OnUnhandledRejection', 'Console'].includes(i.name)),
     beforeSend: scrub
   });
 }
@@ -52,6 +55,7 @@ function scrub(event) {
 
 /**
  * log4js appender module: reports events of level ERROR and above.
+ * Call sites can set a `REPORT` log context ({tags, fingerprint}): tags are added as is, the fingerprint extends the template grouping.
  */
 function configure(config, layouts, findAppender, levels) {
   const appender = logEvent => {
@@ -62,7 +66,7 @@ function configure(config, layouts, findAppender, levels) {
     const error = logEvent.data.find(arg => arg instanceof Error);
     const stack = logEvent.data.find(arg => typeof arg === 'string' && /\n\s+at /.test(arg));
     const message = util.format(...logEvent.data);
-    const {TENANT, DOCID, USERID, REFERENCEDATA, FILENAME} = logEvent.context || {};
+    const {TENANT, DOCID, USERID, REFERENCEDATA, FILENAME, REPORT} = logEvent.context || {};
     const context = {
       level: logEvent.level.isGreaterThanOrEqualTo(levels.FATAL) ? 'fatal' : 'error',
       tags: {logger: logEvent.categoryName},
@@ -87,6 +91,16 @@ function configure(config, layouts, findAppender, levels) {
     }
     if (typeof template === 'string') {
       context.fingerprint = error ? [template, '{{ default }}'] : stack ? [template, stack.split('\n')[0]] : [template];
+    }
+    if (REPORT) {
+      for (const [key, value] of Object.entries(REPORT.tags || {})) {
+        if (value !== null && value !== undefined && value !== '') {
+          context.tags[key] = String(value);
+        }
+      }
+      if (context.fingerprint && REPORT.fingerprint) {
+        context.fingerprint.push(...REPORT.fingerprint);
+      }
     }
     if (error) {
       Sentry.captureException(error, context);

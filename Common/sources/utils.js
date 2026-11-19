@@ -1030,7 +1030,7 @@ function* checkHostFilter(ctx, hostname) {
   } catch (e) {
     const tenIpFilterErrorCode = ctx.getCfg('services.CoAuthoring.ipfilter.errorcode', cfgIpFilterErrorCode);
     status = tenIpFilterErrorCode;
-    ctx.logger.error('dnsLookup error: hostname = %s %s', hostname, e.stack);
+    ctx.logger.error('dnsLookup error: hostname = %s', hostname, e);
   }
   if (0 === status) {
     status = checkIpFilter(ctx, hostIp, hostname);
