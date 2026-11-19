@@ -1216,12 +1216,19 @@ function* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, g
 function* ExecuteTask(ctx, task) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
-  let startDate = null;
-  let curDate = null;
-  if (clientStatsD) {
-    startDate = curDate = new Date();
-  }
   const getTaskTime = new Date();
+  const timings = {};
+  let stepStart = getTaskTime.getTime();
+  const endStep = (step, statsdName) => {
+    const now = Date.now();
+    timings[step] = (timings[step] ?? 0) + now - stepStart;
+    clientStatsD?.timing(statsdName, now - stepStart);
+    stepStart = now;
+  };
+  const queuedAt = task.getQueuedAt();
+  if (queuedAt) {
+    timings.queueWait = Math.max(0, getTaskTime.getTime() - queuedAt);
+  }
   const cmd = task.getCmd();
   const dataConvert = new TaskQueueDataConvert(ctx, task);
   ctx.logger.info('Start Task');
@@ -1257,20 +1264,14 @@ function* ExecuteTask(ctx, task) {
       if (constants.NO_ERROR === error) {
         replaceEmptyFile(ctx, dataConvert.fileFrom, format, cmd.getLCID());
       }
-      if (clientStatsD) {
-        clientStatsD.timing('conv.downloadFile', new Date() - curDate);
-        curDate = new Date();
-      }
+      endStep('download', 'conv.downloadFile');
     } else {
       error = constants.CONVERT_PARAMS;
     }
   } else if (cmd.getSaveKey() || task.getFromOrigin() || task.getFromSettings()) {
     yield* downloadFileFromStorage(ctx, cmd.getDocId(), tempDirs.source);
     ctx.logger.debug('downloadFileFromStorage complete');
-    if (clientStatsD) {
-      clientStatsD.timing('conv.downloadFileFromStorage', new Date() - curDate);
-      curDate = new Date();
-    }
+    endStep('download', 'conv.downloadFileFromStorage');
     error = yield* processDownloadFromStorage(ctx, dataConvert, cmd, task, tempDirs, authorProps);
   } else if (cmd.getForgotten()) {
     yield* downloadFileFromStorage(ctx, cmd.getForgotten(), tempDirs.source, tenForgottenFiles);
@@ -1321,30 +1322,45 @@ function* ExecuteTask(ctx, task) {
       ({childRes, isTimeout} = yield* spawnProcess(ctx, builderParams, tempDirs, dataConvert, authorProps, getTaskTime, task, isInJwtToken));
       logProcessResult(ctx, childRes, isTimeout, builderParams, dataConvert, true);
     }
-    if (clientStatsD) {
-      clientStatsD.timing('conv.spawnSync', new Date() - curDate);
-      curDate = new Date();
-    }
+    endStep('convert', 'conv.spawnSync');
   }
   const resData = yield* postProcess(ctx, cmd, dataConvert, tempDirs, childRes, error, isTimeout);
   ctx.logger.debug('postProcess');
-  if (clientStatsD) {
-    clientStatsD.timing('conv.postProcess', new Date() - curDate);
-    curDate = new Date();
-  }
+  endStep('postProcess', 'conv.postProcess');
+  const sourceSize = dataConvert.fileFrom && fs.existsSync(dataConvert.fileFrom) ? fs.statSync(dataConvert.fileFrom).size : '-';
   if (tempDirs) {
     fs.rmSync(tempDirs.temp, {recursive: true, force: true});
     ctx.logger.debug('deleteFolderRecursive');
-    if (clientStatsD) {
-      clientStatsD.timing('conv.deleteFolderRecursive', new Date() - curDate);
-      curDate = new Date();
+    endStep('cleanup', 'conv.deleteFolderRecursive');
+  }
+  const total = Date.now() - getTaskTime.getTime();
+  clientStatsD?.timing('conv.allconvert', total);
+  recordTaskTimings(timings, total);
+  ctx.logger.info(
+    'End Task: queueWait=%sms download=%sms convert=%sms postProcess=%sms total=%dms size=%s',
+    timings.queueWait ?? '-',
+    timings.download ?? '-',
+    timings.convert ?? '-',
+    timings.postProcess ?? '-',
+    total,
+    sourceSize
+  );
+  return resData;
+}
+/**
+ * @param {{queueWait?: number, download?: number, postProcess?: number}} timings Step durations in ms
+ * @param {number} total Task duration in ms, without the queue wait
+ */
+function recordTaskTimings(timings, total) {
+  if (!workerMetrics) {
+    return;
+  }
+  const steps = {queue_wait: timings.queueWait, download: timings.download, post_process: timings.postProcess, total};
+  for (const [step, ms] of Object.entries(steps)) {
+    if (undefined !== ms) {
+      workerMetrics.stepDuration.observe({step}, ms / 1000);
     }
   }
-  if (clientStatsD) {
-    clientStatsD.timing('conv.allconvert', new Date() - startDate);
-  }
-  ctx.logger.info('End Task');
-  return resData;
 }
 function ackTask(ctx, res, task, ack) {
   return co(function* () {
@@ -1433,7 +1449,7 @@ function run() {
   });
 }
 /**
- * @param {{x2tRunning: object, x2tDuration: object}} metricsOfWorker Metrics to record x2t runs in, from metrics.registerConverterWorker
+ * @param {{x2tRunning: object, x2tDuration: object, stepDuration: object}} metricsOfWorker Metrics to record x2t runs in, from metrics.registerConverterWorker
  */
 exports.setWorkerMetrics = metricsOfWorker => {
   workerMetrics = metricsOfWorker;

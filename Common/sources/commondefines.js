@@ -749,6 +749,7 @@ function TaskQueueData(data) {
 
     this['dataKey'] = data['dataKey'];
     this['visibilityTimeout'] = data['visibilityTimeout'];
+    this['queuedAt'] = data['queuedAt'];
   } else {
     this['ctx'] = undefined;
     this['cmd'] = undefined;
@@ -760,6 +761,7 @@ function TaskQueueData(data) {
 
     this['dataKey'] = undefined;
     this['visibilityTimeout'] = undefined;
+    this['queuedAt'] = undefined;
   }
 }
 TaskQueueData.prototype = {
@@ -816,6 +818,12 @@ TaskQueueData.prototype = {
   },
   setVisibilityTimeout(data) {
     return (this['visibilityTimeout'] = data);
+  },
+  getQueuedAt() {
+    return this['queuedAt'];
+  },
+  setQueuedAt(data) {
+    return (this['queuedAt'] = data);
   }
 };
 

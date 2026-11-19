@@ -565,6 +565,7 @@ TaskQueueRabbitMQ.prototype.initPromise = function (isAddTask, isAddResponse, is
 };
 TaskQueueRabbitMQ.prototype.addTask = function (task, priority, opt_expiration, _opt_headers) {
   task.setVisibilityTimeout(cfgVisibilityTimeout);
+  task.setQueuedAt(Date.now());
   return addTaskString(this, JSON.stringify(task), priority, opt_expiration);
 };
 TaskQueueRabbitMQ.prototype.addResponse = function (task) {

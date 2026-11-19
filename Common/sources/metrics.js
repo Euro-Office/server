@@ -246,7 +246,7 @@ function registerClusterStartTime() {
 /**
  * Set up a converter worker: label its metrics with the worker id and answer metric requests of the primary
  * @param {string} workerId Cluster worker id
- * @returns {{x2tRunning: client.Gauge, x2tDuration: client.Histogram}}
+ * @returns {{x2tRunning: client.Gauge, x2tDuration: client.Histogram, stepDuration: client.Histogram}}
  */
 function registerConverterWorker(workerId) {
   register.setDefaultLabels({worker: workerId});
@@ -263,6 +263,13 @@ function registerConverterWorker(workerId) {
       name: 'eo_x2t_duration_seconds',
       help: 'Duration of x2t and docbuilder runs',
       labelNames: ['tool', 'result'],
+      buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+      registers: [register]
+    }),
+    stepDuration: new client.Histogram({
+      name: 'eo_conversion_step_duration_seconds',
+      help: 'Duration of conversion task steps: queue_wait, download, post_process and total',
+      labelNames: ['step'],
       buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
       registers: [register]
     })

@@ -189,4 +189,44 @@ describe('converter x2t metrics', () => {
     expect(await runs('ok')).toBe(1);
     expect((await workerMetrics.x2tRunning.get()).values[0].value).toBe(0);
   });
+
+  const steps = async () => {
+    const values = (await workerMetrics.stepDuration.get()).values;
+    const of = (step, suffix) =>
+      values.find(v => v.metricName === `eo_conversion_step_duration_seconds_${suffix}` && v.labels.step === step)?.value ?? 0;
+    return Object.fromEntries(
+      ['queue_wait', 'download', 'post_process', 'total'].map(step => [step, {count: of(step, 'count'), sum: of(step, 'sum')}])
+    );
+  };
+
+  test('records queue wait, download, post process and total per task', async () => {
+    const before = await steps();
+    await executeTask('steps', {savekey: 'sk'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx', queuedAt: Date.now() - 5000});
+    const after = await steps();
+    for (const step of ['queue_wait', 'download', 'post_process', 'total']) {
+      expect(after[step].count - before[step].count).toBe(1);
+    }
+    expect(after.queue_wait.sum - before.queue_wait.sum).toBeGreaterThanOrEqual(5);
+  });
+
+  test('skips the queue wait of tasks queued without a timestamp', async () => {
+    const before = await steps();
+    await executeTask('nostamp', {savekey: 'sk'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx'});
+    const after = await steps();
+    expect(after.queue_wait.count).toBe(before.queue_wait.count);
+    expect(after.total.count - before.total.count).toBe(1);
+  });
+});
+
+describe('conversion task queue', () => {
+  test('stamps tasks with the time they were queued', async () => {
+    const TaskQueueRabbitMQ = require('../../Common/sources/taskqueueRabbitMQ');
+    const queue = new TaskQueueRabbitMQ();
+    const task = new commonDefines.TaskQueueData({ctx: {tenant: 'localhost', docId: 'q'}, cmd: {c: 'open', id: 'q'}});
+    const start = Date.now();
+    await queue.addTask(task, constants.QUEUE_PRIORITY_LOW);
+    const queued = new commonDefines.TaskQueueData(JSON.parse(queue.addTaskStore[0].task.toString()));
+    expect(queued.getQueuedAt()).toBeGreaterThanOrEqual(start);
+    expect(queued.getQueuedAt()).toBeLessThanOrEqual(Date.now());
+  });
 });
