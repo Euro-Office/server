@@ -5,9 +5,9 @@
 
 'use strict';
 
-// Forgotten files of a document: the regular file (<forgottenfilesname>.<ext>) holds a save that did not reach
-// the host and is opened as the document; the partial output of a CONVERT_CORRUPTED save
-// (<forgottenfilesname>-partial.<ext>) is held back and only deleteForgotten removes it.
+// Forgotten files of a document: a regular file (normally <forgottenfilesname>.<ext>; any file that is not the
+// partial output) holds a save that did not reach the host and is opened as the document; the partial output of a
+// CONVERT_CORRUPTED save (<forgottenfilesname>-partial.<ext>) is held back and only deleteForgotten removes it.
 
 const config = require('config');
 const storage = require('./../../Common/sources/storage/storage-base');
@@ -50,7 +50,9 @@ async function deleteForgottenAfterSave(ctx, docId) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
 
-  const forgottenList = await storage.listObjects(ctx, docId, tenForgottenFiles);
+  // A failed listing must not look like a folder without the partial output, or deletePath would remove it:
+  // the error propagates and the cleanup is retried, as when deletePath itself fails.
+  const forgottenList = await storage.listObjects(ctx, docId, tenForgottenFiles, true);
   const regularList = utils.getForgottenRegular(forgottenList, tenForgottenFilesName);
   if (regularList.length === forgottenList.length) {
     await storage.deletePath(ctx, docId, tenForgottenFiles);

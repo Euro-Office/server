@@ -2013,7 +2013,8 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
       if ((!isError || isErrorCorrupted) && !callbackAccepted && !callbackDeclined) {
         try {
           const forgotten = yield storage.listObjects(ctx, docId, tenForgottenFiles);
-          let isSendHistory = 0 === forgotten.length;
+          //the partial output of a CONVERT_CORRUPTED save is never opened, so it does not decide the history
+          let isSendHistory = 0 === utils.getForgottenRegular(forgotten, tenForgottenFilesName).length;
           if (!isSendHistory) {
             //check indicator file to determine if opening was from the forgotten file
             const forgottenMarkPath = docId + '/' + tenForgottenFilesName + '.txt';

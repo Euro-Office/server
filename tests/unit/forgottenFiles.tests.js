@@ -8,6 +8,7 @@ const config = require('../../DocService/node_modules/config');
 const commonDefines = require('../../Common/sources/commondefines');
 const utils = require('../../Common/sources/utils');
 const storage = require('../../Common/sources/storage/storage-base');
+const storageFs = require('../../Common/sources/storage/storage-fs');
 const sqlBase = require('../../DocService/sources/databaseConnectors/baseConnector');
 const taskResult = require('../../DocService/sources/taskresult');
 const canvasService = require('../../DocService/sources/canvasservice');
@@ -67,8 +68,20 @@ describe('forgotten files after a successful save', () => {
 
     await docsCoServer.cleanDocumentOnExitPromise(ctx, docId, true);
 
+    // The listing must report storage errors, so a failed listing never looks like a folder without the partial output.
+    expect(storage.listObjects).toHaveBeenCalledWith(ctx, docId, forgottenDir, true);
     expect(deletePath).toHaveBeenCalledWith(ctx, docId, forgottenDir);
     expect(deleteObject).not.toHaveBeenCalled();
+  });
+
+  test('fails without deleting anything when the folder cannot be listed', async () => {
+    const {deletePath, deleteObject} = mockCleanup([]);
+    storage.listObjects.mockRejectedValue(new Error('list failed'));
+
+    await expect(docsCoServer.cleanDocumentOnExitPromise(ctx, docId, true)).rejects.toThrow('list failed');
+
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(deletePath).not.toHaveBeenCalled();
   });
 
   test('keeps the partial output and deletes the regular file', async () => {
@@ -137,5 +150,33 @@ describe('forgotten files when an open takes over an accepted save', () => {
     expect(deleteObject).toHaveBeenCalledTimes(1);
     expect(deleteObject).toHaveBeenCalledWith(ctx, forgottenFile, forgottenDir);
     expect(deletePath).not.toHaveBeenCalled();
+  });
+
+  test('keeps the partial output when it is the only file', async () => {
+    const {deletePath, deleteObject} = mockTakeover([forgottenPartialFile]);
+
+    await expect(canvasService.takeOverAbandonedSaveForOpen(ctx, docId, acceptedRow)).resolves.toBe(commonDefines.FileStatus.None);
+
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(deletePath).not.toHaveBeenCalled();
+  });
+
+  test('fails without deleting anything when the folder cannot be listed', async () => {
+    const {deletePath, deleteObject} = mockTakeover([]);
+    storage.listObjects.mockRejectedValue(new Error('list failed'));
+
+    await expect(canvasService.takeOverAbandonedSaveForOpen(ctx, docId, acceptedRow)).rejects.toThrow('list failed');
+
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(deletePath).not.toHaveBeenCalled();
+  });
+});
+
+describe('storage listing errors', () => {
+  test('return an empty list by default and are rethrown when the caller asks', async () => {
+    jest.spyOn(storageFs, 'listObjects').mockRejectedValue(new Error('list failed'));
+
+    await expect(storage.listObjects(ctx, docId, forgottenDir)).resolves.toEqual([]);
+    await expect(storage.listObjects(ctx, docId, forgottenDir, true)).rejects.toThrow('list failed');
   });
 });

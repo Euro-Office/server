@@ -293,3 +293,25 @@ describe('open with files in forgotten', () => {
     expect(queuedCmd.getUrl()).toBe(fromForgotten ? undefined : hostUrl);
   });
 });
+
+describe('change history with files in forgotten', () => {
+  test('is sent when forgotten holds only the partial output', async () => {
+    const {ctx, cmd} = createSave();
+    wopiClient.parseWopiCallback.mockReturnValue(undefined);
+    // A stale open-from-forgotten mark is still in the cache; the partial output alone must not make the save read it.
+    const forgottenMark = `${docId}/${config.get('services.CoAuthoring.server.forgottenfilesname')}.txt`;
+    storage.listObjects.mockImplementation(async (_ctx, path, dir) => {
+      if (dir === forgottenDir) {
+        return [forgottenPartialFile];
+      }
+      return path === forgottenMark ? [forgottenMark] : [];
+    });
+
+    await commandSfcCallback(ctx, cmd, false);
+
+    expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(1);
+    const output = docsCoServer.sendServerRequest.mock.calls[0][2];
+    expect(output.getChangeHistory()).toEqual({changes: []});
+    expect(storage.listObjects).not.toHaveBeenCalledWith(ctx, forgottenMark);
+  });
+});
