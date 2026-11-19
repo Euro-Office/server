@@ -5,11 +5,14 @@
 
 const {afterEach, describe, expect, jest, test} = require('@jest/globals');
 const config = require('../../DocService/node_modules/config');
+const commonDefines = require('../../Common/sources/commondefines');
 const utils = require('../../Common/sources/utils');
 const storage = require('../../Common/sources/storage/storage-base');
 const sqlBase = require('../../DocService/sources/databaseConnectors/baseConnector');
 const taskResult = require('../../DocService/sources/taskresult');
+const canvasService = require('../../DocService/sources/canvasservice');
 const docsCoServer = require('../../DocService/sources/DocsCoServer');
+const forgottenFiles = require('../../DocService/sources/forgottenFiles');
 
 const ctx = {tenant: 'localhost', getCfg: (_key, fallback) => fallback, logger: {debug() {}, info() {}, warn() {}, error() {}}};
 const docId = 'document-id';
@@ -20,6 +23,13 @@ const forgottenPartialFile = `${docId}/${utils.getForgottenPartialName(forgotten
 
 afterEach(() => jest.restoreAllMocks());
 
+function mockDeletion() {
+  return {
+    deletePath: jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined),
+    deleteObject: jest.spyOn(storage, 'deleteObject').mockResolvedValue(undefined)
+  };
+}
+
 describe('save on close of the last editor', () => {
   test.each([
     ['an empty forgotten folder', [], false],
@@ -29,14 +39,14 @@ describe('save on close of the last editor', () => {
   ])('without changes and with %s', async (_name, forgottenList, expected) => {
     const listObjects = jest.spyOn(storage, 'listObjects').mockResolvedValue(forgottenList);
 
-    await expect(docsCoServer.needSaveOnClose(ctx, docId, false)).resolves.toBe(expected);
+    await expect(forgottenFiles.needSaveOnClose(ctx, docId, false)).resolves.toBe(expected);
     expect(listObjects).toHaveBeenCalledWith(ctx, docId, forgottenDir);
   });
 
   test('with changes, without looking at forgotten', async () => {
     const listObjects = jest.spyOn(storage, 'listObjects');
 
-    await expect(docsCoServer.needSaveOnClose(ctx, docId, true)).resolves.toBe(true);
+    await expect(forgottenFiles.needSaveOnClose(ctx, docId, true)).resolves.toBe(true);
     expect(listObjects).not.toHaveBeenCalled();
   });
 });
@@ -49,10 +59,7 @@ describe('forgotten files after a successful save', () => {
     jest.spyOn(sqlBase, 'deleteChanges').mockReturnValue(undefined);
     jest.spyOn(sqlBase, 'deleteChangesPromise').mockResolvedValue(undefined);
     jest.spyOn(storage, 'listObjects').mockResolvedValue(forgottenList);
-    return {
-      deletePath: jest.spyOn(storage, 'deletePath').mockResolvedValue(undefined),
-      deleteObject: jest.spyOn(storage, 'deleteObject').mockResolvedValue(undefined)
-    };
+    return mockDeletion();
   }
 
   test('deletes the forgotten folder when it has no partial output', async () => {
@@ -90,6 +97,45 @@ describe('forgotten files after a successful save', () => {
 
     expect(storage.listObjects).not.toHaveBeenCalled();
     expect(deleteObject).not.toHaveBeenCalled();
+    expect(deletePath).not.toHaveBeenCalled();
+  });
+});
+
+describe('forgotten files when an open takes over an accepted save', () => {
+  // An accepted save whose cleanup was interrupted: no changes are left, so the open reloads the host file.
+  const acceptedRow = {
+    status: commonDefines.FileStatus.UpdateVersion,
+    status_info: commonDefines.CALLBACK_ACCEPTED_STATUS_INFO,
+    additional: null
+  };
+
+  function mockTakeover(forgottenList) {
+    jest.spyOn(taskResult, 'updateIf').mockResolvedValue({affectedRows: 1});
+    jest.spyOn(taskResult, 'withCleanupOwnership').mockImplementation(async (_ctx, _mask, action) => {
+      await action();
+      return true;
+    });
+    jest.spyOn(docsCoServer, 'hasChanges').mockResolvedValue(false);
+    jest.spyOn(storage, 'listObjects').mockResolvedValue(forgottenList);
+    return mockDeletion();
+  }
+
+  test('deletes the forgotten folder when it has no partial output', async () => {
+    const {deletePath, deleteObject} = mockTakeover([forgottenFile]);
+
+    await expect(canvasService.takeOverAbandonedSaveForOpen(ctx, docId, acceptedRow)).resolves.toBe(commonDefines.FileStatus.None);
+
+    expect(deletePath).toHaveBeenCalledWith(ctx, docId, forgottenDir);
+    expect(deleteObject).not.toHaveBeenCalled();
+  });
+
+  test('keeps the partial output and deletes the regular file', async () => {
+    const {deletePath, deleteObject} = mockTakeover([forgottenPartialFile, forgottenFile]);
+
+    await expect(canvasService.takeOverAbandonedSaveForOpen(ctx, docId, acceptedRow)).resolves.toBe(commonDefines.FileStatus.None);
+
+    expect(deleteObject).toHaveBeenCalledTimes(1);
+    expect(deleteObject).toHaveBeenCalledWith(ctx, forgottenFile, forgottenDir);
     expect(deletePath).not.toHaveBeenCalled();
   });
 });

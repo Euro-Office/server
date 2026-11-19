@@ -90,6 +90,7 @@ const gc = require('./gc');
 const shutdown = require('./shutdown');
 const pubsubService = require('./pubsubRabbitMQ');
 const wopiClient = require('./wopiClient');
+const forgottenFiles = require('./forgottenFiles');
 const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
@@ -1691,47 +1692,6 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesM
   }
   return true;
 });
-/**
- * Whether closing the last editor has to start a save.
- * Without changes, a regular forgotten file still has to be saved.
- * The partial output of a CONVERT_CORRUPTED save is not the opened document, so it does not start a save.
- * @param ctx Local context.
- * @param {string} docId Document id.
- * @param {boolean} hasChanges Whether the document has changes that are not saved yet.
- * @returns {Promise<boolean>}
- */
-async function needSaveOnClose(ctx, docId, hasChanges) {
-  if (hasChanges) {
-    return true;
-  }
-  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
-  const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
-  //start save changes if forgotten file exists.
-  //more effective to send file without sfc, but this method is simpler by code
-  const forgotten = await storage.listObjects(ctx, docId, tenForgottenFiles);
-  const hasForgotten = utils.getForgottenRegular(forgotten, tenForgottenFilesName).length > 0;
-  ctx.logger.debug('closeDocument hasForgotten %s', hasForgotten);
-  return hasForgotten;
-}
-/**
- * Deletes the forgotten files of a document after its changes were saved.
- * The partial output of a CONVERT_CORRUPTED save is kept: the save started from the host file, so it does not
- * contain the edits of that output. Only deleteForgotten removes it.
- * @param ctx Local context.
- * @param {string} docId Document id.
- */
-async function deleteForgottenAfterSave(ctx, docId) {
-  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
-  const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
-
-  const forgottenList = await storage.listObjects(ctx, docId, tenForgottenFiles);
-  const regularList = utils.getForgottenRegular(forgottenList, tenForgottenFilesName);
-  if (regularList.length === forgottenList.length) {
-    await storage.deletePath(ctx, docId, tenForgottenFiles);
-  } else {
-    await Promise.all(regularList.map(forgotten => storage.deleteObject(ctx, forgotten, tenForgottenFiles)));
-  }
-}
 // opt_changesMask: the task row as the caller holds it.  Nothing is cleaned if
 // the row no longer matches it (false: the caller's next attempt finds out),
 // and the changes are deleted only while it still does.
@@ -1774,12 +1734,12 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
     }
     //delete forgotten after successful send on callbackUrl
     if (opt_changesMask) {
-      const cleaned = yield taskResult.withCleanupOwnership(ctx, opt_changesMask, () => deleteForgottenAfterSave(ctx, docId));
+      const cleaned = yield taskResult.withCleanupOwnership(ctx, opt_changesMask, () => forgottenFiles.deleteForgottenAfterSave(ctx, docId));
       if (!cleaned) {
         return false;
       }
     } else {
-      yield deleteForgottenAfterSave(ctx, docId);
+      yield forgottenFiles.deleteForgottenAfterSave(ctx, docId);
     }
   }
   if (opt_cleanupOptions?.skipWopiUnlock === true) {
@@ -2039,7 +1999,6 @@ exports.hasChanges = hasChanges;
 exports.cleanDocumentOnExitPromise = co.wrap(cleanDocumentOnExit);
 exports.cleanDocumentOnExitNoChangesPromise = co.wrap(cleanDocumentOnExitNoChanges);
 exports.cleanDocumentAfterFinalViewerExitPromise = co.wrap(cleanDocumentAfterFinalViewerExit);
-exports.needSaveOnClose = needSaveOnClose;
 exports.unlockWopiDoc = unlockWopiDoc;
 exports.setForceSave = setForceSave;
 exports.startForceSave = startForceSave;
@@ -2429,7 +2388,7 @@ exports.install = function (server, app, callbackFunction) {
           // Just in case, remove the lock
           yield editorData.unlockSave(ctx, docId, tmpUser.id);
 
-          const needSaveChanges = yield needSaveOnClose(ctx, docId, bHasChanges);
+          const needSaveChanges = yield forgottenFiles.needSaveOnClose(ctx, docId, bHasChanges);
           if (needSaveChanges && !conn.encrypted) {
             // Send changes to save server
             const user_lcid = utilsDocService.localeToLCID(conn.lang);
