@@ -84,7 +84,7 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
     return output ?? {rows: [], affectedRows: 0};
   } catch (error) {
     if (!noLog) {
-      ctx.logger.error(`sqlQuery() error while executing query: ${sqlCommand}\n${error.stack}`);
+      ctx.logger.error('sqlQuery() error while executing query: %s', sqlCommand, error);
     }
 
     throw error;
@@ -95,7 +95,7 @@ async function executeQuery(ctx, sqlCommand, values = [], noModifyRes = false, n
         connection.release();
       } catch (error) {
         if (!noLog) {
-          ctx.logger.error(`connection.release() error while executing query: ${sqlCommand}\n${error.stack}`);
+          ctx.logger.error('connection.release() error while executing query: %s', sqlCommand, error);
         }
       }
     }
@@ -204,4 +204,4 @@ module.exports.addSqlParameter = addSqlParameter;
 module.exports.concatParams = concatParams;
 module.exports.upsert = upsert;
 module.exports.withTaskResultLock = withTaskResultLock;
-module.exports.getAdditionalCondition = parameter => `BINARY additional=BINARY ${parameter}`;
+module.exports.getAdditionalCondition = parameter => `CAST(additional AS BINARY)=CAST(${parameter} AS BINARY)`;

@@ -292,15 +292,34 @@ EditorData.prototype.removeForceSave = async function (ctx, docId) {
 };
 
 EditorData.prototype.cleanDocumentOnExit = async function (ctx, docId, savedClaimId, cleanupOptions) {
+  const preserveSavedClaim = cleanupOptions?.preserveSavedClaim === true;
   const tenantData = this.data[ctx.tenant];
   if (tenantData) {
+    const prevData = tenantData[docId];
     delete tenantData[docId];
+    // Final-viewer cleanup can run while a final save for the last editor is
+    // still in flight (viewers do not block the save), so keep what that save
+    // still reads:
+    // - data.saved (set only for a corrupted save): wiping it would make the
+    //   later getdelSaved return null, so the corrupted save would be reported
+    //   as a success and its changes deleted;
+    // - data.forceSave: the final save reads it for lastsave/notmodified, and a
+    //   form/internal force-save in flight dereferences it in setForceSave.
+    if (preserveSavedClaim && prevData && (prevData.saved != null || prevData.forceSave != null)) {
+      const keptData = this._getDocumentData(ctx, docId);
+      if (prevData.saved != null) {
+        keptData.saved = prevData.saved;
+      }
+      if (prevData.forceSave != null) {
+        keptData.forceSave = prevData.forceSave;
+      }
+    }
   }
   const tenantTimer = this.forceSaveTimer[ctx.tenant];
   if (tenantTimer) {
     delete tenantTimer[docId];
   }
-  if ((savedClaimId === undefined || savedClaimId === null) && cleanupOptions?.preserveSavedClaim !== true) {
+  if ((savedClaimId === undefined || savedClaimId === null) && !preserveSavedClaim) {
     // Claim-less terminal cleanup also drops claims and acceptance markers
     // that saves left behind without completing (as the Redis backend
     // recovers abandoned claims), so that they do not accumulate.  An owner

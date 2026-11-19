@@ -12,7 +12,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Same broker image as develop/docker-compose.redis-base.yml, without its stack.
+# Disposable broker container; nothing else is started.
 docker run -d --name "$name" \
   -p 127.0.0.1::5672 \
   -e RABBITMQ_DEFAULT_USER=test -e RABBITMQ_DEFAULT_PASS=test \

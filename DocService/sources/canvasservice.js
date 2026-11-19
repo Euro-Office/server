@@ -36,6 +36,7 @@ const sqlBase = require('./databaseConnectors/baseConnector');
 const utilsDocService = require('./utilsDocService');
 const docsCoServer = require('./DocsCoServer');
 const taskResult = require('./taskresult');
+const newFileTemplateUtils = require('./newFileTemplateUtils');
 const wopiUtils = require('./wopiUtils');
 const wopiClient = require('./wopiClient');
 const utils = require('./../../Common/sources/utils');
@@ -1162,7 +1163,7 @@ function* commandImgurls(ctx, conn, cmd, outputData) {
           urlParsed = urlModule.parse(urlSource);
         } catch (e) {
           data = undefined;
-          ctx.logger.error('error commandImgurls download: url = %s; %s', urlSource, e.stack);
+          ctx.logger.error('error commandImgurls download: url = %s;', urlSource, e);
           if (e.code === 'EMSGSIZE') {
             errorCode = constants.UPLOAD_CONTENT_LENGTH;
           } else {
@@ -1408,7 +1409,7 @@ function* releaseShutdownEntry(ctx, cmd, docId) {
       yield docsCoServer.editorStat.removeShutdown(cmd.getRedisKey() || redisKeyShutdown, docId);
     }
   } catch (err) {
-    ctx.logger.error('commandSfcCallback: could not release the shutdown entry: %s', err.stack);
+    ctx.logger.error('commandSfcCallback: could not release the shutdown entry:', err);
   }
 }
 function* releaseSaveState(ctx, cmd, docId, operationId) {
@@ -1421,14 +1422,14 @@ function* releaseSaveState(ctx, cmd, docId, operationId) {
     }
     yield docsCoServer.editorData.clearSavedCallbackAccepted(ctx, docId, operationId);
   } catch (err) {
-    ctx.logger.error('commandSfcCallback: could not release the saved state: %s', err.stack);
+    ctx.logger.error('commandSfcCallback: could not release the saved state:', err);
   }
 }
 // Returns true when the row was still this save's (released, or its own
 // SaveVersion a reopen resumes), so that its waiting editors may be told.
 function* releaseAbandonedTaskRow(ctx, cmd, docId, operationId) {
   // Leave the row to the next open: resumable with the changes the save left
-  // (SaveVersion, as after a failed save on main), or expirable like a
+  // (SaveVersion, as after any failed save), or expirable like a
   // completed save when they are gone.  Leave another save's row alone.  If
   // this fails, the open path takes the row over later the same way.
   const selectRes = yield taskResult.select(ctx, docId);
@@ -1475,7 +1476,7 @@ function* abandonSfcRetry(ctx, cmd) {
   try {
     released = yield* releaseAbandonedTaskRow(ctx, cmd, docId, operationId);
   } catch (err) {
-    ctx.logger.error('commandSfcCallback: could not release the task row: %s', err.stack);
+    ctx.logger.error('commandSfcCallback: could not release the task row:', err);
   }
   yield* releaseSaveState(ctx, cmd, docId, operationId);
   if (released) {
@@ -1487,7 +1488,7 @@ function* abandonSfcRetry(ctx, cmd) {
       const success = cmd.getCallbackAccepted() === true && cmd.getSavedState()?.success === true;
       yield docsCoServer.publish(ctx, {type: commonDefines.c_oPublishType.updateVersion, ctx, docId, success});
     } catch (err) {
-      ctx.logger.error('commandSfcCallback: could not publish updateVersion: %s', err.stack);
+      ctx.logger.error('commandSfcCallback: could not publish updateVersion:', err);
     }
   }
   yield* releaseShutdownEntry(ctx, cmd, docId);
@@ -1521,7 +1522,7 @@ function* scheduleSfcRetryUntilConfirmed(ctx, cmd, opt_isDeliveryLive) {
       yield* scheduleSfcRetry(ctx, cmd);
       return true;
     } catch (err) {
-      ctx.logger.error('receiveTask retry scheduling error: %s', err.stack);
+      ctx.logger.error('receiveTask retry scheduling error:', err);
       if ((cmd.getAttempt() || 0) === attempt) {
         // Failed before the attempt was counted: count it here to stay bounded.
         cmd.setAttempt(attempt + 1);
@@ -1554,8 +1555,7 @@ function* scheduleSfcRetry(ctx, cmd, opt_isCallbackRetry) {
   let timeout;
   if (opt_isCallbackRetry) {
     // HTTP callback failures have their own budget (options.retries), checked
-    // before the retry is requested, and back off by their own count, as on
-    // main.
+    // before the retry is requested, and back off by their own count.
     timeout = retry.createTimeout(callbackAttempt, options.timeout);
     cmd.setCallbackAttempt(callbackAttempt + 1);
   } else {
@@ -1631,7 +1631,7 @@ function* persistAcceptedCallback(ctx, docId, updateMask, openFromForgotten, ope
 // (getFinalSaveState: own marker, not pendingOwn).
 function* completeAcceptedSave(ctx, docId, openFromForgotten, mask) {
   if (openFromForgotten) {
-    // As on main, the cache and the row of a session opened from the forgotten
+    // The cache and the row of a session opened from the forgotten
     // file go, so that the next open converts the integrator's file.  Storage
     // first, while the row still keeps opens out; then the row.
     const cleaned = yield deleteDocumentCacheIfOwned(ctx, mask);
@@ -1895,7 +1895,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           return finalSave.last.operationId === String(savedClaimId);
         }
         // No markers (a row from before them, or no `additional` column): a
-        // first delivery takes the row as main does, a retry only a row that
+        // first delivery takes the row as an untracked save does, a retry only a row that
         // still carries the status it wrote.
         if (!(cmd.getAttempt() > 0)) {
           return true;
@@ -2033,7 +2033,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           outputSfc.setUrl(url);
           outputSfc.setExtName(pathModule.extname(savePathDoc));
         } catch (e) {
-          ctx.logger.error('Error commandSfcCallback: %s', e.stack);
+          ctx.logger.error('Error commandSfcCallback:', e);
         }
         if (outputSfc.getUrl() && outputSfc.getUsers().length > 0) {
           outputSfc.setStatus(statusOk);
@@ -2081,7 +2081,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
                 ctx.logger.warn('sendServerRequest returned an error: data = %s', replyStr);
               }
             } catch (err) {
-              ctx.logger.error('sendServerRequest error: url = %s;data = %j %s', uri, outputSfc, err.stack);
+              ctx.logger.error('sendServerRequest error: url = %s;data = %j', uri, outputSfc, err);
             }
           }
         }
@@ -2141,7 +2141,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
                   replyStr = yield docsCoServer.sendServerRequest(ctx, uri, outputSfc, checkAndFixAuthorizationLength);
                 }
               } catch (err) {
-                ctx.logger.error('sendServerRequest error: url = %s;data = %j %s', uri, outputSfc, err.stack);
+                ctx.logger.error('sendServerRequest error: url = %s;data = %j', uri, outputSfc, err);
                 const retryHttpStatus = new MultiRange(tenCallbackBackoffOptions.httpStatus);
                 if (!isEncrypted && !docsCoServer.getIsShutdown() && (!err.statusCode || retryHttpStatus.has(err.statusCode.toString()))) {
                   // Count only HTTP attempts here: infrastructure retries must
@@ -2164,7 +2164,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
                 // never retried or redelivered, so its acceptance is not
                 // tracked: a database error after acceptance must not fail a
                 // save the integrator already has.  Without markers the
-                // acceptance is not persisted either, as on main: an unowned
+                // acceptance is not persisted either (as for untracked saves): an unowned
                 // pending status could not be released.
                 if (tracked && markersSupported) {
                   // Record acceptance in memory before SQL. If SQL persistence
@@ -2264,7 +2264,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
               storeForgotten = true;
               // Not accepted (a retryable failure, a final answer other than
               // acceptance, or accepted but reported unsaved): restore SaveVersion
-              // below, as main does, so that a retry starts from the row as it
+              // below, so that a retry starts from the row as it
               // was and a reopen within expire.updateVersionStatus is not
               // view-only.  An encrypted save gets its previous status back.
             }
@@ -2381,7 +2381,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           forgottenStored = true;
         }
       } catch (err) {
-        ctx.logger.error('Error storeForgotten: %s', err.stack);
+        ctx.logger.error('Error storeForgotten:', err);
         if (!isSfcm) {
           throw err;
         }
@@ -2402,7 +2402,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           // Keep the saved-state claim pending until cache cleanup completes.
           // An accepted callback keeps its task row as a durable tombstone
           // until the completion marker is persisted after publication.  A
-          // declined save removes the row, as main does.
+          // declined save removes the row.
           const cleanupRes = yield cleanupCacheIf(ctx, updateMask);
           ctx.logger.debug('storeForgotten cleanupRes=%s', cleanupRes);
           savedOutcomeCompleted = cleanupRes === true;
@@ -2465,7 +2465,7 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
   }
 
   // A callback accepted during this attempt must be completed too, not only
-  // one accepted by an earlier attempt.  Before the event, as on main: editors
+  // one accepted by an earlier attempt.  Before the event: editors
   // reload on it and must find the row (or no row) the save leaves behind.
   if (callbackAccepted && !isEncrypted && savedOutcomeCompleted && !needRetry) {
     yield* completeAcceptedSave(ctx, docId, cmd.getOpenFromForgotten() === true, completionMask);
@@ -2550,7 +2550,7 @@ function* commandSendMMCallback(ctx, cmd) {
       replyStr = yield docsCoServer.sendServerRequest(ctx, uri, outputSfc);
     } catch (err) {
       replyStr = null;
-      ctx.logger.error('sendServerRequest error: url = %s;data = %j %s', uri, outputSfc, err.stack);
+      ctx.logger.error('sendServerRequest error: url = %s;data = %j', uri, outputSfc, err);
     }
     const replyData = docsCoServer.parseReplyData(ctx, replyStr);
     if (!(replyData && commonDefines.c_oAscServerCommandErrors.NoError == replyData.error)) {
@@ -2620,7 +2620,7 @@ exports.openDocument = function (ctx, conn, cmd, opt_upsertRes, opt_bIsRestore) 
         clientStatsD.timing('coauth.openDocument.' + cmd.getCommand(), new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error openDocument: %s', e.stack);
+      ctx.logger.error('Error openDocument:', e);
       if (!outputData) {
         outputData = new OutputData();
       }
@@ -2723,7 +2723,7 @@ exports.downloadAs = function (req, res) {
         clientStatsD.timing('coauth.downloadAs.' + cmd.getCommand(), new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error downloadAs: %s', e.stack);
+      ctx.logger.error('Error downloadAs:', e);
       res.sendStatus(400);
     }
   });
@@ -2780,7 +2780,7 @@ exports.saveFile = function (req, res) {
         clientStatsD.timing('coauth.saveFile', new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error saveFile: %s', e.stack);
+      ctx.logger.error('Error saveFile:', e);
       res.sendStatus(400);
     }
   });
@@ -2858,7 +2858,7 @@ exports.printFile = function (req, res) {
         clientStatsD.timing('coauth.printFile', new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error printFile: %s', e.stack);
+      ctx.logger.error('Error printFile:', e);
       res.sendStatus(400);
     } finally {
       ctx.logger.info('End printFile');
@@ -2906,7 +2906,7 @@ exports.downloadFile = function (req, res) {
       let authorization;
       let isInJwtToken = false;
       let errorDescription;
-      let headers, fromTemplate;
+      let headers, fromTemplate, requestedTemplateExt;
       const authRes = yield docsCoServer.getRequestParams(ctx, req);
       if (authRes.code === constants.NO_ERROR) {
         const decoded = authRes.params;
@@ -2922,7 +2922,8 @@ exports.downloadFile = function (req, res) {
         } else if (wopiClient.isWopiJwtToken(decoded)) {
           if (decoded.fileInfo.Size === 0) {
             //editnew case
-            fromTemplate = pathModule.extname(decoded.fileInfo.BaseFileName).substring(1);
+            requestedTemplateExt = pathModule.extname(decoded.fileInfo.BaseFileName).substring(1);
+            fromTemplate = newFileTemplateUtils.getNewFileTemplateExt(requestedTemplateExt);
           } else {
             ({url, headers} = yield wopiUtils.getWopiFileUrl(ctx, decoded.fileInfo, decoded.userAuth));
             const filterStatus = yield wopiClient.checkIpFilter(ctx, url);
@@ -2952,7 +2953,7 @@ exports.downloadFile = function (req, res) {
         return;
       }
       if (fromTemplate) {
-        ctx.logger.debug('downloadFile from file template: %s', fromTemplate);
+        ctx.logger.debug('downloadFile from file template: requested=%s template=%s', requestedTemplateExt, fromTemplate);
         const locale = constants.TEMPLATES_DEFAULT_LOCALE;
         const fileTemplatePath = pathModule.join(tenNewFileTemplate, locale, 'new.' + fromTemplate);
         res.sendFile(pathModule.resolve(fileTemplatePath));
@@ -3006,12 +3007,12 @@ exports.downloadFile = function (req, res) {
       }
     } catch (err) {
       if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
-        ctx.logger.debug('Error downloadFile: %s', err.stack);
+        ctx.logger.debug('Error downloadFile:', err);
         if (!res.headersSent) {
           res.sendStatus(499);
         }
       } else {
-        ctx.logger.error('Error downloadFile: %s', err.stack);
+        ctx.logger.error('Error downloadFile:', err);
         //catch errors because status may be sent while piping to response
         if (!res.headersSent) {
           try {
@@ -3025,7 +3026,7 @@ exports.downloadFile = function (req, res) {
               res.sendStatus(400);
             }
           } catch (err) {
-            ctx.logger.error('Error downloadFile: %s', err.stack);
+            ctx.logger.error('Error downloadFile:', err);
           }
         }
       }
@@ -3035,7 +3036,7 @@ exports.downloadFile = function (req, res) {
         try {
           stream.destroy();
         } catch (destroyErr) {
-          ctx.logger.warn('Error destroying stream: %s', destroyErr.stack);
+          ctx.logger.warn('Error destroying stream:', destroyErr);
         }
       }
       ctx.logger.info('End downloadFile');
@@ -3092,7 +3093,7 @@ exports.saveFromChanges = function (ctx, docId, statusInfo, optFormat, opt_userI
         clientStatsD.timing('coauth.saveFromChanges', new Date() - startDate);
       }
     } catch (e) {
-      ctx.logger.error('Error saveFromChanges: %s', e.stack);
+      ctx.logger.error('Error saveFromChanges:', e);
     }
   });
 };
@@ -3220,7 +3221,7 @@ exports.receiveTask = function (data, ack, opt_isDeliveryLive) {
         }
       }
     } catch (err) {
-      ctx.logger.error('receiveTask error: %s', err.stack);
+      ctx.logger.error('receiveTask error:', err);
       const cmd = task && task.getCmd();
       if (cmd && 'sfc' === cmd.getCommand()) {
         shouldAck = yield* scheduleSfcRetryUntilConfirmed(ctx, cmd, opt_isDeliveryLive);

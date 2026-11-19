@@ -820,7 +820,7 @@ function parseUrl(ctx, callbackUrl) {
       href: parseObject.href
     };
   } catch (e) {
-    ctx.logger.error('error parseUrl %s: %s', callbackUrl, e.stack);
+    ctx.logger.error('error parseUrl %s:', callbackUrl, e);
     result = null;
   }
 
@@ -1413,7 +1413,7 @@ function handleDeadLetter(data, ack, opt_nack, opt_isDeliveryLive, opt_queue) {
             // round counts against the save's infrastructure budget; past it the save
             // is given up as after its own retries, within the window its pending
             // status lasts (isUpdateVersionExpired).
-            ctx.logger.warn('handleDeadLetter addResponse error: %s', err.stack);
+            ctx.logger.warn('handleDeadLetter addResponse error:', err);
             const isSfc = 'sfc' === cmd.getCommand();
             if (isSfc && canvasService.isSfcRetryBudgetExhausted(ctx, cmd)) {
               yield* abandon();
@@ -1441,7 +1441,7 @@ function handleDeadLetter(data, ack, opt_nack, opt_isDeliveryLive, opt_queue) {
       }
       ctx.logger.warn('handleDeadLetter end: requeue = %s', isRequeued);
     } catch (err) {
-      ctx.logger.error('handleDeadLetter error: %s', err.stack);
+      ctx.logger.error('handleDeadLetter error:', err);
       if (!isLive()) {
         return;
       }
@@ -1457,7 +1457,7 @@ function handleDeadLetter(data, ack, opt_nack, opt_isDeliveryLive, opt_queue) {
             shouldAck = true;
             requeue = false;
           } catch (abandonErr) {
-            ctx.logger.error('handleDeadLetter abandonment error: %s', abandonErr.stack);
+            ctx.logger.error('handleDeadLetter abandonment error:', abandonErr);
           }
         }
         if (!shouldAck && count > DEAD_LETTER_MAX_REQUEUES) {
@@ -1476,7 +1476,7 @@ function handleDeadLetter(data, ack, opt_nack, opt_isDeliveryLive, opt_queue) {
           opt_nack();
         }
       } catch (err) {
-        ctx.logger.error('handleDeadLetter requeue error: %s', err.stack);
+        ctx.logger.error('handleDeadLetter requeue error:', err);
       }
     }
   });
@@ -1551,7 +1551,7 @@ async function sendStatusDocument(ctx, docId, bChangeBase, opt_userAction, opt_u
     replyData = await sendServerRequest(ctx, uri, sendData);
   } catch (err) {
     replyData = null;
-    ctx.logger.error('postData error: url = %s;data = %j %s', uri, sendData, err.stack);
+    ctx.logger.error('postData error: url = %s;data = %j', uri, sendData, err);
   }
   await onReplySendStatusDocument(ctx, docId, replyData);
   return sendData;
@@ -1562,7 +1562,7 @@ function parseReplyData(ctx, replyData) {
     try {
       res = JSON.parse(replyData);
     } catch (e) {
-      ctx.logger.error('error parseReplyData: data = %s %s', replyData, e.stack);
+      ctx.logger.error('error parseReplyData: data = %s', replyData, e);
       res = null;
     }
   }
@@ -1697,6 +1697,9 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesM
 // opt_changesMask: the task row as the caller holds it.  Nothing is cleaned if
 // the row no longer matches it (false: the caller's next attempt finds out),
 // and the changes are deleted only while it still does.
+// opt_cleanupOptions: {preserveSavedClaim} keeps the saved-state entries a
+// final save still in flight needs (see savedState.js); {skipWopiUnlock} skips
+// the WOPI UNLOCK (and its task-row update) at the end.
 function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_changesMask, opt_cleanupOptions) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
@@ -1727,7 +1730,7 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
     if (opt_changesMask) {
       yield taskResult.deleteChangesIf(ctx, opt_changesMask);
     } else {
-      // Unlike main, a failed deletion fails the cleanup (an encrypted save
+      // A failed deletion fails the cleanup (an encrypted save
       // answers saveFile with 400): changes left behind silently would be
       // replayed by the next open on top of the file that already has them.
       yield sqlBase.deleteChangesPromise(ctx, docId, null);
@@ -1742,14 +1745,24 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
       yield storage.deletePath(ctx, docId, tenForgottenFiles);
     }
   }
+  if (opt_cleanupOptions?.skipWopiUnlock === true) {
+    return true;
+  }
   return yield unlockWopiDoc(ctx, docId, opt_userIndex, opt_changesMask);
 }
 /**
  * Clean up after the final viewer leaves, while preserving a saved-state claim
  * that an in-flight callback may still need to acknowledge.
+ *
+ * It never sends a WOPI UNLOCK.  The lock belongs to the editors: an editor's own exit
+ * releases it when there was no save, and the final save releases it in its
+ * cleanup (or leaves it to the host's lock expiry when it is abandoned).  An
+ * UNLOCK here has no ownership mask and would race a final save still in
+ * flight: the host could reject its PutFile or let a third party lock the file
+ * mid-save.
  */
 function* cleanDocumentAfterFinalViewerExit(ctx, docId) {
-  yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, undefined, {preserveSavedClaim: true});
+  return yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, undefined, {preserveSavedClaim: true, skipWopiUnlock: true});
 }
 // opt_closeStatus ({sent}) lets a retried caller send the status only once:
 // it is skipped when `sent` is true and set to true once the status was sent.
@@ -1866,7 +1879,7 @@ function getRequestParams(ctx, req, _opt_isNotInBody) {
       try {
         res.params = JSON.parse(req.body.toString('utf8'));
       } catch (err) {
-        ctx.logger.debug('getRequestParams error parsing json body: %s', err.stack);
+        ctx.logger.debug('getRequestParams error parsing json body:', err);
       }
     }
     if (!res.params) {
@@ -1988,6 +2001,7 @@ exports.getIsPreStop = getIsPreStop;
 exports.hasChanges = hasChanges;
 exports.cleanDocumentOnExitPromise = co.wrap(cleanDocumentOnExit);
 exports.cleanDocumentOnExitNoChangesPromise = co.wrap(cleanDocumentOnExitNoChanges);
+exports.cleanDocumentAfterFinalViewerExitPromise = co.wrap(cleanDocumentAfterFinalViewerExit);
 exports.unlockWopiDoc = unlockWopiDoc;
 exports.setForceSave = setForceSave;
 exports.startForceSave = startForceSave;
@@ -2076,7 +2090,7 @@ exports.install = function (server, app, callbackFunction) {
           }
         }
       } catch (err) {
-        ctx.logger.error('io.use error: %s', err.stack);
+        ctx.logger.error('io.use error:', err);
       } finally {
         ctx.logger.info('io.use end');
         next(res);
@@ -2143,7 +2157,7 @@ exports.install = function (server, app, callbackFunction) {
                 try {
                   yield* auth(ctx, conn, data);
                 } catch (err) {
-                  ctx.logger.error('auth error: %s', err.stack);
+                  ctx.logger.error('auth error:', err);
                   sendDataDisconnectReason(ctx, conn, constants.ACCESS_DENIED_CODE, constants.ACCESS_DENIED_REASON);
                   conn.disconnect(true);
                   return;
@@ -2233,7 +2247,7 @@ exports.install = function (server, app, callbackFunction) {
               }
             }
           } catch (e) {
-            ctx.logger.error('error receiving response: type = %s %s', data && data.type ? data.type : 'null', e.stack);
+            ctx.logger.error('error receiving response: type = %s', data && data.type ? data.type : 'null', e);
           }
         });
       });
@@ -2245,14 +2259,14 @@ exports.install = function (server, app, callbackFunction) {
             yield ctx.initTenantCache();
             yield* closeDocument(ctx, conn, reason);
           } catch (err) {
-            ctx.logger.error('Error conn close: %s', err.stack);
+            ctx.logger.error('Error conn close:', err);
           }
         });
       });
 
       _checkLicense(ctx, conn);
     } catch (err) {
-      ctx.logger.error('connection error: %s', err.stack);
+      ctx.logger.error('connection error:', err);
       sendDataDisconnectReason(ctx, conn, constants.DROP_CODE, constants.DROP_REASON);
       conn.disconnect(true);
     }
@@ -2574,7 +2588,7 @@ exports.install = function (server, app, callbackFunction) {
           yield* checkEndAuthLock(ctx, true, false, docId, userId);
           yield* publishCloseUsersConnection(ctx, docId, [userId], false, constants.DROP_CODE, constants.DROP_REASON);
         } catch (e) {
-          ctx.logger.error('lockDocumentsTimerId error: %s', e.stack);
+          ctx.logger.error('lockDocumentsTimerId error:', e);
         }
       });
     }, 1000 * tenExpLockDoc);
@@ -3410,7 +3424,7 @@ exports.install = function (server, app, callbackFunction) {
               yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'Restore error. Document modified.', constants.RESTORE_CODE, true);
             }
           } catch (err) {
-            ctx.logger.error('DataBase error: %s', err.stack);
+            ctx.logger.error('DataBase error:', err);
             yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'DataBase error', constants.RESTORE_CODE, true);
           }
         } else {
@@ -3470,7 +3484,7 @@ exports.install = function (server, app, callbackFunction) {
       const userAction = new commonDefines.OutputAction(commonDefines.c_oAscUserAction.In, tmpUser.idOriginal);
       //make async request to speed up file opening
       sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, userIndex, documentCallback, conn.baseUrl).catch(err =>
-        ctx.logger.error('endAuth sendStatusDocument error: %s', err.stack)
+        ctx.logger.error('endAuth sendStatusDocument error:', err)
       );
       if (!bIsRestore) {
         //check forgotten file
@@ -4149,7 +4163,7 @@ exports.install = function (server, app, callbackFunction) {
         });
         ctx.logger.info('_checkLicense end');
       } catch (err) {
-        ctx.logger.error('_checkLicense error: %s', err.stack);
+        ctx.logger.error('_checkLicense error:', err);
       }
     });
   }
@@ -4386,7 +4400,7 @@ exports.install = function (server, app, callbackFunction) {
             ctx.logger.debug('pubsub unknown message type:%s', msg);
         }
       } catch (err) {
-        ctx.logger.error('pubsub message error: %s', err.stack);
+        ctx.logger.error('pubsub message error:', err);
       }
     });
   };
@@ -4502,7 +4516,7 @@ exports.install = function (server, app, callbackFunction) {
         }
         ctx.initDefault();
       } catch (err) {
-        ctx.logger.error('expireDoc error: %s', err.stack);
+        ctx.logger.error('expireDoc error:', err);
       } finally {
         setTimeout(expireDoc, expDocumentsStep);
       }
@@ -4541,7 +4555,7 @@ exports.install = function (server, app, callbackFunction) {
         ctx.initDefault();
         ctx.logger.info('refreshWopiLock end');
       } catch (err) {
-        ctx.logger.error('refreshWopiLock error:%s', err.stack);
+        ctx.logger.error('refreshWopiLock error:', err);
       } finally {
         setTimeout(refreshWopiLock, cfgRefreshLockInterval);
       }
@@ -4553,7 +4567,7 @@ exports.install = function (server, app, callbackFunction) {
   pubsub.on('message', pubsubOnMessage);
   pubsub.init(err => {
     if (null != err) {
-      operationContext.global.logger.error('createPubSub error: %s', err.stack);
+      operationContext.global.logger.error('createPubSub error:', err);
     }
 
     queue = new queueService();
@@ -4561,7 +4575,7 @@ exports.install = function (server, app, callbackFunction) {
     queue.on('response', canvasService.receiveTask);
     queue.init(true, true, false, true, true, true, err => {
       if (null != err) {
-        operationContext.global.logger.error('createTaskQueue error: %s', err.stack);
+        operationContext.global.logger.error('createTaskQueue error:', err);
       }
       gc.startGC();
 
@@ -4670,7 +4684,7 @@ exports.healthCheck = function (req, res) {
       output = true;
       ctx.logger.info('healthCheck end');
     } catch (err) {
-      ctx.logger.error('healthCheck error %s', err.stack);
+      ctx.logger.error('healthCheck error', err);
     } finally {
       res.setHeader('Content-Type', 'text/plain');
       res.send(output.toString());
@@ -4914,7 +4928,7 @@ exports.commandFromServer = function (req, res) {
       }
     } catch (err) {
       output.error = commonDefines.c_oAscServerCommandErrors.UnknownError;
-      ctx.logger.error('Error commandFromServer: %s', err.stack);
+      ctx.logger.error('Error commandFromServer:', err);
     } finally {
       let outputBuffer;
       if (postRes) {
@@ -4944,7 +4958,7 @@ exports.shutdown = function (req, res) {
       ctx.logger.info('shutdown start');
       output = yield shutdown.shutdown(ctx, editorStat, req.method === 'PUT');
     } catch (err) {
-      ctx.logger.error('shutdown error %s', err.stack);
+      ctx.logger.error('shutdown error', err);
     } finally {
       res.setHeader('Content-Type', 'text/plain');
       res.send(output.toString());
@@ -4965,7 +4979,7 @@ exports.preStop = async function (req, res) {
     }
     output = true;
   } catch (err) {
-    ctx.logger.error('preStop error %s', err.stack);
+    ctx.logger.error('preStop error', err);
   } finally {
     res.setHeader('Content-Type', 'text/plain');
     res.send(output.toString());
@@ -4996,7 +5010,7 @@ exports.getShutdownStatus = function (req, res) {
       shutdown: getIsShutdown()
     });
   } catch (err) {
-    ctx.logger.error('getShutdownStatus error %s', err.stack);
+    ctx.logger.error('getShutdownStatus error', err);
     res.status(500).json({error: 'Internal server error'});
   }
 };
@@ -5013,7 +5027,7 @@ exports.getEditorConnectionsCount = function (req, res) {
     }
     ctx.logger.info('getConnectionsCount count=%d', count);
   } catch (err) {
-    ctx.logger.error('getConnectionsCount error %s', err.stack);
+    ctx.logger.error('getConnectionsCount error', err);
   } finally {
     res.setHeader('Content-Type', 'text/plain');
     res.send(count.toString());

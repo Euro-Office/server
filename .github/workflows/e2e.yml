@@ -57,10 +57,10 @@ jobs:
           path: documentserver
           ref: main
 
-      - name: Use Node.js 24
+      - name: Use Node.js 26
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 26
 
       - name: Pull nightly image
         run: docker pull ${{ env.NIGHTLY_IMAGE }}
@@ -96,6 +96,7 @@ jobs:
             ( cd "$d" && npm install )
           done
           mkdir -p "$BUILD_ROOT"
+          cp Common/config/default.json "$BUILD_ROOT/default.json"
           ( cd DocService    && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/docservice" )
           ( cd FileConverter && pkg . -t linux-x64 -o "$BUILD_ROOT/fileconverter" )
           ( cd Metrics       && pkg . -t linux-x64 -o "$BUILD_ROOT/metrics" )
@@ -116,7 +117,7 @@ jobs:
               install -m0755 /tmp/srv/docservice    "$root/server/DocService/docservice"; \
               install -m0755 /tmp/srv/fileconverter "$root/server/FileConverter/converter"; \
               install -m0755 /tmp/srv/metrics       "$root/server/Metrics/metrics"; \
-              install -m0644 /tmp/srv/default.json "$EO_CONF/default.json"; \
+              install -m0644 /tmp/srv/default.json  "/etc/${root#/var/www/}/default.json"; \
               rm -rf /tmp/srv
           EOF
           docker build \

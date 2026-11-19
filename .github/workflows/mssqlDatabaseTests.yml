@@ -7,6 +7,10 @@ on:
       - 'tests/integration/databaseTests/**'
       - 'DocService/sources/databaseConnectors/baseConnector.js'
       - 'DocService/sources/databaseConnectors/mssqlConnector.js'
+      - 'DocService/sources/canvasservice.js'
+      - 'DocService/sources/DocsCoServer.js'
+      - 'DocService/sources/taskresult.js'
+      - 'DocService/sources/wopiClient.js'
       - '**/package.json'
       - '**/npm-shrinkwrap.json'
       - '.github/workflows/mssqlDatabaseTests.yml'
@@ -25,7 +29,7 @@ jobs:
       - name: Caching dependencies
         uses: actions/setup-node@v3
         with:
-          node-version: '24'
+          node-version: '26'
           cache: 'npm'
           cache-dependency-path: |
             ./npm-shrinkwrap.json

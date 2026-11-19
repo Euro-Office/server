@@ -585,7 +585,7 @@ describe('final-save retries converge', () => {
     expect(docsCoServer.sendServerRequest).toHaveBeenCalledTimes(4);
     expect(replies).toEqual(['{"error":0}', '{"error":0}', '{"error":0}', '{"error":0}']);
     // Encrypted saves are answered synchronously and never retried: no
-    // acceptance tracking, the row keeps the minute as on main.
+    // acceptance tracking, the row keeps the minute.
     expect(row.status).toBe(UpdateVersion);
     expect(row.status_info).toBe(minute());
     expect(finalSaveMarkers()).toEqual([]);
@@ -598,7 +598,7 @@ describe('final-save retries converge', () => {
     docsCoServer.sendServerRequest.mockRejectedValueOnce(error);
 
     await deliver(queued());
-    // A callback that was not accepted restores the row, as on main.
+    // A callback that was not accepted restores the row.
     expect(row.status).toBe(SaveVersion);
     expect(row.status_info).toBe(12);
     expect(delayed).toHaveLength(1);
@@ -622,7 +622,7 @@ describe('final-save retries converge', () => {
     expectCompleted();
   });
 
-  test('a declined save removes the task row and stores the forgotten file, as main does', async () => {
+  test('a declined save removes the task row and stores the forgotten file', async () => {
     docsCoServer.sendServerRequest.mockResolvedValue('{"error":1}');
 
     await deliver(queued());
@@ -1232,7 +1232,7 @@ describe('final-save retries converge', () => {
     }
   });
 
-  test('a database without the additional column still saves, as main does', async () => {
+  test('a database without the additional column still saves', async () => {
     delete row.additional;
     const {ack} = await deliver(queued());
 
@@ -1437,7 +1437,7 @@ describe('final-save retries converge', () => {
     expect(row).toEqual(pending);
   });
 
-  test('an encrypted save accepted but reported unsaved gets its previous status back, as on main', async () => {
+  test('an encrypted save accepted but reported unsaved gets its previous status back', async () => {
     row.status = Ok;
     row.status_info = constants.NO_ERROR;
     docsCoServer.getEditorsCountPromise.mockResolvedValue(1);
@@ -1459,7 +1459,7 @@ describe('final-save retries converge', () => {
     expect(row.status_info).toBe(minute());
   });
 
-  test('HTTP callback retries back off by their own count, as on main', async () => {
+  test('HTTP callback retries back off by their own count', async () => {
     const options = config.get('services.CoAuthoring.callbackBackoffOptions');
     operationContext.Context.prototype.getCfg.mockImplementation((path, fallback) =>
       path === 'services.CoAuthoring.callbackBackoffOptions' ? {...options, retries: 10} : fallback
@@ -1516,7 +1516,7 @@ describe('final-save retries converge', () => {
     expect(storage.copyObject).toHaveBeenCalledTimes(1);
   });
 
-  test('a session opened from the forgotten file ends as on main: cache and row removed at completion', async () => {
+  test('a session opened from the forgotten file ends with cache and row removed at completion', async () => {
     storage.listObjects.mockImplementation(async (_ctx, path) => (path.endsWith('.txt') ? ['document/forgotten.txt'] : ['document/forgotten.docx']));
     const cacheDeleted = [];
     storage.deletePath.mockImplementation(async (_ctx, docId, prefix) => {
@@ -1815,7 +1815,7 @@ describe('final-save retries converge', () => {
       commonDefines.FINAL_SAVE_PENDING_STATUS_INFO + 3 + 99999999
     ]) {
       expect(value).toBeLessThanOrEqual(2147483647);
-      // main's expiry check: Date.now() - status_info * 60000 > expire
+      // the expiry check of servers without pending statuses: Date.now() - status_info * 60000 > expire
       expect(Date.now() - value * 60000 > 5 * 60000).toBe(false);
     }
   });
@@ -2352,7 +2352,7 @@ describe('final-save retries converge', () => {
     const editorDataCleanup = jest.spyOn(docsCoServer.editorData, 'cleanDocumentOnExit');
 
     await deliver(queued());
-    // Completed before the event, as on main.
+    // Completed before the event.
     expectCompleted();
     expect(delayed).toHaveLength(1);
     const cleanups = editorDataCleanup.mock.calls.length;
@@ -2470,7 +2470,7 @@ describe('final-save retries converge', () => {
     now = start + callbackTimeout + expire + 1000;
     expect(canvasservice.isUpdateVersionExpired(ctx, row, expire)).toBe(true);
     expect(canvasservice.isFinalSaveInProgress(ctx, row)).toBe(false);
-    // A completed save's minute (its acceptance last) expires as on main.
+    // A completed save's minute (its acceptance last) expires.
     now = start + expire + 1000;
     expect(canvasservice.isUpdateVersionExpired(ctx, completed, expire)).toBe(true);
     expect(canvasservice.isFinalSaveInProgress(ctx, completed)).toBe(false);
@@ -2488,7 +2488,7 @@ describe('final-save retries converge', () => {
       row.status_info = statusInfo;
       expect(canvasservice.isFinalSaveInProgress(ctx, row)).toBe(true);
     }
-    // A minute with no save in flight: the cache check goes ahead, as on main.
+    // A minute with no save in flight: the cache check goes ahead.
     row.status_info = minute();
     expect(canvasservice.isFinalSaveInProgress(ctx, row)).toBe(false);
   });

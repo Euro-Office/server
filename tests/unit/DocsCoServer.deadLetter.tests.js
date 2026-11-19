@@ -257,7 +257,7 @@ describe('dead-letter confirmed recovery', () => {
     await run(data);
     expect(ack).toHaveBeenCalledTimes(1);
     expect(nack).not.toHaveBeenCalled();
-    expect(logger.error).toHaveBeenCalledWith('handleDeadLetter error: %s', expect.any(String));
+    expect(logger.error).toHaveBeenCalledWith('handleDeadLetter error:', expect.any(Error));
   });
 
   test('tenant initialization failure requeues the unchanged final save and a redelivery can recover', async () => {
