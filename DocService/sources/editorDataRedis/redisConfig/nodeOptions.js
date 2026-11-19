@@ -36,12 +36,11 @@ function normalizeSentinelRootNode(node, index) {
   return {host: node.host.trim(), port};
 }
 
-function normalizeNodeOptions(source, database, includeEndpoint = true, includeCommandOptions = true) {
-  const options = cloneConfig(source) || {};
-  options.RESP = REDIS_RESP_VERSION;
-  if (includeEndpoint) {
-    options.disableOfflineQueue = true;
-  }
+// Resolve the legacy `user`/`db` aliases of one options layer. Callers that
+// merge layers resolve each layer first, so an alias in a more specific layer
+// overrides the canonical key it inherits from a less specific one.
+function resolveOptionAliases(source) {
+  const options = {...(source || {})};
   if (options.user !== undefined && options.username === undefined) {
     options.username = options.user;
   }
@@ -50,6 +49,15 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
   }
   delete options.user;
   delete options.db;
+  return options;
+}
+
+function normalizeNodeOptions(source, database, includeEndpoint = true, includeCommandOptions = true) {
+  const options = resolveOptionAliases(cloneConfig(source));
+  options.RESP = REDIS_RESP_VERSION;
+  if (includeEndpoint) {
+    options.disableOfflineQueue = true;
+  }
   if (options.password === '') {
     delete options.password;
     // Older entrypoints emitted the implicit default ACL username together
@@ -89,4 +97,4 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
   return options;
 }
 
-module.exports = {normalizeNodeOptions, normalizeSentinelName, normalizeSentinelRootNode};
+module.exports = {normalizeNodeOptions, normalizeSentinelName, normalizeSentinelRootNode, resolveOptionAliases};

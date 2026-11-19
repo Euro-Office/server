@@ -408,6 +408,31 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(options.passthroughClientErrorEvents, true);
   });
 
+  test('lets Sentinel node options override the shared credentials, also through the legacy user alias', () => {
+    const shared = {username: cfgRedisOptions.username, password: cfgRedisOptions.password};
+    cfgRedisOptions.username = 'shared-user';
+    cfgRedisOptions.password = 'shared-password';
+    try {
+      const sentinel = {name: 'mymaster', sentinelRootNodes: [{host: 'sentinel-a', port: 26379}]};
+      const aliased = normalizeSentinelOptions({...sentinel, nodeClientOptions: {user: 'node-user', password: 'node-password'}}, 0);
+      assert.equal(aliased.nodeClientOptions.username, 'node-user');
+      assert.equal(aliased.nodeClientOptions.password, 'node-password');
+      assert.equal(Object.hasOwn(aliased.nodeClientOptions, 'user'), false);
+
+      const inherited = normalizeSentinelOptions({...sentinel, nodeClientOptions: {}}, 0);
+      assert.equal(inherited.nodeClientOptions.username, 'shared-user');
+      assert.equal(inherited.nodeClientOptions.password, 'shared-password');
+    } finally {
+      for (const [key, value] of Object.entries(shared)) {
+        if (value === undefined) {
+          delete cfgRedisOptions[key];
+        } else {
+          cfgRedisOptions[key] = value;
+        }
+      }
+    }
+  });
+
   test('does not authenticate unauthenticated Sentinel or Redis nodes with empty credentials', () => {
     const options = normalizeSentinelOptions(
       {
@@ -853,14 +878,19 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(connection.client, client);
   });
 
-  test.each([
-    ['READONLY', 'command'],
-    ['READONLY', 'transaction'],
-    ['READONLY', 'transaction reply'],
-    ['MASTERDOWN', 'command'],
-    ['MASTERDOWN', 'transaction'],
-    ['MASTERDOWN', 'transaction reply']
-  ])('invalidates Sentinel on %s from a %s without replaying it', async (code, kind) => {
+  test.each(
+    ['Sentinel', 'standalone'].flatMap(topology =>
+      [
+        ['READONLY', 'command'],
+        ['READONLY', 'transaction'],
+        ['READONLY', 'transaction reply'],
+        ['MASTERDOWN', 'command'],
+        ['MASTERDOWN', 'transaction'],
+        ['MASTERDOWN', 'transaction reply']
+      ].map(([code, kind]) => [topology, code, kind])
+    )
+  )('invalidates a %s client on %s from a %s without replaying it', async (topology, code, kind) => {
+    const sentinel = topology === 'Sentinel';
     const topologyError = new SimpleError(`${code} primary is unavailable`);
     const error = kind === 'transaction reply' ? new MultiErrorReply(['OK', topologyError], [1]) : topologyError;
     const failedOperation = jest.fn().mockRejectedValue(error);
@@ -873,7 +903,7 @@ describe('editorDataRedis connection contract', () => {
     const replacement = fakeClient({sendCommand: jest.fn().mockResolvedValue('OK'), close: async () => {}});
     const connection = new RedisConnection();
     connection.client = client;
-    connection.sentinel = true;
+    connection.sentinel = sentinel;
     connection._createClient = jest.fn(() => {
       connection.client = replacement;
       connection.clientGeneration++;
@@ -890,9 +920,22 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(connection._createClient.mock.calls.length, 1);
     assert.deepEqual(
       Array.from(replacement.sendCommand.mock.calls, call => Array.from(call)),
-      [[false, ['SET', 'next-key', 'value']]]
+      [sentinel ? [false, ['SET', 'next-key', 'value']] : [['SET', 'next-key', 'value']]]
     );
     assert.equal(failedOperation.mock.calls.length, 1);
+    await connection.close();
+  });
+
+  test('keeps a Cluster client on READONLY, because the Cluster client follows redirects itself', async () => {
+    const error = new SimpleError("READONLY You can't write against a read only replica.");
+    const client = fakeClient({sendCommand: jest.fn().mockRejectedValue(error), destroy: jest.fn(), close: async () => {}});
+    const connection = new RedisConnection();
+    connection.client = client;
+    connection.cluster = true;
+
+    await assert.rejects(connection.command(['INCR', 'key']), caught => caught === error);
+    assert.equal(connection.client, client);
+    assert.equal(client.destroy.mock.calls.length, 0);
     await connection.close();
   });
 
@@ -926,18 +969,22 @@ describe('editorDataRedis connection contract', () => {
     await connection.close();
   });
 
-  test.each([
-    new SimpleError('WRONGTYPE Operation against a key holding the wrong kind of value'),
-    new SimpleError('ERR script failed: READONLY'),
-    new SimpleError('NOREPLICAS Not enough good replicas to write.'),
-    new SimpleError('EXECABORT Transaction discarded because of previous errors.'),
-    new MultiErrorReply([new SimpleError('WRONGTYPE invalid value'), 'READONLY user value'], [0]),
-    new Error('Socket closed unexpectedly')
-  ])('keeps the Sentinel client after an ordinary failure: %s', async error => {
+  test.each(
+    ['Sentinel', 'standalone'].flatMap(topology =>
+      [
+        new SimpleError('WRONGTYPE Operation against a key holding the wrong kind of value'),
+        new SimpleError('ERR script failed: READONLY'),
+        new SimpleError('NOREPLICAS Not enough good replicas to write.'),
+        new SimpleError('EXECABORT Transaction discarded because of previous errors.'),
+        new MultiErrorReply([new SimpleError('WRONGTYPE invalid value'), 'READONLY user value'], [0]),
+        new Error('Socket closed unexpectedly')
+      ].map(error => [topology, error])
+    )
+  )('keeps the %s client after an ordinary failure: %s', async (topology, error) => {
     const client = fakeClient({sendCommand: jest.fn().mockRejectedValue(error), close: async () => {}});
     const connection = new RedisConnection();
     connection.client = client;
-    connection.sentinel = true;
+    connection.sentinel = topology === 'Sentinel';
 
     await assert.rejects(connection.command(['INCR', 'key']), caught => caught === error);
     assert.equal(connection.client, client);

@@ -18,7 +18,7 @@ const {
   cloneConfig,
   normalizeCommandOptions
 } = require('./base');
-const {normalizeNodeOptions, normalizeSentinelName, normalizeSentinelRootNode} = require('./nodeOptions');
+const {normalizeNodeOptions, normalizeSentinelName, normalizeSentinelRootNode, resolveOptionAliases} = require('./nodeOptions');
 
 function sentinelReconnectStrategy(retries) {
   if (retries >= REDIS_SENTINEL_RECONNECT_MAX_RETRIES) {
@@ -42,7 +42,7 @@ function normalizeSentinelOptions(source, database) {
   const nodeDatabase = database ?? options.database;
   delete options.database;
   options.nodeClientOptions = normalizeNodeOptions(
-    {...cloneConfig(cfgRedisOptions), ...(options.nodeClientOptions || {})},
+    {...resolveOptionAliases(cloneConfig(cfgRedisOptions)), ...resolveOptionAliases(options.nodeClientOptions)},
     nodeDatabase,
     false,
     false

@@ -9,9 +9,10 @@ const {MultiErrorReply} = require('@redis/client/dist/lib/errors');
 const {toRedisString} = require('../redisValueCodec');
 const {log, errorDetails, withTimeout} = require('./helpers');
 
-function isSentinelTopologyError(error) {
+// The server this client talks to is no longer a writable primary.
+function isPrimaryLostError(error) {
   if (error instanceof MultiErrorReply) {
-    return [...error.errors()].some(isSentinelTopologyError);
+    return [...error.errors()].some(isPrimaryLostError);
   }
   return /^(READONLY|MASTERDOWN)(?:\s|$)/.test(error?.message || '');
 }
@@ -78,8 +79,13 @@ module.exports = function attachCommands(RedisConnection) {
       return await withTimeout(promise, this.commandTimeoutMs, description);
     } catch (error) {
       const timedOut = error.code === 'ETIMEDOUT' || error.constructor?.name === 'TimeoutError';
-      if (timedOut || (this.sentinel && isSentinelTopologyError(error))) {
-        // Rediscover on the next operation, without replaying this command or
+      // READONLY/MASTERDOWN means the primary moved. Sentinel rediscovers it;
+      // a standalone endpoint (a DNS name or Service that follows a managed
+      // failover) must reconnect too, because a demoted primary may keep the
+      // old socket open and would answer every write with READONLY.  Cluster
+      // clients follow MOVED redirects themselves.
+      if (timedOut || (!this.cluster && isPrimaryLostError(error))) {
+        // Reconnect on the next operation, without replaying this command or
         // transaction: it may already have applied some of its writes.
         this._abortClient(clientSnapshot);
       }
