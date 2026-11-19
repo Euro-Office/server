@@ -4,6 +4,7 @@
  */
 'use strict';
 
+const cluster = require('cluster');
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
@@ -11,6 +12,18 @@ const client = require('@prometheus-io/client');
 const utils = require('./utils');
 
 const QUEUE_CHECK_TIMEOUT_MS = 2000;
+const SLOW_TASKS_KEPT = 50;
+const SLOW_TASK_MESSAGE = 'eo:slowTask';
+
+// Slow conversion tasks of all converter workers, oldest first, kept by the converter primary
+const slowTasks = [];
+
+function addSlowTask(task) {
+  slowTasks.push(task);
+  if (slowTasks.length > SLOW_TASKS_KEPT) {
+    slowTasks.shift();
+  }
+}
 
 const register = new client.Registry();
 client.collectDefaultMetrics({register});
@@ -246,7 +259,7 @@ function registerClusterStartTime() {
 /**
  * Set up a converter worker: label its metrics with the worker id and answer metric requests of the primary
  * @param {string} workerId Cluster worker id
- * @returns {{x2tRunning: client.Gauge, x2tDuration: client.Histogram, stepDuration: client.Histogram}}
+ * @returns {{x2tRunning: client.Gauge, x2tDuration: client.Histogram, stepDuration: client.Histogram, reportSlowTask: function(object): void}}
  */
 function registerConverterWorker(workerId) {
   register.setDefaultLabels({worker: workerId});
@@ -272,12 +285,13 @@ function registerConverterWorker(workerId) {
       labelNames: ['step'],
       buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
       registers: [register]
-    })
+    }),
+    reportSlowTask: task => process.connected && process.send({type: SLOW_TASK_MESSAGE, task: {...task, worker: workerId}})
   };
 }
 
 /**
- * Serve the metrics of the converter primary and all its workers on 127.0.0.1
+ * Serve the metrics of the converter primary and all its workers on 127.0.0.1, and their latest slow tasks at /slow-tasks (newest first)
  * @param {number} port Port to listen on
  * @returns {http.Server}
  */
@@ -286,8 +300,17 @@ function startClusterMetricsServer(port) {
   registerClusterStartTime();
   client.ClusterRegistry.setRegistries([register]);
   const aggregator = new client.ClusterRegistry();
+  cluster.on('message', (_worker, message) => {
+    if (message?.type === SLOW_TASK_MESSAGE) {
+      addSlowTask(message.task);
+    }
+  });
   return http
     .createServer(async (req, res) => {
+      if (req.method === 'GET' && req.url === '/slow-tasks') {
+        res.writeHead(200, {'Content-Type': 'application/json'}).end(JSON.stringify([...slowTasks].reverse()));
+        return;
+      }
       if (req.method !== 'GET' || !req.url.startsWith('/metrics')) {
         res.writeHead(404).end();
         return;

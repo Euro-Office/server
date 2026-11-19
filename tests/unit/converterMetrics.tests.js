@@ -48,9 +48,23 @@ describe('converter cluster metrics', () => {
     });
   });
 
-  test('answers only /metrics', async () => {
+  test('serves the latest 50 slow tasks of the workers, newest first', async () => {
+    const tasks = await (await fetch(`${url}/slow-tasks`)).json();
+    expect(tasks).toHaveLength(50);
+    expect(tasks[0]).toEqual({fileName: 'slow50.pptx', total: 12000, worker: String(worker.id)});
+    expect(tasks[49].fileName).toBe('slow1.pptx');
+  });
+
+  test('answers only /metrics and /slow-tasks', async () => {
     expect((await fetch(`${url}/other`)).status).toBe(404);
   });
+
+  test('a worker reporting a slow task after its channel closed keeps running', async () => {
+    cluster.setupPrimary({exec: path.join(__dirname, 'helpers/slowTaskAfterDisconnect.js')});
+    const disconnected = cluster.fork({NODE_ENV: process.env.NODE_ENV, NODE_CONFIG_DIR: process.env.NODE_CONFIG_DIR});
+    const code = await new Promise(resolve => disconnected.on('exit', resolve));
+    expect(code).toBe(0);
+  }, 20000);
 
   test('listens on 127.0.0.1 only', () => {
     expect(server.address().address).toBe('127.0.0.1');

@@ -271,6 +271,13 @@ describe('converter summary', () => {
     'eo_x2t_duration_seconds_count{tool="x2t",result="timeout",worker="2"} 1'
   ].join('\n');
 
+  test('passes the slow tasks and their threshold on', () => {
+    const slowTasks = [{fileName: 'a.pptx', total: 12000}];
+    const summary = statsRouter.summarize({docService: null, adminPanel: [], slowTasks});
+    expect(summary.slowTasks).toBe(slowTasks);
+    expect(summary.server.slowTaskThreshold).toBe('10s');
+  });
+
   test('lists the primary and workers and sums x2t over workers', () => {
     const summary = statsRouter.summarize({docService: null, adminPanel: [], converter: metrics.parsePrometheusText(converterText)});
     expect(summary.converterAvailable).toBe(true);

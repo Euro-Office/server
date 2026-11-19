@@ -15,4 +15,7 @@ const metrics = require('../../../Common/sources/metrics');
 const workerMetrics = metrics.registerConverterWorker(String(cluster.worker.id));
 workerMetrics.x2tRunning.inc();
 workerMetrics.x2tDuration.observe({tool: 'x2t', result: 'ok'}, 0.4);
+for (let i = 0; i < 51; i++) {
+  workerMetrics.reportSlowTask({fileName: `slow${i}.pptx`, total: 12000});
+}
 process.send({type: 'ready'});

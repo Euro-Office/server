@@ -129,6 +129,58 @@ function Documents({documents, now}) {
   );
 }
 
+const formatMs = value => (value == null ? '-' : formatSeconds(value / 1000));
+
+function SlowConversions({tasks, threshold}) {
+  return (
+    <Section
+      title='Slow conversions'
+      description={`The latest ${tasks.length} conversions that took longer than ${threshold}, including the queue wait`}
+    >
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th>Finished</th>
+            <th>File</th>
+            <th>Conversion</th>
+            <th>Queue wait</th>
+            <th>Download</th>
+            <th>Convert</th>
+            <th>Total with queue</th>
+            <th>Size</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.map((task, i) => (
+            <tr key={i}>
+              <td className={styles.nowrap}>
+                {new Date(task.finishedAt).toLocaleString([], {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                })}
+              </td>
+              <td>{task.fileName || 'n/a'}</td>
+              <td>
+                {task.command} {task.formatFrom || '?'} → {task.formatTo || '?'}
+              </td>
+              <td className={styles.nowrap}>{formatMs(task.queueWait)}</td>
+              <td className={styles.nowrap}>{formatMs(task.download)}</td>
+              <td className={styles.nowrap}>{formatMs(task.convert)}</td>
+              <td className={styles.nowrap}>{formatMs((task.queueWait ?? 0) + task.total)}</td>
+              <td className={styles.nowrap}>{typeof task.size === 'number' ? formatBytes(task.size) : '-'}</td>
+              <td>{task.status === 0 ? 'ok' : task.status == null ? '-' : `error ${task.status}`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Section>
+  );
+}
+
 /**
  * Chart samples kept by the admin panel server, fetched incrementally
  */
@@ -168,7 +220,7 @@ export default function Dashboard() {
   if (isLoading) return <div className={styles.dashboard}>Loading...</div>;
   if (error) return <div className={styles.dashboard}>Error: {error.message}</div>;
 
-  const {server, sessions, conversions, x2t, documents, host, processes} = data;
+  const {server, sessions, conversions, x2t, documents, slowTasks, host, processes} = data;
   const latest = samples[samples.length - 1];
   const cpuOf = name => processes.find(p => p.name === name)?.cpu;
   return (
@@ -282,6 +334,12 @@ export default function Dashboard() {
           </table>
         </Section>
       </div>
+
+      {slowTasks?.length > 0 && (
+        <div className={styles.fullWidth}>
+          <SlowConversions tasks={slowTasks} threshold={server.slowTaskThreshold} />
+        </div>
+      )}
     </div>
   );
 }

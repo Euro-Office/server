@@ -209,6 +209,32 @@ describe('converter x2t metrics', () => {
     expect(after.queue_wait.sum - before.queue_wait.sum).toBeGreaterThanOrEqual(5);
   });
 
+  test('reports tasks slower than slowTaskThreshold, including the queue wait', async () => {
+    const reported = [];
+    const reportSlowTask = workerMetrics.reportSlowTask;
+    workerMetrics.reportSlowTask = task => reported.push(task);
+    try {
+      await executeTask('fast', {savekey: 'sk', title: 'fast.docx'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx'});
+      await executeTask(
+        'queued',
+        {savekey: 'sk', title: 'queued.docx'},
+        {fromOrigin: true, fromChanges: true, toFile: 'output.docx', queuedAt: Date.now() - 11000}
+      );
+    } finally {
+      workerMetrics.reportSlowTask = reportSlowTask;
+    }
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({fileName: 'queued.docx', command: 'save', formatTo: 'ooxml', status: constants.CONVERT});
+    expect(reported[0].queueWait).toBeGreaterThanOrEqual(11000);
+    expect(reported[0]).toEqual(expect.objectContaining({finishedAt: expect.any(Number), total: expect.any(Number), size: expect.anything()}));
+  });
+
+  test('falls back to 10 s for an empty slowTaskThreshold', () => {
+    expect(converter.slowTaskThresholdMs('')).toBe(10000);
+    expect(converter.slowTaskThresholdMs(undefined)).toBe(10000);
+    expect(converter.slowTaskThresholdMs('30s')).toBe(30000);
+  });
+
   test('skips the queue wait of tasks queued without a timestamp', async () => {
     const before = await steps();
     await executeTask('nostamp', {savekey: 'sk'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx'});

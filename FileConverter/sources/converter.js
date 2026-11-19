@@ -146,6 +146,10 @@ const cfgEditor = config.get('services.CoAuthoring.editor');
 const cfgRequesFilteringAgent = config.util.cloneDeep(config.get('services.CoAuthoring.request-filtering-agent'));
 const cfgExternalRequestDirectIfIn = config.get('externalRequest.directIfIn');
 const cfgExternalRequestAction = config.get('externalRequest.action');
+// /etc/.../default.json is a conffile on deb: a locally modified copy keeps lacking this key after upgrades
+const cfgSlowTaskThreshold = config.has('FileConverter.converter.slowTaskThreshold')
+  ? config.get('FileConverter.converter.slowTaskThreshold')
+  : '10s';
 
 //windows limit 512(2048) https://msdn.microsoft.com/en-us/library/6e3b887c.aspx
 //Ubuntu 14.04 limit 4096 http://underyx.me/2015/05/18/raising-the-maximum-number-of-file-descriptors.html
@@ -1335,7 +1339,14 @@ function* ExecuteTask(ctx, task) {
   }
   const total = Date.now() - getTaskTime.getTime();
   clientStatsD?.timing('conv.allconvert', total);
-  recordTaskTimings(timings, total);
+  recordTaskTimings(ctx, timings, total, {
+    fileName: dataConvert.title,
+    command: cmd.getCommand(),
+    formatFrom: cmd.getFormat(),
+    formatTo: formatChecker.getStringFromFormat(dataConvert.formatTo),
+    size: sourceSize,
+    status: cmd.getStatusInfo()
+  });
   ctx.logger.info(
     'End Task: queueWait=%sms download=%sms convert=%sms postProcess=%sms total=%dms size=%s',
     timings.queueWait ?? '-',
@@ -1348,18 +1359,31 @@ function* ExecuteTask(ctx, task) {
   return resData;
 }
 /**
- * @param {{queueWait?: number, download?: number, postProcess?: number}} timings Step durations in ms
- * @param {number} total Task duration in ms, without the queue wait
+ * @param {string|number|undefined} value slowTaskThreshold, e.g. "10s"; empty falls back to 10 s
+ * @returns {number|undefined} Milliseconds, undefined for a value ms can't parse
  */
-function recordTaskTimings(timings, total) {
+function slowTaskThresholdMs(value) {
+  return ms(String(value || '10s'));
+}
+/**
+ * Record step durations, and keep the task for the dashboard if it took longer than slowTaskThreshold
+ * @param {operationContext.Context} ctx
+ * @param {{queueWait?: number, download?: number, convert?: number, postProcess?: number}} timings Step durations in ms
+ * @param {number} total Task duration in ms, without the queue wait
+ * @param {object} task File name, command, formats, source size and status of the task
+ */
+function recordTaskTimings(ctx, timings, total, task) {
   if (!workerMetrics) {
     return;
   }
   const steps = {queue_wait: timings.queueWait, download: timings.download, post_process: timings.postProcess, total};
-  for (const [step, ms] of Object.entries(steps)) {
-    if (undefined !== ms) {
-      workerMetrics.stepDuration.observe({step}, ms / 1000);
+  for (const [step, duration] of Object.entries(steps)) {
+    if (undefined !== duration) {
+      workerMetrics.stepDuration.observe({step}, duration / 1000);
     }
+  }
+  if ((timings.queueWait ?? 0) + total >= slowTaskThresholdMs(ctx.getCfg('FileConverter.converter.slowTaskThreshold', cfgSlowTaskThreshold))) {
+    workerMetrics.reportSlowTask({finishedAt: Date.now(), ...task, ...timings, total});
   }
 }
 function ackTask(ctx, res, task, ack) {
@@ -1449,10 +1473,11 @@ function run() {
   });
 }
 /**
- * @param {{x2tRunning: object, x2tDuration: object, stepDuration: object}} metricsOfWorker Metrics to record x2t runs in, from metrics.registerConverterWorker
+ * @param {{x2tRunning: object, x2tDuration: object, stepDuration: object, reportSlowTask: function}} metricsOfWorker Metrics to record x2t runs in, from metrics.registerConverterWorker
  */
 exports.setWorkerMetrics = metricsOfWorker => {
   workerMetrics = metricsOfWorker;
 };
+exports.slowTaskThresholdMs = slowTaskThresholdMs;
 exports.run = run;
 exports.ExecuteTask = ExecuteTask;

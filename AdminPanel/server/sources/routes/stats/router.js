@@ -18,6 +18,9 @@ const docServiceUrl = `http://localhost:${config.get('services.CoAuthoring.serve
 // /etc/.../default.json is a conffile on deb: a locally modified copy keeps lacking this key after upgrades
 const cfgConverterMetricsPort = config.has('FileConverter.converter.metricsPort') ? config.get('FileConverter.converter.metricsPort') : 0;
 const cfgSql = config.get('services.CoAuthoring.sql');
+const cfgSlowTaskThreshold = config.has('FileConverter.converter.slowTaskThreshold')
+  ? config.get('FileConverter.converter.slowTaskThreshold')
+  : '10s';
 
 /**
  * Samples of a metric whose labels match, e.g. all converter workers or one of them
@@ -85,8 +88,9 @@ function converterSummary(list) {
  * @param {Array} sources.adminPanel Parsed metrics of this process
  * @param {Array|null} [sources.converter] Parsed metrics of the converter primary and its workers
  * @param {object|null} [sources.documents] Docservice /internal/documents
+ * @param {Array|null} [sources.slowTasks] Slow conversion tasks of the converter, newest first
  */
-function summarize({docService, adminPanel, converter = null, documents = null}) {
+function summarize({docService, adminPanel, converter = null, documents = null, slowTasks = null}) {
   const converterStats = converter ? converterSummary(converter) : null;
   const summary = {
     docServiceAvailable: Boolean(docService),
@@ -94,9 +98,11 @@ function summarize({docService, adminPanel, converter = null, documents = null})
     server: {
       buildVersion: commonDefines.buildVersion,
       buildNumber: commonDefines.buildNumber,
+      slowTaskThreshold: cfgSlowTaskThreshold || '10s',
       database: {type: cfgSql.type, host: cfgSql.dbHost, port: cfgSql.dbPort, name: cfgSql.dbName}
     },
     x2t: converterStats?.x2t ?? null,
+    slowTasks,
     processes: [processSummary('adminpanel', adminPanel), ...(converterStats?.processes ?? [])]
   };
   if (!docService) {
@@ -142,13 +148,15 @@ async function fetchLocal(url, parse) {
 const parseText = async response => metrics.parsePrometheusText(await response.text());
 
 async function collect() {
-  const [docService, documents, converter, adminPanel] = await Promise.all([
+  const converterUrl = cfgConverterMetricsPort ? `http://127.0.0.1:${cfgConverterMetricsPort}` : null;
+  const [docService, documents, converter, slowTasks, adminPanel] = await Promise.all([
     fetchLocal(`${docServiceUrl}/internal/metrics`, parseText),
     fetchLocal(`${docServiceUrl}/internal/documents`, response => response.json()),
-    cfgConverterMetricsPort ? fetchLocal(`http://127.0.0.1:${cfgConverterMetricsPort}/metrics`, parseText) : null,
+    converterUrl ? fetchLocal(`${converterUrl}/metrics`, parseText) : null,
+    converterUrl ? fetchLocal(`${converterUrl}/slow-tasks`, response => response.json()) : null,
     metrics.register.metrics().then(metrics.parsePrometheusText)
   ]);
-  return {collectedAt: Date.now(), ...summarize({docService, adminPanel, converter, documents})};
+  return {collectedAt: Date.now(), ...summarize({docService, adminPanel, converter, documents, slowTasks})};
 }
 
 const history = createHistory();
