@@ -1,0 +1,9 @@
+{
+  "name": "valid-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "scripts": [
+      "./sources/existing.js"
+    ]
+  }
+}

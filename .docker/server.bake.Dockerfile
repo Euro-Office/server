@@ -51,6 +51,9 @@ FROM web-base AS server
 
     ENV BUILD_ROOT=${BUILD_ROOT}
 
+    # Fail before pkg silently drops a module whose pkg.scripts entry matches no file.
+    RUN cd /server && npm run check:pkg-scripts
+
     RUN TARGETARCH_PKG=$(echo "$TARGETARCH" | sed 's/amd64/x64/') && \
         cd /server/Common && \
         sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i sources/commondefines.js && \
