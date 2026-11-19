@@ -141,8 +141,16 @@ describe('DocsCoServer viewer disconnect handler', () => {
 
     assert.deepEqual(await isolatedEditorData.getPresence(ctx, docId), []);
     assert.equal(await readPresenceKeyCount(isolatedEditorData, ctx, docId), 0);
-    assert.deepEqual(await readDocumentState(isolatedEditorData, ctx, docId), emptyDocumentState());
+    // Final-viewer cleanup can run while the last editor's final save is still
+    // in flight, so it keeps the saved status and the force-save entry that
+    // save reads (savedState.js contract) and removes everything else.
+    assert.deepEqual(await readDocumentState(isolatedEditorData, ctx, docId), {
+      ...emptyDocumentState(),
+      saved: stateWithEditorAndViewer.saved,
+      forceSave: stateWithEditorAndViewer.forceSave
+    });
     assert.equal(await readDocumentIndexScore(isolatedEditorData, ctx, docId), null);
     assert.equal(docsCoServer.editorData.cleanDocumentOnExit.mock.calls.length, 2);
+    assert.deepEqual(docsCoServer.editorData.cleanDocumentOnExit.mock.calls[1][3], {preserveSavedClaim: true});
   });
 });
