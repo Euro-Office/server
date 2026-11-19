@@ -1,5 +1,9 @@
 'use strict';
 
+// These tests cover the Redis editor-data GC path. The documentsCron/TTL rule
+// applies only to Redis-backed storage (see gc.memoryExpiry.tests.js).
+process.env.NODE_CONFIG = JSON.stringify({services: {CoAuthoring: {server: {editorDataStorage: 'editorDataRedis'}}}});
+
 const assert = require('node:assert/strict');
 const {afterEach, beforeEach, describe, jest, test} = require('@jest/globals');
 const commonDefines = require('../../Common/sources/commondefines');
@@ -338,6 +342,36 @@ describe('document expiry GC', () => {
     assert.equal(JSON.stringify(docsCoServer.editorData._ackForceSaveTimer.mock.calls.map(([item]) => item)), JSON.stringify([successful]));
     assert.equal(ctx.logger.error.mock.calls.length, 2);
     assert.equal(setTimeoutSpy.mock.calls.length, 2);
+  });
+
+  test.each([
+    ['NotModified', commonDefines.c_oAscServerCommandErrors.NotModified],
+    ['DocumentIdError', commonDefines.c_oAscServerCommandErrors.DocumentIdError]
+  ])('acknowledges a timer whose force-save ends with %s instead of retrying it forever', async (_name, code) => {
+    const ctx = context();
+    const queue = {
+      initPromise: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined)
+    };
+    const pubsub = {
+      initPromise: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined)
+    };
+    const item = ['tenant-a', 'nothing-to-save'];
+    jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
+
+    operationContext.Context.mockImplementation(() => ctx);
+    queueService.mockImplementation(() => queue);
+    pubsubService.mockImplementation(() => pubsub);
+    docsCoServer.editorData.getForceSaveTimer.mockResolvedValueOnce([item]);
+    docsCoServer.startForceSave.mockResolvedValue({code});
+
+    await forceSaveTimeout();
+
+    assert.equal(docsCoServer.startForceSave.mock.calls.length, 1);
+    assert.equal(docsCoServer.editorData._ackForceSaveTimer.mock.calls.length, 1);
+    assert.deepEqual(docsCoServer.editorData._ackForceSaveTimer.mock.calls[0][0], item);
+    assert.equal(ctx.logger.error.mock.calls.length, 0);
   });
 
   test('does not acknowledge a force-save that resolves with UnknownError and retries it', async () => {

@@ -152,8 +152,8 @@ function Expiration() {
                 label='Auto-Save & Presence Cleanup Cron Expression'
                 value={localSettings.documentsCron}
                 onChange={value => handleFieldChange('documentsCron', value)}
-                placeholder='0 0 */2 * * *'
-                description='Cron expression for auto-saving documents with pending changes and cleaning up expired user presence data (6 fields: second minute hour day month day_of_week)'
+                placeholder='0 */2 * * * *'
+                description='Cron expression for auto-saving documents with pending changes and cleaning up expired user presence data (6 fields: second minute hour day month day_of_week). With Redis editor data, the interval must be at least 10% shorter than the presence and shard TTLs (5 minutes by default), or the document service does not start.'
                 error={getFieldError(CONFIG_PATHS.documentsCron)}
               />
             </div>

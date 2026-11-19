@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const {describe, test} = require('@jest/globals');
 
 const config = require('../../DocService/node_modules/config');
-const {validateDocumentExpiryConfig} = require('../../DocService/sources/expirationConfig');
+const {documentExpiryTtlsApply, validateDocumentExpiryConfig} = require('../../DocService/sources/expirationConfig');
 
 function defaultExpiryConfig() {
   const expire = config.get('services.CoAuthoring.expire');
@@ -18,6 +18,27 @@ function defaultExpiryConfig() {
 }
 
 describe('document expiry configuration', () => {
+  test('applies the TTL rule only when editor data or editor stat uses a Redis backend', () => {
+    assert.equal(documentExpiryTtlsApply('editorDataMemory', ''), false);
+    assert.equal(documentExpiryTtlsApply('editorDataMemory', 'editorDataMemory'), false);
+    assert.equal(documentExpiryTtlsApply('editorDataRedis', ''), true);
+    assert.equal(documentExpiryTtlsApply('editorDataMemory', 'editorDataRedis'), true);
+    assert.equal(documentExpiryTtlsApply('editorDataRedis', 'editorDataMemory'), true);
+  });
+
+  test('accepts a long cron interval when the TTL rule does not apply', () => {
+    const result = validateDocumentExpiryConfig({documentsCron: '0 0 */2 * * *', presence: 300, shard: 300}, undefined, {checkTtls: false});
+
+    assert.deepEqual(result, {valid: true, documentsCronStepMs: 7200000});
+  });
+
+  test('still rejects an invalid cron expression when the TTL rule does not apply', () => {
+    const result = validateDocumentExpiryConfig({documentsCron: 'not a cron', presence: 300, shard: 300}, undefined, {checkTtls: false});
+
+    assert.equal(result.valid, false);
+    assert.match(result.message, /Invalid services.CoAuthoring.expire.documentsCron/);
+  });
+
   test('accepts the existing default documents cron and TTLs', () => {
     const result = validateDocumentExpiryConfig(defaultExpiryConfig());
 

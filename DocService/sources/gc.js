@@ -36,7 +36,7 @@ const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const pubsubService = require('./pubsubRabbitMQ');
 const sqlBase = require('./databaseConnectors/baseConnector');
-const {getCronStep, validateDocumentExpiryConfig} = require('./expirationConfig');
+const {documentExpiryTtlsApply, getCronStep, validateDocumentExpiryConfig} = require('./expirationConfig');
 
 const cfgExpFilesCron = config.get('services.CoAuthoring.expire.filesCron');
 const cfgExpDocumentsCron = config.get('services.CoAuthoring.expire.documentsCron');
@@ -45,12 +45,19 @@ const cfgExpShard = config.get('services.CoAuthoring.expire.shard');
 const cfgExpFiles = config.get('services.CoAuthoring.expire.files');
 const cfgExpFilesRemovedAtOnce = config.get('services.CoAuthoring.expire.filesremovedatonce');
 const cfgForceSaveStep = config.get('services.CoAuthoring.autoAssembly.step');
+const cfgEditorDataStorage = config.get('services.CoAuthoring.server.editorDataStorage');
+const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatStorage');
 
-const baseDocumentExpiryConfig = validateDocumentExpiryConfig({
-  documentsCron: cfgExpDocumentsCron,
-  presence: cfgExpPresence,
-  shard: cfgExpShard
-});
+const checkExpiryTtls = documentExpiryTtlsApply(cfgEditorDataStorage, cfgEditorStatStorage);
+const baseDocumentExpiryConfig = validateDocumentExpiryConfig(
+  {
+    documentsCron: cfgExpDocumentsCron,
+    presence: cfgExpPresence,
+    shard: cfgExpShard
+  },
+  undefined,
+  {checkTtls: checkExpiryTtls}
+);
 if (!baseDocumentExpiryConfig.valid) {
   throw new Error(baseDocumentExpiryConfig.message);
 }
@@ -62,8 +69,20 @@ function acknowledgeExpired(editorData, method, item) {
   return typeof acknowledge === 'function' ? acknowledge.call(editorData, item) : undefined;
 }
 
+// Outcomes that a later attempt cannot change: the force-save started, there
+// was nothing to save (NotModified: no unsaved changes since the last
+// force-save, one is already running, or the document has no callback), or the
+// document is gone (DocumentIdError).  Acknowledge them so the leased timer is
+// not handed out again every lease period; the in-memory backend drops every
+// popped timer.  Other results and exceptions keep the lease for a retry.
+const FINAL_FORCE_SAVE_TIMER_CODES = new Set([
+  commondefines.c_oAscServerCommandErrors.NoError,
+  commondefines.c_oAscServerCommandErrors.NotModified,
+  commondefines.c_oAscServerCommandErrors.DocumentIdError
+]);
+
 function acknowledgeForceSaveResult(ctx, expiredKey, result) {
-  if (!result || result.code !== commondefines.c_oAscServerCommandErrors.NoError) {
+  if (!result || !FINAL_FORCE_SAVE_TIMER_CODES.has(result.code)) {
     ctx.logger.error(
       'forceSaveTimeout item failed: tenant=%s docId=%s code=%s',
       expiredKey[0],
@@ -253,11 +272,15 @@ const checkDocumentExpire = function () {
     try {
       ctx.logger.info('checkDocumentExpire start');
       const currentDocumentsCron = ctx.getCfg('services.CoAuthoring.expire.documentsCron', cfgExpDocumentsCron);
-      const currentDocumentExpiryConfig = validateDocumentExpiryConfig({
-        documentsCron: currentDocumentsCron,
-        presence: ctx.getCfg('services.CoAuthoring.expire.presence', cfgExpPresence),
-        shard: ctx.getCfg('services.CoAuthoring.expire.shard', cfgExpShard)
-      });
+      const currentDocumentExpiryConfig = validateDocumentExpiryConfig(
+        {
+          documentsCron: currentDocumentsCron,
+          presence: ctx.getCfg('services.CoAuthoring.expire.presence', cfgExpPresence),
+          shard: ctx.getCfg('services.CoAuthoring.expire.shard', cfgExpShard)
+        },
+        undefined,
+        {checkTtls: checkExpiryTtls}
+      );
       if (!currentDocumentExpiryConfig.valid) {
         ctx.logger.error('checkDocumentExpire configuration error: %s', currentDocumentExpiryConfig.message);
         return;

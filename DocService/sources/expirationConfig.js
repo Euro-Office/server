@@ -44,10 +44,15 @@ function invalidConfiguration(message, details = {}) {
   };
 }
 
-function validateDocumentExpiryConfig(expire, getStep = getCronStep) {
+// The documentsCron/TTL rule protects keys that expire on their own in
+// Redis/Valkey: editor-data presence and editor-stat shard counters. The
+// in-memory backend keeps neither, so it accepts any documentsCron, as before.
+function documentExpiryTtlsApply(editorDataStorage, editorStatStorage) {
+  return [editorDataStorage, editorStatStorage || editorDataStorage].some(storage => storage !== 'editorDataMemory');
+}
+
+function validateDocumentExpiryConfig(expire, getStep = getCronStep, {checkTtls = true} = {}) {
   const documentsCron = expire?.documentsCron;
-  const presenceTtlMs = ttlMilliseconds(expire?.presence);
-  const shardTtlMs = ttlMilliseconds(expire?.shard);
 
   let documentsCronStepMs;
   try {
@@ -59,6 +64,12 @@ function validateDocumentExpiryConfig(expire, getStep = getCronStep) {
   if (!Number.isFinite(documentsCronStepMs) || documentsCronStepMs <= 0) {
     return invalidConfiguration('services.CoAuthoring.expire.documentsCron must produce a positive interval');
   }
+  if (!checkTtls) {
+    return {valid: true, documentsCronStepMs};
+  }
+
+  const presenceTtlMs = ttlMilliseconds(expire?.presence);
+  const shardTtlMs = ttlMilliseconds(expire?.shard);
   if (!Number.isFinite(presenceTtlMs) || !Number.isFinite(shardTtlMs)) {
     return invalidConfiguration('services.CoAuthoring.expire.presence and services.CoAuthoring.expire.shard must be positive durations');
   }
@@ -77,6 +88,7 @@ function validateDocumentExpiryConfig(expire, getStep = getCronStep) {
 }
 
 module.exports = {
+  documentExpiryTtlsApply,
   getCronStep,
   ttlMilliseconds,
   validateDocumentExpiryConfig
