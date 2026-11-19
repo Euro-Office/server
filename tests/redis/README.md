@@ -282,6 +282,6 @@ docker rm -f local-redis \
 ## Matching the complete GitHub Actions matrix
 
 CI repeats these tests with Redis 7.0.15, Redis 7.2, Redis 8, Valkey 7.2,
-and Valkey 8. Sentinel CI also tests password, unauthenticated, and ACL
+Valkey 8, and Valkey 9. Sentinel CI also tests password, unauthenticated, and ACL
 configurations. The exact matrix and container setup are maintained in
 `.github/workflows/redisEditorDataTests.yml`.

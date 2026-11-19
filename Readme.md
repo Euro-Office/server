@@ -12,8 +12,8 @@ bundled Node-Redis client version is 6.2.1.
 
 ## Valkey editor-data backend
 
-The complete editor-data test suite covers Valkey 7.2 and Valkey 8 in all
-three tested topologies: standalone, Cluster, and Sentinel.
+The complete editor-data test suite covers Valkey 7.2, Valkey 8, and Valkey 9
+in all three tested topologies: standalone, Cluster, and Sentinel.
 
 ## Operator configuration
 
@@ -24,7 +24,8 @@ Use Redis 7.2 or later, or Valkey 7.2 or later, for production deployments.
 The compatibility matrix also runs against Redis 7.0.15 because that is the
 Redis version provided by Ubuntu 24.04; this is compatibility coverage rather
 than the official Node-Redis support floor. Redis 7.2, Redis 8, Valkey 7.2,
-and Valkey 8 are tested in standalone, Cluster, and Sentinel configurations.
+Valkey 8, and Valkey 9 are tested in standalone, Cluster, and Sentinel
+configurations.
 
 For Cluster deployments, configure all nodes with the same command and data
 semantics. For Sentinel deployments, configure one primary, its replicas, and
@@ -52,6 +53,12 @@ outer connection attempt is bounded by 15 seconds; commands have a 30-second
 adapter timeout and fail before readiness rather than entering an unbounded
 offline queue. A deliberate store or process shutdown remains terminal until
 the store is recreated.
+
+A standalone endpoint that follows a managed failover, such as a DNS name or a
+Kubernetes Service in front of a primary and its replicas, is handled the same
+way as Sentinel: a command answered with `READONLY` or `MASTERDOWN` closes the
+client, and the next operation reconnects through the endpoint. The failed
+command is not replayed. Cluster clients follow `MOVED` redirects instead.
 
 ### DocumentServer startup retry policy
 
@@ -218,6 +225,7 @@ fully failover-safe for locks.
 
 Treat this as a deployment risk and a separate production-readiness follow-up.
 Sentinel support, command retries, and `WAIT` do not remove this limitation.
+
 ## File converter worker count
 
 Set `FileConverter.converter.workercount` to a positive integer in your administrator
