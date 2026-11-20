@@ -6,8 +6,10 @@
 'use strict';
 
 const {MultiErrorReply} = require('@redis/client/dist/lib/errors');
+const calculateSlot = require('cluster-key-slot');
 const {toRedisString} = require('../redisValueCodec');
-const {log, errorDetails, withTimeout} = require('./helpers');
+const {hasNodeCluster} = require('../redisConfig');
+const {log, errorDetails, withTimeout, RedisUnavailableError} = require('./helpers');
 
 // The server this client talks to is no longer a writable primary.
 function isPrimaryLostError(error) {
@@ -23,7 +25,9 @@ module.exports = function attachCommands(RedisConnection) {
   };
 
   RedisConnection.prototype.commands = async function (commands) {
-    if (this.cluster) {
+    // this.cluster is set when a client is created; before the first one the
+    // configuration decides (a MULTI on a cluster client fails).
+    if (this.client ? this.cluster : hasNodeCluster()) {
       // Cluster batches are independent commands. Route them through the
       // operation boundary individually so a timed-out command cannot abort
       // another batch member that has not reached the wire yet.
@@ -44,7 +48,14 @@ module.exports = function attachCommands(RedisConnection) {
       if (this.cluster) {
         const command = normalized[0].toUpperCase();
         const firstKey = command === 'EVAL' ? normalized[3] : command === 'PING' ? undefined : normalized[1];
-        result = client.sendCommand(firstKey, false, normalized);
+        if (firstKey === undefined && typeof client.getMasters === 'function') {
+          // A keyless command (PING) goes to a master that is reachable, not to
+          // a random node that may not be.
+          result = (await this._readyClusterMaster(client)).sendCommand(normalized);
+        } else {
+          this._requireClusterSlot(client, firstKey);
+          result = client.sendCommand(firstKey, false, normalized);
+        }
       } else if (this.sentinel) {
         result = client.sendCommand(false, normalized);
       } else {
@@ -57,6 +68,39 @@ module.exports = function attachCommands(RedisConnection) {
       log('error', 'command failed %s after %dms (connector=%s): %s', commandName, Date.now() - startedAt, this.connector, errorDetails(error));
       throw error;
     }
+  };
+
+  // node-redis fails with a TypeError, and never reads the topology again,
+  // when its slot map has no owner for the key (a cluster whose slots are not
+  // assigned yet, or a failed discovery).
+  RedisConnection.prototype._requireClusterSlot = function (client, key) {
+    if (!Array.isArray(client.slots) || client.slots[calculateSlot(key)]?.master) {
+      return;
+    }
+    this._refreshClusterTopology(client);
+    throw new RedisUnavailableError(new Error('Redis Cluster has no owner for the slot of this key'));
+  };
+
+  // The client of a master that is ready (node waits are limited, see
+  // clusterNodes.js).
+  RedisConnection.prototype._readyClusterMaster = async function (client) {
+    const masters = [...client.getMasters()].sort(() => Math.random() - 0.5);
+    let lastError = new Error('Redis Cluster has no masters');
+    for (const node of masters) {
+      if (client !== this.client || !client.isOpen) {
+        // Released meanwhile: do not create node clients for it.
+        throw new RedisUnavailableError(new Error('Redis client is unavailable'));
+      }
+      try {
+        return await client.nodeClient(node);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (masters.length === 0) {
+      this._refreshClusterTopology(client);
+    }
+    throw lastError instanceof RedisUnavailableError ? lastError : new RedisUnavailableError(lastError);
   };
 
   RedisConnection.prototype._commands = async function (commands) {

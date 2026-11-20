@@ -288,9 +288,11 @@ async function runTrace(call, ctx) {
   result.timerClaim = await call('replica-b', 'data', 'getForceSaveTimer', [Date.now()]);
   result.timerEmpty = await call('replica-a', 'data', 'getForceSaveTimer', [Date.now()]);
 
-  await call('replica-a', 'stat', 'addPresenceUniqueUser', [ctx, 'user', 300, {version: 1}]);
-  await call('replica-b', 'stat', 'addPresenceUniqueUser', [ctx, 'user', 400, {version: 2}]);
-  result.uniqueUser = snapshot(await call('replica-a', 'stat', 'getPresenceUniqueUser', [ctx, 100]));
+  // Real UTC seconds: the Redis backend removes users that expired by Redis time.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  await call('replica-a', 'stat', 'addPresenceUniqueUser', [ctx, 'user', nowSeconds + 300, {version: 1}]);
+  await call('replica-b', 'stat', 'addPresenceUniqueUser', [ctx, 'user', nowSeconds + 400, {version: 2}]);
+  result.uniqueUser = snapshot(await call('replica-a', 'stat', 'getPresenceUniqueUser', [ctx, nowSeconds + 100]));
   const period = Date.UTC(2026, 0, 1);
   await call('replica-a', 'stat', 'addPresenceUniqueUsersOfMonth', [ctx, 'user', period, {version: 1}]);
   await call('replica-b', 'stat', 'addPresenceUniqueUsersOfMonth', [ctx, 'user', period, {version: 2}]);

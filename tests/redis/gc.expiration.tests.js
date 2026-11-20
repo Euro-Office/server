@@ -8,7 +8,7 @@ const {afterEach, beforeEach, describe, jest, test} = require('@jest/globals');
 
 const commonDefines = require('../../Common/sources/commondefines');
 const {EDITOR_INDEX_QUEUES, editorIndexShard} = require('../../DocService/sources/editorDataRedis/redisKeys');
-const {POP_EXPIRED_BATCH_SIZE} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
+const {POP_EXPIRED_BATCH_SIZE, POP_EXPIRED_LEASE_MS} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
 const {EditorData} = require('../../DocService/sources/editorDataRedis');
 
 jest.mock('../../DocService/sources/DocsCoServer', () => ({
@@ -109,12 +109,57 @@ describe('GC expiration continuation with Redis metadata', () => {
     await forceSaveTimeout();
     await forceSaveTimeout();
 
-    assert.equal(docsCoServer.startForceSave.mock.calls.length, POP_EXPIRED_BATCH_SIZE + 1);
-    assert.deepEqual(await data.getForceSaveTimer(Date.now()), []);
+    // Only this tenant's items: other suites of the same run can leave entries
+    // under the shared prefix that expire meanwhile.
+    assert.equal(docsCoServer.startForceSave.mock.calls.filter(([itemCtx]) => itemCtx.tenant === tenant).length, POP_EXPIRED_BATCH_SIZE + 1);
+    assert.deepEqual(
+      (await data.getForceSaveTimer(Date.now())).filter(item => item[0] === tenant),
+      []
+    );
     const gcTimers = setTimeoutSpy.mock.calls.filter(([callback]) => callback === forceSaveTimeout);
     assert.equal(gcTimers.length, 2);
     assert.equal(gcTimers[0][1], 0);
     assert.equal(gcTimers[1][1], 60000);
+  });
+
+  test('renews a force-save claim while its force-save is still running', async () => {
+    const tenant = `gc-force-save-renewal-${randomUUID()}`;
+    jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
+    const intervals = [];
+    jest.spyOn(global, 'setInterval').mockImplementation((callback, delay) => {
+      intervals.push({callback, delay});
+      return {unref() {}};
+    });
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
+    const renew = jest.spyOn(data, '_renewForceSaveTimerExpired');
+    let finish;
+    docsCoServer.startForceSave.mockImplementation(itemCtx =>
+      itemCtx.tenant === tenant
+        ? new Promise(resolve => (finish = resolve))
+        : Promise.resolve({code: commonDefines.c_oAscServerCommandErrors.NoError})
+    );
+    await seedBacklog(data, 'forceSaveTimer', tenant, 1);
+
+    const pass = forceSaveTimeout();
+    while (!finish) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    // The integrator callback can take longer than the claim lease.
+    const renewal = intervals.find(interval => interval.delay === POP_EXPIRED_LEASE_MS / 3);
+    assert.ok(renewal, 'a renewal timer runs while the force-save is processed');
+    renewal.callback();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(renew.mock.calls.length, 1);
+    assert.equal(renew.mock.calls[0][0][0], tenant);
+    assert.equal(await renew.mock.results[0].value, true);
+
+    finish({code: commonDefines.c_oAscServerCommandErrors.NoError});
+    await pass;
+    assert.ok(clearIntervalSpy.mock.calls.length >= 1);
+    assert.deepEqual(
+      (await data.getForceSaveTimer(Date.now())).filter(item => item[0] === tenant),
+      []
+    );
   });
 
   test('schedules document-presence GC from real shard continuation metadata', async () => {
@@ -126,8 +171,13 @@ describe('GC expiration continuation with Redis metadata', () => {
     await checkDocumentExpire();
     await checkDocumentExpire();
 
-    assert.equal(data._ackDocumentPresenceExpired.mock.calls.length, POP_EXPIRED_BATCH_SIZE + 1);
-    assert.deepEqual(await data.getDocumentPresenceExpired(Date.now()), []);
+    // Only this tenant's items: other suites of the same run can leave presence
+    // index entries under the shared prefix that expire meanwhile.
+    assert.equal(data._ackDocumentPresenceExpired.mock.calls.filter(([item]) => item[0] === tenant).length, POP_EXPIRED_BATCH_SIZE + 1);
+    assert.deepEqual(
+      (await data.getDocumentPresenceExpired(Date.now())).filter(item => item[0] === tenant),
+      []
+    );
     const gcTimers = setTimeoutSpy.mock.calls.filter(([callback]) => callback === checkDocumentExpire);
     assert.equal(gcTimers.length, 2);
     assert.equal(gcTimers[0][1], 0);

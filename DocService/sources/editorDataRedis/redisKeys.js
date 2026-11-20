@@ -6,9 +6,31 @@
 'use strict';
 
 const config = require('config');
-const {toRedisString} = require('./redisValueCodec');
+const {toRedisString, losslessText} = require('./redisValueCodec');
+const {hasNodeCluster} = require('./redisConfig/clusterOptions');
+const {log} = require('./redisConnection/helpers');
 
 const cfgRedisPrefix = config.get('services.CoAuthoring.redis').get('prefix');
+
+// Every key is "<prefix>{<hash tag>}...". Redis Cluster hashes the first {...}
+// of a key with something between the braces, or the whole key when that is
+// empty. A "{}" in the prefix therefore hashes every key whole: every
+// multi-key script fails with CROSSSLOT (and node-redis computes another slot
+// than Redis). A non-empty tag such as "{ds}" works but puts every key on one
+// master. Braces mean nothing outside a Cluster.
+function checkPrefixForCluster(prefix) {
+  const open = prefix.indexOf('{');
+  const close = open === -1 ? -1 : prefix.indexOf('}', open + 1);
+  if (close === open + 1) {
+    throw new Error(`services.CoAuthoring.redis.prefix ${JSON.stringify(prefix)} contains an empty "{}" hash tag, which breaks Redis Cluster`);
+  }
+  if (close !== -1) {
+    log('warn', 'services.CoAuthoring.redis.prefix %j contains a hash tag: every key is stored on one Redis Cluster master', prefix);
+  }
+}
+if (hasNodeCluster()) {
+  checkPrefixForCluster(String(cfgRedisPrefix));
+}
 // Cross-document indexes are spread across fixed hash tags so expiration and
 // force-save traffic does not concentrate on one Redis Cluster master. Keep
 // this stable: changing it changes the key schema and requires an explicit
@@ -19,8 +41,17 @@ const EDITOR_INDEX_QUEUES = Object.freeze({
   forceSaveTimer: Object.freeze({index: 'forceSaveTimer', lease: 'forceSaveExpiredLease', claims: 'forceSaveExpiredClaims'})
 });
 
+// Redis stores keys as UTF-8, which turns a lone UTF-16 surrogate into U+FFFD,
+// so two ids that differ only there would share keys. Such an id gets a
+// separate, lossless form; "~" never occurs in base64url, so the two forms
+// cannot collide and every other id keeps its key.
+const LONE_SURROGATE = /\p{Cs}/u;
 function encodePart(value) {
-  return Buffer.from(String(value), 'utf8').toString('base64url');
+  const text = String(value);
+  if (LONE_SURROGATE.test(text)) {
+    return `~${Buffer.from(losslessText(text), 'utf8').toString('base64url')}`;
+  }
+  return Buffer.from(text, 'utf8').toString('base64url');
 }
 
 function tenantName(ctx) {
@@ -88,6 +119,7 @@ function decodeDocumentMember(value) {
 }
 
 module.exports = {
+  checkPrefixForCluster,
   cfgRedisPrefix,
   EDITOR_INDEX_SHARD_COUNT,
   EDITOR_INDEX_QUEUES,

@@ -55,22 +55,31 @@ module.exports = function attachExpiredQueue(EditorData) {
     return Number(result) === 1;
   };
 
-  // Document presence leases use Redis time, so they can be renewed (see
-  // gc.js). Resolves true while the claim is still held.
-  EditorData.prototype._renewDocumentPresenceExpired = async function (item) {
+  // Extends the lease of a claimed item while it is processed (see gc.js).
+  // Resolves true while the claim is still held. Document presence leases use
+  // Redis time; force-save leases use the caller's clock, like their pop.
+  EditorData.prototype._renewExpiredQueue = async function (queueName, item, useRedisTime) {
     const claimId = item && expiredClaimIds.get(item);
     const keys = this._indexKeysForItem(item);
-    if (!claimId || !keys) {
+    const queue = EDITOR_INDEX_QUEUES[queueName];
+    if (!claimId || !keys || !queue) {
       return false;
     }
-    const queue = EDITOR_INDEX_QUEUES.documents;
     const member = documentMember({tenant: item[0]}, item[1]);
     const result = await this._eval(
       RENEW_EXPIRED_SCRIPT,
       [keys[queue.lease], keys[queue.claims]],
-      [claimId, member, String(this.expiredClaimLeaseMs)]
+      [claimId, member, String(this.expiredClaimLeaseMs), useRedisTime ? '' : String(Date.now() + this.expiredClaimLeaseMs)]
     );
     return Number(result) === 1;
+  };
+
+  EditorData.prototype._renewDocumentPresenceExpired = function (item) {
+    return this._renewExpiredQueue('documents', item, true);
+  };
+
+  EditorData.prototype._renewForceSaveTimerExpired = function (item) {
+    return this._renewExpiredQueue('forceSaveTimer', item, false);
   };
 
   EditorData.prototype._ackDocumentPresenceExpired = function (item) {

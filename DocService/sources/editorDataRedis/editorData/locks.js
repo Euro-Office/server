@@ -6,12 +6,12 @@
 'use strict';
 
 const {ADD_LOCKS_SCRIPT, ADD_LOCKS_NX_SCRIPT, REMOVE_LOCKS_SCRIPT} = require('../scripts');
-const {cfgExpLocks} = require('../editorDataSettings');
-const {ttlSeconds, argsFromObject, decodeHash} = require('../redisValueCodec');
+const {cfgExpLocks, cfgExpSaveLock, cfgExpAuthLockSeconds} = require('../editorDataSettings');
+const {ttlSeconds, ttlOrDefault, argsFromObject, decodeHash} = require('../redisValueCodec');
 
 module.exports = function attachLocks(EditorData) {
   EditorData.prototype.lockSave = async function (ctx, docId, userId, ttl) {
-    return this._checkAndLock(ctx, 'savelock', docId, userId, ttl);
+    return this._checkAndLock(ctx, 'savelock', docId, userId, ttlOrDefault(ttl, cfgExpSaveLock));
   };
 
   EditorData.prototype.unlockSave = async function (ctx, docId, userId) {
@@ -19,7 +19,7 @@ module.exports = function attachLocks(EditorData) {
   };
 
   EditorData.prototype.lockAuth = async function (ctx, docId, userId, ttl) {
-    return this._checkAndLock(ctx, 'lockdocument', docId, userId, ttl);
+    return this._checkAndLock(ctx, 'lockdocument', docId, userId, ttlOrDefault(ttl, cfgExpAuthLockSeconds));
   };
 
   EditorData.prototype.unlockAuth = async function (ctx, docId, userId) {

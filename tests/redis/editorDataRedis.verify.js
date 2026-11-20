@@ -245,14 +245,16 @@ async function verify() {
     assert.deepEqual(new Set(claimedTimers), new Set(timerDocs));
     assert.equal(claimedTimers.length, timerDocs.length);
 
-    await stat.addPresenceUniqueUser(ctx, 'editor', 200, {anonym: true});
-    await stat.addPresenceUniqueViewUser(ctx, 'viewer', 200, {anonym: false});
-    const editorUsers = await stat.getPresenceUniqueUser(ctx, 100);
-    const viewerUsers = await stat.getPresenceUniqueViewUser(ctx, 100);
+    // Real UTC seconds: adding a user removes the ones that expired by Redis time.
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    await stat.addPresenceUniqueUser(ctx, 'editor', nowSeconds + 200, {anonym: true});
+    await stat.addPresenceUniqueViewUser(ctx, 'viewer', nowSeconds + 200, {anonym: false});
+    const editorUsers = await stat.getPresenceUniqueUser(ctx, nowSeconds + 100);
+    const viewerUsers = await stat.getPresenceUniqueViewUser(ctx, nowSeconds + 100);
     assert.equal(editorUsers[0].userid, 'editor');
-    assert.equal(editorUsers[0].expire.getTime(), 200000);
+    assert.equal(editorUsers[0].expire.getTime(), (nowSeconds + 200) * 1000);
     assert.equal(viewerUsers[0].userid, 'viewer');
-    assert.deepEqual(await stat.getPresenceUniqueUser(ctx, 200), []);
+    assert.deepEqual(await stat.getPresenceUniqueUser(ctx, nowSeconds + 200), []);
 
     const period = Date.UTC(2026, 0, 1);
     await stat.addPresenceUniqueUsersOfMonth(ctx, 'editor', period, {firstOpenDate: 'edit'});

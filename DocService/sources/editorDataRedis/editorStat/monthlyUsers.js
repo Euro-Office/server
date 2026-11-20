@@ -8,7 +8,7 @@
 const {ADD_MONTH_USER_SCRIPT} = require('../scripts');
 const {encodePart} = require('../redisKeys');
 const {cfgExpMonthUniqueUsers} = require('../editorStatSettings');
-const {jsonEncode, toRedisString, decodeHash} = require('../redisValueCodec');
+const {jsonEncode, toRedisString, decodeHash, losslessText, fromLosslessText} = require('../redisValueCodec');
 
 module.exports = function attachMonthlyUsers(EditorStat) {
   EditorStat.prototype._monthIndexKey = function (ctx, view) {
@@ -27,7 +27,7 @@ module.exports = function attachMonthlyUsers(EditorStat) {
     await this._eval(
       ADD_MONTH_USER_SCRIPT,
       [index, data],
-      [String(now + duration), String(period), String(duration), String(userId), jsonEncode(userInfo)]
+      [String(now + duration), String(period), String(duration), losslessText(userId), jsonEncode(userInfo)]
     );
   };
 
@@ -42,7 +42,8 @@ module.exports = function attachMonthlyUsers(EditorStat) {
     const result = {};
     for (const [index, periodValue] of (periods || []).entries()) {
       const period = toRedisString(periodValue);
-      const users = decodeHash(values[index]);
+      // User ids are stored with losslessText (lone surrogates kept apart).
+      const users = Object.fromEntries(Object.entries(decodeHash(values[index])).map(([userId, info]) => [fromLosslessText(userId), info]));
       if (Object.keys(users).length > 0) {
         const time = Number(period);
         if (Number.isFinite(time)) {

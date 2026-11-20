@@ -5,8 +5,11 @@
 
 'use strict';
 
-const ms = require('ms');
-const {minimumRefreshedTtlSeconds} = require('../expirationConfig');
+const {minimumRefreshedTtlSeconds, ttlMilliseconds: parseTtlMilliseconds} = require('../expirationConfig');
+
+// The longest TTL passed to Redis. Above it, EXPIRE fails ("invalid expire
+// time") and presence index scores (milliseconds) lose precision.
+const MAX_TTL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
 
 function toRedisString(value) {
   if (Buffer.isBuffer(value)) {
@@ -15,17 +18,57 @@ function toRedisString(value) {
   return String(value);
 }
 
+// Redis stores strings as UTF-8, which turns every lone UTF-16 surrogate into
+// U+FFFD, so "a\ud800" and "a\udc00" would become the same key or field. JSON
+// escaping keeps them apart (\ud800) and is reversible, so different strings
+// stay different. Ids without quotes, backslashes, control characters or lone
+// surrogates are unchanged.
+function losslessText(value) {
+  return JSON.stringify(String(value)).slice(1, -1);
+}
+
+// The inverse of losslessText, for ids that are read back.
+function fromLosslessText(value) {
+  const text = toRedisString(value);
+  try {
+    return JSON.parse(`"${text}"`);
+  } catch (_e) {
+    return text;
+  }
+}
+
 function getCfg(ctx, path, fallback) {
   return ctx && typeof ctx.getCfg === 'function' ? ctx.getCfg(path, fallback) : fallback;
 }
 
+// A TTL in milliseconds: a positive number of seconds, or an `ms` duration
+// string ("1d"). NaN for anything else, including zero, negative values and
+// values above MAX_TTL_MS.
+function validTtlMilliseconds(value) {
+  const parsed = parseTtlMilliseconds(value);
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_TTL_MS ? parsed : NaN;
+}
+
+// Throws for an unusable TTL. The Lua scripts write before they set the TTL,
+// so a TTL Redis rejects would leave the written keys without one.
+function requireTtlMilliseconds(value, name) {
+  const parsed = validTtlMilliseconds(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${name} must be a positive duration of at most 100 years, got ${JSON.stringify(value)}`);
+  }
+  return parsed;
+}
+
+// A tenant value that is not a usable TTL falls back to the global value
+// (`fallback`), which is checked when the Redis backend loads.
 function ttlSeconds(ctx, path, fallback) {
   const value = getCfg(ctx, path, fallback);
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) {
-    return Math.max(1, Math.ceil(numeric));
+  let parsed = validTtlMilliseconds(value);
+  if (!Number.isFinite(parsed)) {
+    parsed = requireTtlMilliseconds(fallback, path);
+    ctx?.logger?.warn?.('invalid %s %j; using %j instead', path, value, fallback);
   }
-  return Math.max(1, Math.ceil(ms(value) / 1000));
+  return Math.ceil(parsed / 1000);
 }
 
 // Presence and connection shard counters are refreshed once per refresh
@@ -39,11 +82,13 @@ function refreshedTtlSeconds(ctx, path, globalValue) {
 }
 
 function ttlMilliseconds(value) {
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) {
-    return Math.max(1, Math.ceil(numeric * 1000));
-  }
-  return Math.max(1, Math.ceil(ms(value)));
+  return requireTtlMilliseconds(value, 'TTL');
+}
+
+// A TTL passed in by the caller (a tenant value DocsCoServer read): one that is
+// not usable is replaced by fallback, so that it does not deny every lock.
+function ttlOrDefault(value, fallback) {
+  return Number.isFinite(validTtlMilliseconds(value)) ? value : fallback;
 }
 
 function jsonEncode(value) {
@@ -103,9 +148,13 @@ function strictMax(now) {
 
 module.exports = {
   toRedisString,
+  losslessText,
+  fromLosslessText,
   refreshedTtlSeconds,
+  requireTtlMilliseconds,
   ttlSeconds,
   ttlMilliseconds,
+  ttlOrDefault,
   jsonEncode,
   jsonDecode,
   decodeHash,

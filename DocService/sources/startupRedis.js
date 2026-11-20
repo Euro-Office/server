@@ -82,6 +82,16 @@ function connectWithCancellation(connection, signal) {
   });
 }
 
+async function pingStore(store, name) {
+  if (typeof store?.ping !== 'function') {
+    return;
+  }
+  const reply = await store.ping();
+  if (reply !== 'PONG') {
+    throw new Error(`${name} did not answer PING (reply: ${JSON.stringify(reply)})`);
+  }
+}
+
 function validateRetryOptions(maxAttempts, retryDelayMs) {
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
     throw new TypeError(`maxAttempts must be a positive safe integer; received ${maxAttempts}`);
@@ -108,6 +118,10 @@ async function connectRedisForStartup({
     try {
       await connectWithCancellation(editorData, signal);
       await connectWithCancellation(editorStat, signal);
+      // A connect succeeds without the right credentials (the server answers
+      // the first command with NOAUTH), so check that both stores answer.
+      await pingStore(editorData, 'editorData');
+      await pingStore(editorStat, 'editorStat');
       return;
     } catch (err) {
       if (signal?.aborted) {

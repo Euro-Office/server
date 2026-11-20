@@ -78,7 +78,9 @@ return values
 
 // Extends the lease of a claimed member while its claim is still this one. A
 // lease that ran out but was not claimed again is still this claim's. Returns
-// 0 once another worker has claimed the member, or it was acknowledged.
+// 0 once another worker has claimed the member, or it was acknowledged. The
+// new lease end is Redis time + ARGV[3], or ARGV[4] when given: the force-save
+// queue compares leases with the caller's clock (see POP_EXPIRED_SCRIPT).
 const RENEW_EXPIRED_SCRIPT = `
 ${REDIS_TIME_MILLIS}
 if redis.call('HGET', KEYS[2], ARGV[2]) ~= ARGV[1] then
@@ -87,7 +89,8 @@ end
 if not redis.call('ZSCORE', KEYS[1], ARGV[2]) then
   return 0
 end
-redis.call('ZADD', KEYS[1], 'XX', redisTimeMillis() + tonumber(ARGV[3]), ARGV[2])
+local leaseUntil = ARGV[4] and ARGV[4] ~= '' and ARGV[4] or tostring(redisTimeMillis() + tonumber(ARGV[3]))
+redis.call('ZADD', KEYS[1], 'XX', leaseUntil, ARGV[2])
 return 1
 `;
 

@@ -40,7 +40,11 @@ module.exports = function attachHousekeeping(EditorStat) {
   EditorStat.prototype.lockNotification = async function (ctx, notificationType, ttl) {
     const key = `${this._statBase(ctx)}notification:${encodePart(notificationType)}`;
     try {
-      const result = await this._command(['SET', key, '1', 'NX', 'PX', String(ttlMilliseconds(ttl))]);
+      // notificationService sends 99% of repeatInterval in whole seconds: 0
+      // for an interval of about a second or less, which locks for 1 ms (the
+      // notification is sent every time), as the in-memory backend does.
+      const ttlMs = Number(ttl) > 0 ? ttlMilliseconds(ttl) : 1;
+      const result = await this._command(['SET', key, '1', 'NX', 'PX', String(ttlMs)]);
       return result === 'OK';
     } catch (_error) {
       return false;

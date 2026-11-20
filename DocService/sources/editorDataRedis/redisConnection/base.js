@@ -5,7 +5,7 @@
 
 'use strict';
 
-const {REDIS_COMMAND_TIMEOUT_MS} = require('../redisConfig');
+const {configuredCommandTimeoutMs} = require('../redisConfig');
 
 class RedisConnection {
   constructor(database, {serializeOperations = false} = {}) {
@@ -24,7 +24,11 @@ class RedisConnection {
     this.sentinel = false;
     this.connectionAttempted = false;
     this.lastError = null;
-    this.commandTimeoutMs = REDIS_COMMAND_TIMEOUT_MS;
+    this.commandTimeoutMs = configuredCommandTimeoutMs();
+    // Counts failed connects; an operation queued before one failed is
+    // rejected instead of starting another full connect (see _withOperation).
+    this.connectFailures = 0;
+    this.lastConnectError = null;
     this.sentinelRootNodeOffset = 0;
     this.connectAbort = null;
     this.closed = false;

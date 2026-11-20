@@ -8,6 +8,7 @@ const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
 const {EditorData: MemoryEditorData} = require('../../DocService/sources/editorDataMemory');
 const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
+const shardConnectionCounts = require('../../DocService/sources/shardConnectionCounts');
 const {context} = require('./testHelpers');
 
 describe('editorDataRedis edge cases', () => {
@@ -148,11 +149,141 @@ describe('editorDataRedis edge cases', () => {
 
   test('updating a unique user replaces its information without duplicating the user', async () => {
     const ctx = context('unique-user-update');
+    // Expiry times are real UTC seconds: adding a user removes the ones that
+    // expired by Redis server time.
+    const now = Math.floor(Date.now() / 1000);
 
-    await stat.addPresenceUniqueUser(ctx, 'user', 200000, {version: 1});
-    await stat.addPresenceUniqueUser(ctx, 'user', 300000, {version: 2});
+    await stat.addPresenceUniqueUser(ctx, 'user', now + 200000, {version: 1});
+    await stat.addPresenceUniqueUser(ctx, 'user', now + 300000, {version: 2});
 
-    assert.deepEqual(await stat.getPresenceUniqueUser(ctx, 100000), [{userid: 'user', expire: new Date(300000000), version: 2}]);
+    assert.deepEqual(await stat.getPresenceUniqueUser(ctx, now + 100000), [{userid: 'user', expire: new Date((now + 300000) * 1000), version: 2}]);
+  });
+
+  test('unique users expire with their last user and expired users are removed when one is added', async () => {
+    const ctx = context('unique-user-ttl');
+    const keys = stat._uniqueKeys(ctx, false);
+    const now = Math.floor(Date.now() / 1000);
+
+    await stat.addPresenceUniqueUser(ctx, 'expired-user', now - 10, {});
+    await stat.addPresenceUniqueUser(ctx, 'active-user', now + 100, {});
+
+    // Removed without a read (/info) in between.
+    assert.deepEqual(await stat._command(['ZRANGE', keys.expiry, '0', '-1']), ['active-user']);
+    assert.equal(await stat._command(['HEXISTS', keys.info, 'expired-user']), 0);
+    for (const key of [keys.expiry, keys.info]) {
+      const ttl = Number(await stat._command(['PTTL', key]));
+      assert.ok(ttl > 90000 && ttl <= 101000, `${key} TTL ${ttl}`);
+    }
+  });
+
+  test('a failed documents index update after a presence write does not fail the write', async () => {
+    const ctx = context('presence-index-failure');
+    const info = JSON.stringify({id: 'user', connectionId: 'connection'});
+    data._syncPresenceIndex = async () => {
+      throw new Error('CLUSTERDOWN The cluster is down');
+    };
+
+    await data.addPresence(ctx, 'document', 'user', info);
+    await data.updatePresence(ctx, 'document', 'user', info);
+    assert.deepEqual(await data.getPresence(ctx, 'document'), [info]);
+
+    await data.removePresence(ctx, 'document', 'user', 'connection').catch(() => {});
+    delete data._syncPresenceIndex;
+    await data.cleanDocumentOnExit(ctx, 'document');
+  });
+
+  test('presence keeps users apart whose ids differ only in a lone surrogate', async () => {
+    const ctx = context('presence-surrogate');
+    const first = JSON.stringify({id: 'user\ud800', connectionId: 'first'});
+    const second = JSON.stringify({id: 'user\udc00', connectionId: 'second'});
+
+    await data.addPresence(ctx, 'document', 'user\ud800', first);
+    await data.addPresence(ctx, 'document', 'user\udc00', second);
+    await data.removePresence(ctx, 'document', 'user\udc00', 'second');
+
+    assert.deepEqual(await data.getPresence(ctx, 'document'), [first]);
+    await data.removePresence(ctx, 'document', 'user\ud800', 'first');
+    await data.cleanDocumentOnExit(ctx, 'document');
+  });
+
+  test('a renewed force-save claim is not claimed again by another instance', async () => {
+    const tenant = `force-save-renewal-${Date.now()}`;
+    const ctx = context(tenant);
+    const other = new EditorData();
+    try {
+      data.expiredClaimLeaseMs = 300;
+      other.expiredClaimLeaseMs = 300;
+      await data.addForceSaveTimerNX(ctx, 'document', Date.now() - 1);
+      const claimed = (await data.getForceSaveTimer(Date.now())).filter(item => item[0] === tenant);
+      assert.deepEqual(claimed, [[tenant, 'document']]);
+
+      for (let i = 0; i < 3; ++i) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        assert.equal(await data._renewForceSaveTimerExpired(claimed[0]), true);
+      }
+      // 450 ms after the claim: past the first lease, but it was renewed.
+      const reclaimed = (await other.getForceSaveTimer(Date.now())).filter(item => item[0] === tenant);
+      assert.deepEqual(reclaimed, []);
+      assert.equal(await data._ackForceSaveTimer(claimed[0]), true);
+      assert.equal(await data._renewForceSaveTimerExpired(claimed[0]), false);
+    } finally {
+      await other.close();
+    }
+  });
+
+  test('licence statistics keep users apart whose ids differ only in a lone surrogate', async () => {
+    const ctx = context(`unique-user-surrogate-${Date.now()}`);
+    const now = Math.floor(Date.now() / 1000);
+    const ids = ['user\ud800', 'user\udc00', 'user\\"quoted"'];
+    for (const id of ids) {
+      await stat.addPresenceUniqueUser(ctx, id, now + 100, {});
+      await stat.addPresenceUniqueUsersOfMonth(ctx, id, Date.UTC(2026, 0, 1), {id});
+    }
+
+    const users = (await stat.getPresenceUniqueUser(ctx, now)).map(user => user.userid).sort();
+    assert.deepEqual(users, [...ids].sort());
+    const month = await stat.getPresenceUniqueUsersOfMonth(ctx);
+    assert.deepEqual(Object.keys(month['2026-01-01T00:00:00.000Z']).sort(), [...ids].sort());
+  });
+
+  test('a save or auth lock with an unusable tenant TTL uses the global TTL instead of failing', async () => {
+    const ctx = context(`lock-ttl-fallback-${Date.now()}`);
+    for (const [lock, name] of [
+      ['lockSave', 'savelock'],
+      ['lockAuth', 'lockdocument']
+    ]) {
+      assert.equal(await data[lock](ctx, 'document', 'user', 'abc'), true, lock);
+      const ttl = Number(await data._command(['PTTL', `${data._docBase(ctx, 'document')}${name}`]));
+      assert.ok(ttl > 0 && ttl <= 60000, `${lock} TTL ${ttl}`);
+    }
+    await data.unlockSave(ctx, 'document', 'user');
+    await data.unlockAuth(ctx, 'document', 'user');
+  });
+
+  test('a notification with a repeat interval of a second or less is sent every time', async () => {
+    const ctx = context(`notification-short-interval-${Date.now()}`);
+    // notificationService passes floor(99% of repeatInterval / 1000): 0 for "1s".
+    assert.equal(await stat.lockNotification(ctx, 'license', 0), true);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(await stat.lockNotification(ctx, 'license', 0), true);
+    assert.equal(await stat.lockNotification(ctx, 'license-hourly', 3564), true);
+    assert.equal(await stat.lockNotification(ctx, 'license-hourly', 3564), false);
+  });
+
+  test('a closing instance sets its connection counts to 0', async () => {
+    const ctx = context(`shard-counts-clear-${Date.now()}`);
+    const counts = shardConnectionCounts.create('closing-instance');
+
+    await counts.set(stat, ctx, 3, 2, 1);
+    assert.equal(await stat.getEditorConnectionsCount(ctx, []), 3);
+    assert.equal(await stat.getLiveViewerConnectionsCount(ctx, []), 2);
+    assert.equal(await stat.getViewerConnectionsCount(ctx, []), 1);
+
+    // Its connections reconnect to other instances, which count them again.
+    await counts.clear(stat);
+    assert.equal(await stat.getEditorConnectionsCount(ctx, []), 0);
+    assert.equal(await stat.getLiveViewerConnectionsCount(ctx, []), 0);
+    assert.equal(await stat.getViewerConnectionsCount(ctx, []), 0);
   });
 
   test('updating a monthly unique user keeps one entry for the period', async () => {

@@ -35,11 +35,14 @@ const {
   untilAborted,
   wait,
   probeSentinel,
+  probeClusterRootNode,
+  trackConnect,
   RedisUnavailableError
 } = require('./helpers');
+const {limitClusterNodeWaits} = require('./clusterNodes');
 
-// How long each Sentinel gets to answer the check before a new Sentinel client
-// is created (all Sentinels are checked at the same time).
+// How long each Sentinel or Cluster root node gets to answer the check before
+// a new client is created (all of them are checked at the same time).
 const REDIS_SENTINEL_PROBE_TIMEOUT_MS = 2000;
 
 const sentinelNodeKey = node => `${node.host}:${node.port}`;
@@ -54,10 +57,32 @@ function sentinelAttemptTimeoutMs(rootNodeCount) {
   return Math.max(REDIS_SENTINEL_MIN_ATTEMPT_MS, Math.floor(REDIS_CONNECT_TIMEOUT_MS / count));
 }
 
+// node-redis connects a Cluster client to every master before connect()
+// resolves. While a master is frozen and its replica is not promoted yet, one
+// attempt waits for it to the end of the connect budget, although a new
+// attempt would connect as soon as the failover is done (the frozen node is no
+// longer listed). So an attempt gets a third of the budget and is retried.
+const CLUSTER_ATTEMPT_TIMEOUT_MS = Math.max(REDIS_SENTINEL_MIN_ATTEMPT_MS, Math.floor(REDIS_CONNECT_TIMEOUT_MS / 3));
+
+// node-redis reports a node by the address it connects to, which differs from
+// the node's cluster address when optionsCluster.nodeAddressMap maps it.
+function clusterNodeAddress(client, socket) {
+  for (const [address, node] of client.nodeByAddress || []) {
+    const options = node.client?.options?.socket;
+    if (options && options.host === socket?.host && options.port === socket?.port) {
+      return address;
+    }
+  }
+  return undefined;
+}
+
 module.exports = function attachConnect(RedisConnection) {
   // reachableSentinelRootNodes: the "host:port" keys of the Sentinels that
-  // answered the check (see _probeSentinelRootNodes).
-  RedisConnection.prototype._createClient = function ({reachableSentinelRootNodes} = {}) {
+  // answered the check (see _probeSentinelRootNodes). reachableClusterRootNodes:
+  // the indexes of the Cluster root nodes that answered (_probeClusterRootNodes).
+  // lazyCluster: connect a Cluster client without connecting every master
+  // first (see _connectWithRetries).
+  RedisConnection.prototype._createClient = function ({reachableSentinelRootNodes, reachableClusterRootNodes, lazyCluster = false} = {}) {
     if (this.closing) {
       throw new RedisUnavailableError(new Error('Redis connection is closing'));
     }
@@ -88,7 +113,22 @@ module.exports = function attachConnect(RedisConnection) {
         log('error', 'Redis Cluster cannot use logical database %s; configure database 0', this.database);
         throw new Error('Redis Cluster does not support a non-zero logical database');
       }
-      client = redis.createCluster(normalizeClusterOptions(cfgRedisOptionsCluster));
+      const clusterOptions = normalizeClusterOptions(cfgRedisOptionsCluster);
+      // Leave out the root nodes that did not answer the check, unless none
+      // did: node-redis discovers through one root node, never moves on to the
+      // next, and has no timeout for one that accepts the connection but does
+      // not answer (a frozen node).
+      const reachable = (clusterOptions.rootNodes || []).filter((_node, index) => reachableClusterRootNodes?.has(index));
+      if (reachable.length > 0) {
+        clusterOptions.rootNodes = reachable;
+      }
+      if (lazyCluster) {
+        clusterOptions.minimizeConnections ??= true;
+      }
+      client = redis.createCluster(clusterOptions);
+      const clusterClient = client;
+      client.on('node-reconnecting', node => this._refreshClusterTopology(clusterClient, clusterNodeAddress(clusterClient, node)));
+      limitClusterNodeWaits(client, address => this._refreshClusterTopology(clusterClient, address));
     } else {
       client = redis.createClient(normalizeNodeOptions(cfgRedisOptions, this.database));
     }
@@ -132,6 +172,38 @@ module.exports = function attachConnect(RedisConnection) {
     return new Set(options.sentinelRootNodes.filter((_node, index) => answered[index]).map(sentinelNodeKey));
   };
 
+  // A node client reconnects after its socket failed (a frozen master is
+  // noticed by the idle-socket timeout, see clusterOptions.js). node-redis
+  // reads the topology again only on a reconnect attempt that comes at least
+  // its delay after the first one, and each attempt against a frozen node
+  // waits for that timeout: the slots of a promoted replica stayed unreachable
+  // for another timeout. Read it at once, without the reconnecting node.
+  RedisConnection.prototype._refreshClusterTopology = function (client, address) {
+    const now = Date.now();
+    if (client !== this.client || !client.isOpen || now - (this.lastClusterTopologyRefreshAt || 0) < 1000) {
+      return;
+    }
+    this.lastClusterTopologyRefreshAt = now;
+    Promise.resolve()
+      .then(() => client._slots?.rediscover?.(undefined, address ? new Set([address]) : undefined))
+      .catch(error => log('warn', 'Redis Cluster topology refresh failed: %s', errorDetails(error)));
+  };
+
+  // Checks every configured Cluster root node at the same time. Resolves the
+  // indexes of the ones that answered, or undefined when the Cluster options
+  // are invalid (_createClient then reports that).
+  RedisConnection.prototype._probeClusterRootNodes = async function (timeoutMs) {
+    let options;
+    try {
+      options = normalizeClusterOptions(cfgRedisOptionsCluster);
+    } catch (_error) {
+      return undefined;
+    }
+    const rootNodes = Array.isArray(options.rootNodes) ? options.rootNodes : [];
+    const answered = await Promise.all(rootNodes.map(node => probeClusterRootNode(node, options.defaults, timeoutMs)));
+    return new Set(answered.flatMap((ok, index) => (ok ? [index] : [])));
+  };
+
   RedisConnection.prototype.connect = async function () {
     await this._withOperation(() => this._connect());
   };
@@ -147,9 +219,9 @@ module.exports = function attachConnect(RedisConnection) {
     if (this.client && this.connectionAttempted && !this.client.isOpen) {
       this._abortClient();
     }
-    // A Sentinel client is created by _connectWithRetries, after the
-    // Sentinels were checked.
-    if (!this.client && !hasNodeSentinel()) {
+    // A Sentinel or Cluster client is created by _connectWithRetries, after
+    // the Sentinels or Cluster root nodes were checked.
+    if (!this.client && !hasNodeSentinel() && !hasNodeCluster()) {
       this._createClient();
     }
     const currentClient = this.client;
@@ -176,6 +248,8 @@ module.exports = function attachConnect(RedisConnection) {
       log('debug', 'connect ready after %dms (connector=%s)', Date.now() - startedAt, this.connector);
       return this._getClientSnapshot(connectedClient);
     } catch (error) {
+      this.connectFailures++;
+      this.lastConnectError = error;
       log(
         'error',
         'connect failed after %dms (connector=%s, host=%s, port=%s, database=%s): %s',
@@ -200,6 +274,14 @@ module.exports = function attachConnect(RedisConnection) {
 
   RedisConnection.prototype._connectWithRetries = async function (startedAt, signal) {
     let retries = 0;
+    // node-redis connects a Cluster client to every master before connect()
+    // resolves. A master that this process cannot reach while the cluster keeps
+    // it (a partition that is never failed over) would fail every connect, also
+    // for the slots of the other masters. When an attempt failed although a
+    // root node answered, the next one connects without the masters; a node is
+    // then connected on its first command (see clusterNodes.js).
+    let lazyCluster = false;
+    let clusterRootAnswered = false;
     while (true) {
       if (this.closing || this.closed) {
         throw new RedisUnavailableError(new Error('Redis connection is closing'));
@@ -209,17 +291,23 @@ module.exports = function attachConnect(RedisConnection) {
       }
       if (!this.client) {
         let reachableSentinelRootNodes;
-        if (hasNodeSentinel()) {
+        let reachableClusterRootNodes;
+        const sentinel = hasNodeSentinel();
+        const cluster = !sentinel && hasNodeCluster();
+        if (sentinel || cluster) {
           const remainingForProbe = REDIS_CONNECT_TIMEOUT_MS - (Date.now() - startedAt);
           if (remainingForProbe <= 0) {
             throw createConnectTimeoutError();
           }
-          reachableSentinelRootNodes = await untilAborted(
-            this._probeSentinelRootNodes(Math.min(REDIS_SENTINEL_PROBE_TIMEOUT_MS, remainingForProbe)),
-            signal
-          );
+          const probeTimeout = Math.min(REDIS_SENTINEL_PROBE_TIMEOUT_MS, remainingForProbe);
+          if (sentinel) {
+            reachableSentinelRootNodes = await untilAborted(this._probeSentinelRootNodes(probeTimeout), signal);
+          } else {
+            reachableClusterRootNodes = await untilAborted(this._probeClusterRootNodes(probeTimeout), signal);
+            clusterRootAnswered = reachableClusterRootNodes?.size > 0;
+          }
         }
-        this._createClient({reachableSentinelRootNodes});
+        this._createClient({reachableSentinelRootNodes, reachableClusterRootNodes, lazyCluster});
       }
       const currentClient = this.client;
       this.connectionAttempted = true;
@@ -227,10 +315,18 @@ module.exports = function attachConnect(RedisConnection) {
       if (remaining <= 0) {
         throw createConnectTimeoutError();
       }
-      const attemptDeadline = Date.now() + (this.sentinel ? Math.min(remaining, sentinelAttemptTimeoutMs(this.sentinelRootNodeCount)) : remaining);
+      const attemptTimeout = this.sentinel
+        ? sentinelAttemptTimeoutMs(this.sentinelRootNodeCount)
+        : this.cluster
+          ? CLUSTER_ATTEMPT_TIMEOUT_MS
+          : remaining;
+      const attemptDeadline = Date.now() + Math.min(remaining, attemptTimeout);
       try {
         if (!currentClient.isOpen) {
-          await untilAborted(withTimeout(currentClient.connect(), attemptDeadline - Date.now(), 'Redis connect'), signal);
+          await untilAborted(
+            withTimeout(trackConnect(currentClient, currentClient.connect()), attemptDeadline - Date.now(), 'Redis connect'),
+            signal
+          );
         }
         if (!currentClient.isReady) {
           const readyTimeout = attemptDeadline - Date.now();
@@ -242,8 +338,11 @@ module.exports = function attachConnect(RedisConnection) {
         return currentClient;
       } catch (error) {
         await this._closeClient(currentClient, {preserveConnectPromise: true});
+        if (this.cluster && clusterRootAnswered) {
+          lazyCluster = true;
+        }
         const canRetry =
-          this.sentinel &&
+          (this.sentinel || this.cluster) &&
           !signal?.aborted &&
           !this.closing &&
           !this.closed &&

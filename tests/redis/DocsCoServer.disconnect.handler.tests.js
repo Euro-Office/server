@@ -159,6 +159,60 @@ describe('DocsCoServer viewer disconnect handler', () => {
     assert.deepEqual(docsCoServer.editorData.cleanDocumentOnExit.mock.calls[1][3], {preserveSavedClaim: true});
   });
 
+  test('the final viewer exit saves changes left by an editor whose process died', async () => {
+    const ctx = context(tenantManager.getDefautTenant());
+    const viewer = connectionHandlers({id: 'viewer-connection', userId: 'viewer', view: true});
+    const docId = viewer.conn.docId;
+    const deadEditorInfo = JSON.stringify({id: 'dead-editor', idOriginal: 'dead-editor', view: false, connectionId: 'dead-connection'});
+    const viewerInfo = JSON.stringify({...viewer.conn.user, connectionId: viewer.conn.id});
+    await isolatedEditorData.addPresence(ctx, docId, 'dead-editor', deadEditorInfo);
+    await isolatedEditorData.addPresence(ctx, docId, viewer.conn.user.id, viewerInfo);
+    // The editor's process died: its presence expired and was never removed,
+    // while the viewer's refreshed presence kept the document out of GC.
+    await isolatedEditorData._command(['ZADD', isolatedEditorData._docKeys(ctx, docId).presenceSet, '1', 'dead-editor']);
+    connections.push(viewer.conn);
+    jest.spyOn(sqlBase, 'getChangesIndexPromise').mockResolvedValue([{change_id: 4}]);
+    // A save is already in progress or was just started by this exit.
+    jest.spyOn(taskResult, 'select').mockResolvedValue([{callback: 'https://example.test/callback'}]);
+    const updateIf = jest.spyOn(taskResult, 'updateIf').mockResolvedValue({affectedRows: 0});
+
+    try {
+      await mockSocketIo.connection(viewer.conn);
+      await viewer.handlers.disconnect('transport close');
+
+      assert.deepEqual(await isolatedEditorData.getPresence(ctx, docId), []);
+      assert.equal(await readDocumentIndexScore(isolatedEditorData, ctx, docId), null);
+      // The unsaved changes are sent to the save, not left behind.
+      assert.equal(updateIf.mock.calls.length, 1);
+      assert.equal(updateIf.mock.calls[0][2].key, docId);
+      assert.equal(docsCoServer.editorData.cleanDocumentOnExit.mock.calls.length, 0);
+    } finally {
+      await isolatedEditorData.cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
+  test('an editor that sends "close" is counted as a viewer instead of an editor', async () => {
+    const ctx = context(tenantManager.getDefautTenant());
+    const editor = connectionHandlers({id: 'closing-editor-connection', userId: 'closing-editor', view: false});
+    const docId = editor.conn.docId;
+    await isolatedEditorData.addPresence(ctx, docId, editor.conn.user.id, JSON.stringify({...editor.conn.user, connectionId: editor.conn.id}));
+    connections.push(editor.conn);
+    const editorCounts = jest.spyOn(docsCoServer.editorStat, 'incrEditorConnectionsCountByShard').mockResolvedValue(undefined);
+    jest.spyOn(docsCoServer.editorData, 'addPresence').mockImplementation((...args) => isolatedEditorData.addPresence(...args));
+
+    try {
+      await mockSocketIo.connection(editor.conn);
+      await editor.handlers.message({type: 'close'});
+
+      assert.equal(editor.conn.isCloseCoAuthoring, true);
+      assert.deepEqual([...editorCounts.mock.calls.map(call => call[2])], [-1]);
+      assert.deepEqual([...docsCoServer.editorStat.incrViewerConnectionsCountByShard.mock.calls.map(call => call[2])], [1]);
+    } finally {
+      await isolatedEditorData.removePresence(ctx, docId, editor.conn.user.id);
+      await isolatedEditorData.cleanDocumentOnExit(ctx, docId);
+    }
+  });
+
   test('leaves editor data alone for sockets the server closes when it shuts down', async () => {
     const ctx = context(tenantManager.getDefautTenant());
     const editor = connectionHandlers({id: 'editor-connection', userId: 'editor', view: false});

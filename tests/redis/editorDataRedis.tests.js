@@ -4,6 +4,23 @@ const assert = require('node:assert/strict');
 const {test} = require('@jest/globals');
 
 const verify = require('./editorDataRedis.verify');
+
+// Makes every command of this connection's current client behave like send.
+// On a Cluster a keyless command (PING) is sent by the client of a reachable
+// master, not by the cluster client.
+function replaceSendCommand(connection, send) {
+  const client = connection.client;
+  const sendCommand = client.sendCommand;
+  client.sendCommand = send;
+  // Only for this client: a replacement client sends normally again.
+  connection._readyClusterMaster = async function (target) {
+    return target === client ? {sendCommand: send} : Object.getPrototypeOf(connection)._readyClusterMaster.call(this, target);
+  };
+  return () => {
+    client.sendCommand = sendCommand;
+    delete connection._readyClusterMaster;
+  };
+}
 const smoke = require('./editorDataRedis.pkg-smoke');
 
 test('editorDataRedis implements the editor data contract', async () => {
@@ -20,9 +37,8 @@ test('editorDataRedis resets the client after a command timeout', async () => {
 
   try {
     await data.connect();
-    const client = data.redis.client;
     data.redis.commandTimeoutMs = 25;
-    client.sendCommand = () => new Promise(() => {});
+    replaceSendCommand(data.redis, () => new Promise(() => {}));
 
     await assert.rejects(data.ping(), error => error.code === 'ETIMEDOUT');
     assert.equal(data.isConnected(), false);
@@ -39,11 +55,9 @@ test('editorDataRedis healthCheck reports command failures', async () => {
 
   try {
     await data.connect();
-    const client = data.redis.client;
-    const sendCommand = client.sendCommand;
-    client.sendCommand = () => Promise.reject(new Error('simulated Redis failure'));
+    const restore = replaceSendCommand(data.redis, () => Promise.reject(new Error('simulated Redis failure')));
     assert.equal(await data.healthCheck(), false);
-    client.sendCommand = sendCommand;
+    restore();
     assert.equal(await data.healthCheck(), true);
   } finally {
     await data.close();

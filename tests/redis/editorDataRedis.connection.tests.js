@@ -24,6 +24,7 @@ const {
 } = require('../../DocService/sources/editorDataRedis/redisConnectionManager');
 const {EditorCommon} = require('../../DocService/sources/editorDataRedis/editorCommon');
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
+const {waitFor} = require('./redisTestHelpers');
 const {
   cfgRedisOptions,
   cfgRedisOptionsCluster,
@@ -33,6 +34,10 @@ const {
   normalizeSentinelOptions,
   sentinelReconnectStrategy
 } = require('../../DocService/sources/editorDataRedis/redisConfig');
+const {clusterNodeReconnectStrategy} = require('../../DocService/sources/editorDataRedis/redisConfig/clusterOptions');
+const {standaloneReconnectStrategy} = require('../../DocService/sources/editorDataRedis/redisConfig/nodeOptions');
+const {releaseClient, trackConnect, urlHost} = require('../../DocService/sources/editorDataRedis/redisConnection/helpers');
+const {checkPrefixForCluster} = require('../../DocService/sources/editorDataRedis/redisKeys');
 
 function fakeClient(properties = {}) {
   const client = new EventEmitter();
@@ -239,9 +244,10 @@ describe('editorDataRedis connection contract', () => {
       connection.cluster = false;
       connection.sentinel = false;
     };
-    // Fake clients only: in a Sentinel run, checking the configured Sentinels
-    // would take longer than these short command timeouts.
+    // Fake clients only: in a Sentinel or Cluster run, checking the configured
+    // nodes would take longer than these short command timeouts.
     connection._probeSentinelRootNodes = async () => undefined;
+    connection._probeClusterRootNodes = async () => undefined;
 
     const firstCommand = connection.command(['PING']);
     await new Promise(resolve => setImmediate(resolve));
@@ -257,6 +263,100 @@ describe('editorDataRedis connection contract', () => {
     await assert.rejects(staleCommand, error => error.code === 'ETIMEDOUT');
     assert.equal(connection.client, replacementClient);
     pending.forEach(resolve => resolve('late PONG'));
+  });
+
+  test('a standalone client gives up reconnecting after a few quick retries; a configured strategy is kept', () => {
+    const cause = new Error('connect ECONNREFUSED');
+    const strategy = normalizeNodeOptions({}, 0).socket.reconnectStrategy;
+    assert.equal(strategy, standaloneReconnectStrategy);
+    for (let retries = 0; retries < 5; ++retries) {
+      const delay = strategy(retries, cause);
+      assert.ok(Number.isInteger(delay) && delay >= 0 && delay < 1200, `retry ${retries}: ${delay}`);
+    }
+    assert.equal(strategy(5, cause), cause);
+    assert.equal(normalizeNodeOptions({socket: {reconnectStrategy: false}}, 0).socket.reconnectStrategy, false);
+    assert.equal(normalizeNodeOptions({url: 'redis://example.test:6379'}, 0).socket.reconnectStrategy, standaloneReconnectStrategy);
+  });
+
+  test('a Cluster node client keeps reconnecting after a socket timeout so the topology is refreshed', () => {
+    for (const retries of [0, 1, 10, 1000]) {
+      assert.equal(typeof clusterNodeReconnectStrategy(retries, new Error('Socket timeout')), 'number');
+    }
+    const options = normalizeClusterOptions({rootNodes: [{url: 'redis://node:7000'}], defaults: {socket: {socketTimeout: 0}, pingInterval: 0}});
+    // Configured values are kept.
+    assert.equal(options.defaults.socket.socketTimeout, 0);
+    assert.equal(options.defaults.pingInterval, 0);
+  });
+
+  test('Cluster prefixes: an empty hash tag is refused, other braces are allowed', () => {
+    for (const prefix of ['{}', 'ds:{}:', 'a{}b']) {
+      assert.throws(() => checkPrefixForCluster(prefix), /empty "\{\}" hash tag/, prefix);
+    }
+    for (const prefix of ['ds:', '{ds}:', 'ds{', 'ds}', '']) {
+      assert.doesNotThrow(() => checkPrefixForCluster(prefix), prefix);
+    }
+  });
+
+  test('logs a Cluster root node URL without its credentials', () => {
+    assert.equal(urlHost('redis://default:secret@cluster-node:7000'), 'cluster-node:7000');
+    assert.equal(urlHost('not a url'), '(invalid URL)');
+  });
+
+  test('a client is released only after its connect settled, so a late socket is not left open', async () => {
+    let finishConnect;
+    let destroyed = 0;
+    const client = fakeClient({
+      isOpen: true,
+      isReady: false,
+      destroy() {
+        destroyed++;
+        this.isOpen = false;
+      }
+    });
+    trackConnect(client, new Promise(resolve => (finishConnect = resolve)));
+
+    releaseClient(client);
+    // node-redis would refuse destroy() once the socket it is creating is ready.
+    assert.equal(destroyed, 0);
+    client.isReady = true;
+    finishConnect();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(destroyed, 1);
+
+    // A client that is not connecting (or a Sentinel client) is destroyed at once.
+    const idle = fakeClient({destroy: () => destroyed++});
+    releaseClient(idle);
+    const stuck = fakeClient({isReady: false, destroy: () => destroyed++});
+    trackConnect(stuck, new Promise(() => {}));
+    releaseClient(stuck, {waitForConnect: false});
+    assert.equal(destroyed, 3);
+  });
+
+  test('fails editor-data operations queued behind a failed connect with that connect', async () => {
+    const connection = new RedisConnection(undefined, {serializeOperations: true});
+    let attempts = 0;
+    connection._createClient = () => {
+      connection.client = fakeClient({isOpen: false, isReady: false});
+      connection.connector = 'redis';
+    };
+    connection._connectWithRetries = async () => {
+      attempts++;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      throw new Error('connect refused');
+    };
+
+    // Without this, the queued operations would each wait for a full connect
+    // attempt of their own, one after another.
+    const results = await Promise.allSettled([1, 2, 3].map(() => connection.command(['PING'])));
+    assert.deepEqual(
+      results.map(result => result.status),
+      ['rejected', 'rejected', 'rejected']
+    );
+    assert.equal(attempts, 1);
+
+    // An operation issued after the failure tries a new connect.
+    await assert.rejects(connection.command(['PING']));
+    assert.equal(attempts, 2);
   });
 
   test('keeps a timed-out editor-data operation isolated while queued commands reconnect', async () => {
@@ -400,7 +500,12 @@ describe('editorDataRedis connection contract', () => {
     });
 
     assert.deepEqual(options.rootNodes, [{url: 'redis://cluster-node:7000'}]);
-    assert.deepEqual(options.defaults, {password: 'secret', socket: {connectTimeout: 15000}, disableOfflineQueue: true});
+    assert.deepEqual(options.defaults, {
+      password: 'secret',
+      socket: {connectTimeout: 15000, socketTimeout: 10000, reconnectStrategy: clusterNodeReconnectStrategy},
+      pingInterval: 3000,
+      disableOfflineQueue: true
+    });
     assert.equal(options.commandOptions.timeout, 30000);
     assert.equal(options.RESP, 2);
   });
@@ -981,8 +1086,9 @@ describe('editorDataRedis connection contract', () => {
     const connection = new RedisConnection();
     connection.sentinel = true;
     connection.connector = 'redis';
-    // Fake clients only: in a Sentinel run, do not check the configured Sentinels.
+    // Fake clients only: in a Sentinel or Cluster run, do not check the configured nodes.
     connection._probeSentinelRootNodes = async () => undefined;
+    connection._probeClusterRootNodes = async () => undefined;
     connection._createClient = () => {
       connection.sentinelRootNodeCount = 3;
       const stuck = clients.length === 0;
@@ -1511,4 +1617,113 @@ describe('editorDataRedis connection contract', () => {
     });
     assert.equal(connection.closed, true);
   });
+});
+
+const describeCluster = process.env.TEST_REDIS_CLUSTER === 'true' ? describe : describe.skip;
+
+describeCluster('Redis Cluster with one master this process cannot reach', () => {
+  // A TCP proxy per node; one node's proxy refuses or swallows connections, as
+  // a partition between DocService and one master that the cluster itself
+  // does not see (it never fails that master over).
+  async function startProxy(target) {
+    const sockets = new Set();
+    const proxy = {mode: 'forward'};
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.on('error', () => {});
+      if (proxy.mode === 'refuse') {
+        socket.destroy();
+        return;
+      }
+      if (proxy.mode === 'blackhole') {
+        return;
+      }
+      const upstream = net.connect(target.port, target.host);
+      sockets.add(upstream);
+      upstream.on('close', () => sockets.delete(upstream));
+      upstream.on('error', () => socket.destroy());
+      socket.pipe(upstream).pipe(socket);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    proxy.port = server.address().port;
+    proxy.setMode = mode => {
+      proxy.mode = mode;
+      sockets.forEach(socket => socket.destroy());
+    };
+    proxy.close = () => {
+      sockets.forEach(socket => socket.destroy());
+      return new Promise(resolve => server.close(resolve));
+    };
+    return proxy;
+  }
+
+  test.each(['refuse', 'blackhole'])(
+    "connects, fails only that master's slots quickly and uses the master again once it is reachable (%s)",
+    async mode => {
+      const calculateSlot = require('../../DocService/node_modules/cluster-key-slot');
+      const original = {...cfgRedisOptionsCluster};
+      const discovery = redis.createCluster(normalizeClusterOptions(original));
+      discovery.on('error', () => {});
+      await discovery.connect();
+      const nodes = [...discovery.masters, ...discovery.replicas].map(node => ({host: node.host, port: node.port}));
+      const shards = discovery.masters.map(master => ({
+        address: `${master.host}:${master.port}`,
+        slot: discovery.slots.findIndex(shard => shard?.master === master)
+      }));
+      await discovery.close();
+
+      const proxies = new Map();
+      for (const node of nodes) {
+        proxies.set(`${node.host}:${node.port}`, await startProxy(node));
+      }
+      const unreachable = shards[1].address;
+      const nodeAddressMap = Object.fromEntries([...proxies].map(([address, proxy]) => [address, {host: '127.0.0.1', port: proxy.port}]));
+      const root = proxies.get(shards[0].address);
+      Object.keys(cfgRedisOptionsCluster).forEach(key => delete cfgRedisOptionsCluster[key]);
+      Object.assign(cfgRedisOptionsCluster, original, {rootNodes: [{url: `redis://127.0.0.1:${root.port}`}], nodeAddressMap});
+      const keyFor = slot => {
+        for (let i = 0; ; i++) {
+          const key = `${process.env.TEST_REDIS_PREFIX || ''}partition:{${i}}`;
+          if (calculateSlot(key) === slot) {
+            return key;
+          }
+        }
+      };
+      const connection = new RedisConnection(undefined, {serializeOperations: true});
+      try {
+        proxies.get(unreachable).setMode(mode);
+        // An attempt that waits for every master fails; the next one connects
+        // without them.
+        await connection.connect();
+        const reachableKey = keyFor(shards[0].slot);
+        const unreachableKey = keyFor(shards[1].slot);
+
+        assert.equal(await connection.command(['SET', reachableKey, '1', 'PX', '30000']), 'OK');
+        for (let attempt = 0; attempt < 2; ++attempt) {
+          const startedAt = Date.now();
+          await assert.rejects(connection.command(['SET', unreachableKey, '1', 'PX', '30000']), error => error instanceof RedisUnavailableError);
+          assert.ok(Date.now() - startedAt < 3000, `failed after ${Date.now() - startedAt} ms`);
+        }
+        assert.equal(await connection.command(['GET', reachableKey]), '1');
+        assert.equal(await connection.command(['PING']), 'PONG');
+
+        proxies.get(unreachable).setMode('forward');
+        await waitFor(
+          'the master after the partition',
+          () => connection.command(['SET', unreachableKey, '1', 'PX', '30000']),
+          reply => reply === 'OK',
+          20000
+        );
+        assert.equal(await connection.command(['DEL', reachableKey]), 1);
+        assert.equal(await connection.command(['DEL', unreachableKey]), 1);
+      } finally {
+        await connection.close();
+        Object.keys(cfgRedisOptionsCluster).forEach(key => delete cfgRedisOptionsCluster[key]);
+        Object.assign(cfgRedisOptionsCluster, original);
+        await Promise.all([...proxies.values()].map(proxy => proxy.close()));
+      }
+    },
+    60000
+  );
 });

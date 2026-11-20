@@ -5,6 +5,8 @@
 
 'use strict';
 
+const {REDIS_TIME_MILLIS} = require('./helpers');
+
 const ADD_MONTH_USER_SCRIPT = `
 local ttl = redis.call('PTTL', KEYS[2])
 redis.call('HSET', KEYS[2], ARGV[4], ARGV[5])
@@ -37,9 +39,24 @@ end
 return result
 `;
 
+// Expired users are otherwise removed only when the users are read (/info, the
+// license command). Remove a bounded number of them on every add too, and let
+// both keys expire with the last user, so they cannot grow without limit.
+// Scores are expiry times in seconds.
 const ADD_UNIQUE_USER_SCRIPT = `
+${REDIS_TIME_MILLIS}
+local nowSeconds = math.floor(redisTimeMillis() / 1000)
+local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', nowSeconds, 'LIMIT', '0', '100')
+for _, userId in ipairs(expired) do
+  redis.call('ZREM', KEYS[1], userId)
+  redis.call('HDEL', KEYS[2], userId)
+end
 redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
+local last = redis.call('ZRANGE', KEYS[1], -1, -1, 'WITHSCORES')
+local expireAtMs = math.ceil(tonumber(last[2]) * 1000)
+redis.call('PEXPIREAT', KEYS[1], expireAtMs)
+redis.call('PEXPIREAT', KEYS[2], expireAtMs)
 return 1
 `;
 

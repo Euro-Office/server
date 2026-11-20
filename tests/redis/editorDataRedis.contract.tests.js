@@ -150,12 +150,30 @@ describe('editorDataRedis value helpers', () => {
     assert.equal(redisKeys.decodeDocumentMember(JSON.stringify(['only-one-part'])), null);
   });
 
-  test('normalizes numeric and duration TTLs with a one-unit minimum', () => {
+  test('normalizes numeric and duration TTLs and rejects unusable ones', () => {
     assert.equal(redisValueCodec.ttlSeconds({getCfg: () => 1.2}, 'ttl', 0), 2);
     assert.equal(redisValueCodec.ttlSeconds({getCfg: () => '1500ms'}, 'ttl', 0), 2);
-    assert.equal(redisValueCodec.ttlSeconds({getCfg: () => 0}, 'ttl', 0), 1);
     assert.equal(redisValueCodec.ttlMilliseconds('1.5s'), 1500);
-    assert.equal(redisValueCodec.ttlMilliseconds(0), 1);
+    // A tenant value Redis would reject falls back to the global value.
+    for (const invalid of [0, -5, '', 'abc', 'P7D', '1e20', 1e17, NaN, null]) {
+      assert.equal(redisValueCodec.ttlSeconds({getCfg: () => invalid}, 'ttl', 60), 60, `tenant value ${invalid}`);
+      assert.throws(() => redisValueCodec.ttlSeconds({getCfg: () => invalid}, 'ttl', invalid), /ttl must be a positive duration/);
+      assert.throws(() => redisValueCodec.ttlMilliseconds(invalid), /TTL must be a positive duration/);
+    }
+  });
+
+  test('keeps ids that differ only in lone surrogates apart', () => {
+    assert.notEqual(redisKeys.encodePart('a\ud800'), redisKeys.encodePart('a\udc00'));
+    assert.notEqual(redisKeys.encodePart('a\ud800'), redisKeys.encodePart('a\ufffd'));
+    assert.equal(redisKeys.encodePart('doc-1'), Buffer.from('doc-1').toString('base64url'));
+    // Ids without lone surrogates keep their keys, JSON members included.
+    const member = redisKeys.documentMember({tenant: 't'}, 'd');
+    assert.equal(redisKeys.encodePart(member), Buffer.from(member).toString('base64url'));
+    assert.equal(redisKeys.encodePart('CORP\\user'), Buffer.from('CORP\\user').toString('base64url'));
+    assert.equal(redisKeys.encodePart('a\ud83d\ude00'), Buffer.from('a\ud83d\ude00').toString('base64url'));
+    assert.ok(redisKeys.encodePart('a\ud800').startsWith('~'));
+    assert.equal(redisValueCodec.losslessText('user1'), 'user1');
+    assert.notEqual(redisValueCodec.losslessText('a\ud800'), redisValueCodec.losslessText('a\udc00'));
   });
 
   test('handles Redis replies and JSON values defensively', () => {

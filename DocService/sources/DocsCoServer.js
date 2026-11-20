@@ -171,6 +171,7 @@ const expDocumentsStep = gc.getDocumentsExpireStep();
 
 const MIN_SAVE_EXPIRATION = 60000;
 const SHARD_ID = crypto.randomBytes(16).toString('base64'); //16 as guid
+const shardConnectionCounts = require('./shardConnectionCounts').create(SHARD_ID);
 
 const PRECISION = [
   {name: 'hour', val: ms('1h')},
@@ -2333,6 +2334,7 @@ exports.install = function (server, app, callbackFunction) {
       }
     } else {
       if (!conn.isCloseCoAuthoring && !isView) {
+        yield updatePresenceCounters(ctx, conn, -1); // counted as an editor until now, as a viewer below
         modifyConnectionEditorToView(ctx, conn);
         conn.isCloseCoAuthoring = true;
         yield addPresence(ctx, conn, true);
@@ -2432,7 +2434,8 @@ exports.install = function (server, app, callbackFunction) {
         }
       } else {
         if (localPresenceEmpty) {
-          yield* cleanDocumentAfterFinalViewerExit(ctx, docId);
+          const left = yield hasChanges(ctx, docId); // GC no longer sees the document: save what a dead editor left
+          yield left ? createSaveTimer(ctx, docId, null, null, null, undefined, true, true) : co(cleanDocumentAfterFinalViewerExit(ctx, docId));
         }
       }
       const sessionType = isView ? 'view' : 'edit';
@@ -4464,7 +4467,7 @@ exports.install = function (server, app, callbackFunction) {
           if (constants.CONN_CLOSED === conn.conn.readyState) {
             ctx.logger.error('expireDoc connection closed');
           }
-          yield updatePresence(ctx, conn);
+          yield updatePresence(ctx, conn).catch(err => ctx.logger.error('expireDoc updatePresence error (refreshing the others):', err));
           if (utils.isLiveViewer(conn)) {
             countLiveViewByShard++;
             tenant.countLiveViewByShard++;
@@ -4481,9 +4484,7 @@ exports.install = function (server, app, callbackFunction) {
             ctx.setTenant(tenantId);
             const tenant = tenants[tenantId];
             yield* collectStats(ctx, tenant.countEditByShard, tenant.countLiveViewByShard, tenant.countViewByShard);
-            yield editorStat.setEditorConnectionsCountByShard(ctx, SHARD_ID, tenant.countEditByShard);
-            yield editorStat.setLiveViewerConnectionsCountByShard(ctx, SHARD_ID, tenant.countLiveViewByShard);
-            yield editorStat.setViewerConnectionsCountByShard(ctx, SHARD_ID, tenant.countViewByShard);
+            yield shardConnectionCounts.set(editorStat, ctx, tenant.countEditByShard, tenant.countLiveViewByShard, tenant.countViewByShard);
             if (clientStatsD) {
               //todo with multitenant
               const countEdit = yield editorStat.getEditorConnectionsCount(ctx, connections);
@@ -4501,9 +4502,7 @@ exports.install = function (server, app, callbackFunction) {
           aggregationCtx.init(tenantManager.getDefautTenant(), ctx.docId, ctx.userId);
           //yield ctx.initTenantCache();//no need
           yield* collectStats(aggregationCtx, countEditByShard, countLiveViewByShard, countViewByShard);
-          yield editorStat.setEditorConnectionsCountByShard(aggregationCtx, SHARD_ID, countEditByShard);
-          yield editorStat.setLiveViewerConnectionsCountByShard(aggregationCtx, SHARD_ID, countLiveViewByShard);
-          yield editorStat.setViewerConnectionsCountByShard(aggregationCtx, SHARD_ID, countViewByShard);
+          yield shardConnectionCounts.set(editorStat, aggregationCtx, countEditByShard, countLiveViewByShard, countViewByShard);
         }
         ctx.initDefault();
       } catch (err) {
@@ -4908,9 +4907,10 @@ exports.commandFromServer = function (req, res) {
   });
 };
 
-exports.close = function () {
+exports.close = async function () {
   socketIoClosing = true;
-  return io?.close?.();
+  await io?.close?.();
+  await shardConnectionCounts.clear(editorStat);
 };
 
 exports.shutdown = function (req, res) {

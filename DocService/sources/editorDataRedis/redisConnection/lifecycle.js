@@ -5,7 +5,8 @@
 
 'use strict';
 
-const {errorDetails, withTimeout, destroyClient, RedisUnavailableError} = require('./helpers');
+const {errorDetails, withTimeout, destroyClient, releaseClient, RedisUnavailableError} = require('./helpers');
+const {releaseClusterClient} = require('./clusterNodes');
 const {log} = require('./helpers');
 
 module.exports = function attachLifecycle(RedisConnection) {
@@ -68,13 +69,17 @@ module.exports = function attachLifecycle(RedisConnection) {
     if (!client || !client.isOpen) {
       return;
     }
+    if (this.cluster && client.isReady && client.masters) {
+      releaseClusterClient(client);
+      return;
+    }
     if (client.isReady === false) {
       // A connect or handshake is still in flight. close() would wait for it,
       // forever against a server that accepts connections but does not answer,
       // and once close() has started node-redis no longer lets destroy()
-      // release the socket.
-      log('debug', 'destroying redis client that is not ready');
-      destroyClient(client);
+      // release the socket (see releaseClient).
+      log('debug', 'releasing redis client that is not ready');
+      releaseClient(client, {waitForConnect: !this.sentinel});
       return;
     }
     try {
@@ -98,7 +103,18 @@ module.exports = function attachLifecycle(RedisConnection) {
     }
     this.activeOperations++;
     const previous = this.serializeOperations ? this.operationTail : Promise.resolve();
-    const execution = previous.then(() => Promise.resolve().then(operation));
+    // On the serialized lane each operation would otherwise start its own
+    // full connect attempt (REDIS_CONNECT_TIMEOUT_MS) one after another during
+    // an outage: the Nth queued operation failed only after N attempts. One
+    // that was queued when a connect failed fails with that connect instead;
+    // operations queued later try a new connect.
+    const connectFailuresAtQueue = this.connectFailures;
+    const execution = previous.then(() => {
+      if (this.serializeOperations && this.connectFailures !== connectFailuresAtQueue && !this.isConnected()) {
+        throw new RedisUnavailableError(this.lastConnectError);
+      }
+      return Promise.resolve().then(operation);
+    });
     const result = execution.finally(() => {
       this.activeOperations--;
       if (this.activeOperations === 0) {
@@ -125,6 +141,10 @@ module.exports = function attachLifecycle(RedisConnection) {
     if (!client || !client.isOpen) {
       return;
     }
-    destroyClient(client);
+    if (this.cluster && client.isReady && client.masters) {
+      releaseClusterClient(client);
+      return;
+    }
+    releaseClient(client, {waitForConnect: !this.sentinel});
   };
 };

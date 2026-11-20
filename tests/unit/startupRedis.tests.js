@@ -27,6 +27,36 @@ describe('Redis startup recovery', () => {
     assert.equal(statAttempts, 1);
   });
 
+  test('retries when a store connects but does not answer PING (missing credentials)', async () => {
+    let pings = 0;
+    await connectRedisForStartup({
+      editorData: {
+        connect: async () => {},
+        ping: async () => {
+          pings++;
+          if (pings === 1) {
+            throw new Error('NOAUTH Authentication required.');
+          }
+          return 'PONG';
+        }
+      },
+      editorStat: {connect: async () => {}, ping: async () => 'PONG'},
+      logger,
+      retryDelayMs: 0
+    });
+    assert.equal(pings, 2);
+    await assert.rejects(
+      connectRedisForStartup({
+        editorData: {connect: async () => {}, ping: async () => 'PONG'},
+        editorStat: {connect: async () => {}, ping: async () => 'NOPE'},
+        logger,
+        maxAttempts: 1,
+        retryDelayMs: 0
+      }),
+      /editorStat did not answer PING/
+    );
+  });
+
   test('reports failure after the bounded retry policy is exhausted', async () => {
     let attempts = 0;
     const startup = connectRedisForStartup({

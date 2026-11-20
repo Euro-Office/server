@@ -127,27 +127,81 @@ function destroyClient(client) {
   }
 }
 
-// Whether a Sentinel answers PING within timeoutMs, checked with a client of
-// our own that is always closed afterwards (node-redis cannot close its own
-// connection to a Sentinel that accepts it but never answers).
-async function probeSentinel(node, sentinelClientOptions, timeoutMs) {
+// The connect() promise of each client while it connects (see trackConnect).
+const pendingConnects = new WeakMap();
+
+function trackConnect(client, promise) {
+  const settled = promise.then(
+    () => undefined,
+    () => undefined
+  );
+  pendingConnects.set(client, settled);
+  settled.then(() => {
+    if (pendingConnects.get(client) === settled) {
+      pendingConnects.delete(client);
+    }
+  });
+  return promise;
+}
+
+// Releases a client that is no longer used. node-redis cannot destroy a client
+// while its connect creates the socket (a TCP or TLS handshake in progress):
+// the socket is still used when it is ready, the client becomes ready, and
+// destroy() is refused from then on, leaving an open connection that keeps the
+// process alive. Such a client is destroyed once its connect has settled (it
+// fails by itself through connectTimeout or its reconnect strategy), or after
+// REDIS_CONNECT_TIMEOUT_MS at the latest (then its socket exists and destroy()
+// works, for a server that accepts the connection but never answers).
+// waitForConnect false destroys at once: a Sentinel client stuck behind a
+// Sentinel that never answers has its socket, and the next attempt must not
+// wait for it.
+function releaseClient(client, {waitForConnect = true} = {}) {
+  if (!client?.isOpen) {
+    return;
+  }
+  const pending = waitForConnect && client.isReady === false ? pendingConnects.get(client) : undefined;
+  if (!pending) {
+    destroyClient(client);
+    return;
+  }
+  let released = false;
+  const release = () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    clearTimeout(timer);
+    if (client.isOpen) {
+      destroyClient(client);
+    }
+  };
+  const timer = setTimeout(release, REDIS_CONNECT_TIMEOUT_MS + 1000);
+  timer.unref?.();
+  pending.then(release);
+}
+
+// Whether a node answers PING within timeoutMs, checked with a client of our
+// own that is always closed afterwards (node-redis cannot close its own
+// connection to a node that accepts it but never answers). clientOptions
+// include the node's address (socket.host/port or url).
+async function probeNode(clientOptions, timeoutMs, label) {
   // node-redis throws on a negative connectTimeout after it has opened the
   // socket, whose later error then has no listener and stops the process.
   const timeout = Math.max(1, Math.floor(Number(timeoutMs) || 0));
   const client = redis.createClient({
-    ...sentinelClientOptions,
-    socket: {...sentinelClientOptions.socket, host: node.host, port: node.port, connectTimeout: timeout, reconnectStrategy: false}
+    ...clientOptions,
+    socket: {...clientOptions.socket, connectTimeout: timeout, reconnectStrategy: false}
   });
   client.on('error', () => {});
   try {
     await withTimeout(
       client.connect().then(() => client.sendCommand(['PING'])),
       timeout,
-      'Redis Sentinel check'
+      `Redis ${label} check`
     );
     return true;
   } catch (error) {
-    log('warn', 'Sentinel %s:%s did not answer the check: %s', node.host, node.port, errorDetails(error));
+    log('warn', '%s did not answer the check: %s', label, errorDetails(error));
     return false;
   } finally {
     // A client whose connect failed has already closed its socket.
@@ -155,6 +209,31 @@ async function probeSentinel(node, sentinelClientOptions, timeoutMs) {
       destroyClient(client);
     }
   }
+}
+
+function probeSentinel(node, sentinelClientOptions, timeoutMs) {
+  return probeNode(
+    {...sentinelClientOptions, socket: {...sentinelClientOptions.socket, host: node.host, port: node.port}},
+    timeoutMs,
+    `Sentinel ${node.host}:${node.port}`
+  );
+}
+
+// The host:port of a node URL for logs, without the credentials it may carry.
+function urlHost(url) {
+  try {
+    return new URL(url).host;
+  } catch (_e) {
+    return '(invalid URL)';
+  }
+}
+
+// A Cluster root node gets the client defaults (credentials, TLS) with its own
+// address, as node-redis connects to it for discovery.
+function probeClusterRootNode(node, defaults, timeoutMs) {
+  const options = {...defaults, ...node, socket: {...defaults?.socket, ...node?.socket}};
+  const label = `Cluster root node ${node?.url ? urlHost(node.url) : `${node?.socket?.host}:${node?.socket?.port}`}`;
+  return probeNode(options, timeoutMs, label);
 }
 
 function createConnectCancelledError() {
@@ -187,7 +266,11 @@ module.exports = {
   createConnectTimeoutError,
   wait,
   destroyClient,
+  releaseClient,
+  trackConnect,
   probeSentinel,
+  probeClusterRootNode,
+  urlHost,
   createConnectCancelledError,
   untilAborted,
   RedisUnavailableError

@@ -53,11 +53,32 @@ function resolveOptionAliases(source) {
   return options;
 }
 
+// node-redis retries a failed connect forever by default, so a refused
+// connection failed only at the adapter's connect deadline
+// (REDIS_CONNECT_TIMEOUT_MS), and that deadline destroyed the client in the
+// middle of an attempt (an attempt that completed later left a connection
+// behind). The standalone client gives up after a few quick retries instead;
+// RedisConnection creates a new client for the next operation.
+const STANDALONE_RECONNECT_MAX_RETRIES = 5;
+function standaloneReconnectStrategy(retries, cause) {
+  if (retries >= STANDALONE_RECONNECT_MAX_RETRIES) {
+    return cause instanceof Error ? cause : new Error('Redis reconnect attempts exhausted');
+  }
+  return Math.min(2 ** retries * 50, 1000) + Math.floor(Math.random() * 100);
+}
+
 function normalizeNodeOptions(source, database, includeEndpoint = true, includeCommandOptions = true) {
   const options = resolveOptionAliases(cloneConfig(source));
   options.RESP = REDIS_RESP_VERSION;
   if (includeEndpoint) {
     options.disableOfflineQueue = true;
+  }
+  // An unquoted value in a templated config ("password": 12345) would make
+  // every handshake throw a TypeError that startup reports only as a timeout.
+  for (const name of ['username', 'password']) {
+    if (typeof options[name] === 'number') {
+      options[name] = String(options[name]);
+    }
   }
   if (options.username === '') {
     // An empty username is no username (node-redis treats it the same).
@@ -80,6 +101,15 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
   if (database !== undefined && database !== null && database !== '') {
     options.database = Number(database);
   }
+  // Number('abc') is NaN, which node-redis silently treats as database 0.
+  if (
+    options.database !== undefined &&
+    options.database !== null &&
+    options.database !== '' &&
+    !(Number.isInteger(options.database) && options.database >= 0)
+  ) {
+    throw new Error(`Redis database must be a non-negative integer; received ${JSON.stringify(source?.database ?? source?.db ?? database)}`);
+  }
   if (includeCommandOptions) {
     options.commandOptions = normalizeCommandOptions(options.commandOptions);
   }
@@ -97,7 +127,13 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
     }
     options.socket.connectTimeout = normalizeTimeoutMs(options.socket.connectTimeout, 'socket.connectTimeout', REDIS_CONNECT_TIMEOUT_MS);
   }
+  if (includeEndpoint) {
+    options.socket = options.socket || {};
+    if (options.socket.reconnectStrategy === undefined) {
+      options.socket.reconnectStrategy = standaloneReconnectStrategy;
+    }
+  }
   return options;
 }
 
-module.exports = {normalizeNodeOptions, normalizeSentinelName, normalizeSentinelRootNode, resolveOptionAliases};
+module.exports = {normalizeNodeOptions, normalizeSentinelName, normalizeSentinelRootNode, resolveOptionAliases, standaloneReconnectStrategy};

@@ -45,7 +45,7 @@ const {
   resolveDocumentExpiryStep,
   setDocumentsExpireStepMs
 } = require('./expirationConfig');
-const {POP_EXPIRED_LEASE_MS} = require('./editorDataRedis/editorDataSettings');
+const {POP_EXPIRED_LEASE_MS} = require('./editorDataRedis/expiredQueueLease');
 
 const cfgExpFilesCron = config.get('services.CoAuthoring.expire.filesCron');
 const cfgExpDocumentsCron = config.get('services.CoAuthoring.expire.documentsCron');
@@ -115,6 +115,10 @@ async function processForceSaveItem(ctx, expiredKey, queue, pubsub) {
   const tenant = expiredKey[0];
   const docId = expiredKey[1];
   let itemCtx = null;
+  // A force-save with a cached result sends the integrator callback and waits
+  // for it (up to callbackRequestTimeout, longer than the lease). Without a
+  // renewal another instance would claim the item again and send it twice.
+  const stopRenewing = keepClaimRenewed(ctx, expiredKey, '_renewForceSaveTimerExpired', 'forceSaveTimeout');
 
   try {
     // Each force-save can stay async for a while. Give it its own context so a
@@ -148,6 +152,8 @@ async function processForceSaveItem(ctx, expiredKey, queue, pubsub) {
     // Keep the claim unacknowledged so Redis can retry this item, while
     // continuing with the next item in this bounded pass.
     (itemCtx || ctx).logger.error('forceSaveTimeout item error: tenant=%s docId=%s: %s', tenant, docId, error && error.stack ? error.stack : error);
+  } finally {
+    stopRenewing();
   }
 }
 
@@ -165,9 +171,28 @@ function wasDocumentClosed(editorData, ctx, docId) {
   return typeof check === 'function' ? check.call(editorData, ctx, docId) : undefined;
 }
 
-function renewExpired(editorData, item) {
-  const renew = editorData._renewDocumentPresenceExpired;
+function renewExpired(editorData, item, method = '_renewDocumentPresenceExpired') {
+  const renew = editorData[method];
   return typeof renew === 'function' ? renew.call(editorData, item) : undefined;
+}
+
+// Renews the claim of expiredKey every EXPIRED_LEASE_RENEW_INTERVAL_MS until
+// the returned function is called.
+function keepClaimRenewed(ctx, expiredKey, method, label) {
+  const tenant = expiredKey[0];
+  const docId = expiredKey[1];
+  const renewTimer = setInterval(() => {
+    Promise.resolve(renewExpired(docsCoServer.editorData, expiredKey, method)).then(
+      held => {
+        if (held === false) {
+          ctx.logger.warn('%s lost the claim while processing: tenant=%s docId=%s', label, tenant, docId);
+        }
+      },
+      error => ctx.logger.warn('%s claim renewal failed: tenant=%s docId=%s: %s', label, tenant, docId, error?.stack || error)
+    );
+  }, EXPIRED_LEASE_RENEW_INTERVAL_MS);
+  renewTimer.unref?.();
+  return () => clearInterval(renewTimer);
 }
 
 async function processDocumentExpireItem(ctx, expiredKey, state, queue) {
@@ -177,22 +202,12 @@ async function processDocumentExpireItem(ctx, expiredKey, state, queue) {
   if ((await renewExpired(docsCoServer.editorData, expiredKey)) === false) {
     return {skipped: true, startSaveCount: 0, removedCount: 0};
   }
-  const renewTimer = setInterval(() => {
-    Promise.resolve(renewExpired(docsCoServer.editorData, expiredKey)).then(
-      held => {
-        if (held === false) {
-          ctx.logger.warn('checkDocumentExpire lost the claim while processing: tenant=%s docId=%s', tenant, docId);
-        }
-      },
-      error => ctx.logger.warn('checkDocumentExpire claim renewal failed: tenant=%s docId=%s: %s', tenant, docId, error?.stack || error)
-    );
-  }, EXPIRED_LEASE_RENEW_INTERVAL_MS);
-  renewTimer.unref?.();
+  const stopRenewing = keepClaimRenewed(ctx, expiredKey, '_renewDocumentPresenceExpired', 'checkDocumentExpire');
   let counts;
   try {
     counts = await processClaimedDocument(ctx, tenant, docId, state, queue);
   } finally {
-    clearInterval(renewTimer);
+    stopRenewing();
   }
 
   const acknowledged = await acknowledgeExpired(docsCoServer.editorData, '_ackDocumentPresenceExpired', expiredKey);

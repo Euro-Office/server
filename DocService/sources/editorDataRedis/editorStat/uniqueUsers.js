@@ -6,7 +6,7 @@
 'use strict';
 
 const {ADD_UNIQUE_USER_SCRIPT, GET_UNIQUE_USERS_SCRIPT} = require('../scripts');
-const {toRedisString, jsonEncode, jsonDecode} = require('../redisValueCodec');
+const {jsonEncode, jsonDecode, losslessText, fromLosslessText} = require('../redisValueCodec');
 
 module.exports = function attachUniqueUsers(EditorStat) {
   EditorStat.prototype._uniqueKeys = function (ctx, view) {
@@ -20,7 +20,7 @@ module.exports = function attachUniqueUsers(EditorStat) {
 
   EditorStat.prototype._addUniqueUser = async function (ctx, userId, expireAt, userInfo, view) {
     const keys = this._uniqueKeys(ctx, view);
-    await this._eval(ADD_UNIQUE_USER_SCRIPT, [keys.expiry, keys.info], [String(expireAt), String(userId), jsonEncode(userInfo)]);
+    await this._eval(ADD_UNIQUE_USER_SCRIPT, [keys.expiry, keys.info], [String(expireAt), losslessText(userId), jsonEncode(userInfo)]);
   };
 
   EditorStat.prototype._getUniqueUsers = async function (ctx, nowUTC, view) {
@@ -30,7 +30,7 @@ module.exports = function attachUniqueUsers(EditorStat) {
     for (let i = 0; i + 2 < (result || []).length; i += 3) {
       const userInfo = jsonDecode(result[i + 2], {});
       users.push({
-        userid: toRedisString(result[i]),
+        userid: fromLosslessText(result[i]),
         expire: new Date(Number(result[i + 1]) * 1000),
         ...userInfo
       });

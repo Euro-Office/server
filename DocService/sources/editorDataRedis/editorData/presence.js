@@ -16,7 +16,7 @@ const {
 const redisConnection = require('../redisConnection');
 const {documentMember} = require('../redisKeys');
 const {cfgExpPresence} = require('../editorDataSettings');
-const {refreshedTtlSeconds, toRedisString} = require('../redisValueCodec');
+const {refreshedTtlSeconds, toRedisString, losslessText} = require('../redisValueCodec');
 
 module.exports = function attachPresence(EditorData) {
   EditorData.prototype._syncPresenceIndex = function (ctx, docId, expected, desired) {
@@ -27,20 +27,32 @@ module.exports = function attachPresence(EditorData) {
     );
   };
 
+  // The presence itself is already written when the index update runs, and
+  // the index is in another Cluster slot. Failing the call then would fail a
+  // join (or a whole presence refresh pass in DocsCoServer) for presence that
+  // exists; the next refresh writes the index again.
+  EditorData.prototype._syncPresenceIndexAfterWrite = async function (ctx, docId, expireAt) {
+    try {
+      await this._syncPresenceIndex(ctx, docId, expireAt, expireAt);
+    } catch (error) {
+      redisConnection.log('warn', 'presence index update after a presence write failed: %s', redisConnection.errorDetails(error));
+    }
+  };
+
   EditorData.prototype.addPresence = async function (ctx, docId, userId, userInfo) {
     const keys = this._docKeys(ctx, docId);
     const ttl = refreshedTtlSeconds(ctx, 'services.CoAuthoring.expire.presence', cfgExpPresence);
     const result = await this._eval(
       ADD_PRESENCE_SCRIPT,
       [keys.presenceSet, keys.presenceHash, keys.presenceVersion, keys.closed],
-      [String(userId), String(userInfo), String(ttl)]
+      [losslessText(userId), String(userInfo), String(ttl)]
     );
     const expireAt = toRedisString(result?.[1] || '');
     // The document index is intentionally updated separately: document presence
     // keys are hash-tagged per document, while this sharded index has its own
     // hash tag. Redis Cluster cannot execute both key groups in one Lua script.
     // Only move the index forward when concurrent replicas finish out of order.
-    await this._syncPresenceIndex(ctx, docId, String(expireAt), String(expireAt));
+    await this._syncPresenceIndexAfterWrite(ctx, docId, String(expireAt));
   };
 
   EditorData.prototype.updatePresence = async function (ctx, docId, userId, ...presenceArgs) {
@@ -50,11 +62,11 @@ module.exports = function attachPresence(EditorData) {
     const updated = await this._eval(
       UPDATE_PRESENCE_SCRIPT,
       [keys.presenceSet, keys.presenceHash, keys.presenceVersion, keys.closed],
-      [String(userId), String(ttl), userInfo === undefined ? '' : String(userInfo)]
+      [losslessText(userId), String(ttl), userInfo === undefined ? '' : String(userInfo)]
     );
     if (Number(updated?.[0]) === 1) {
       const expireAt = toRedisString(updated[1] || '');
-      await this._syncPresenceIndex(ctx, docId, String(expireAt), String(expireAt));
+      await this._syncPresenceIndexAfterWrite(ctx, docId, String(expireAt));
     }
   };
 
@@ -64,7 +76,7 @@ module.exports = function attachPresence(EditorData) {
     const result = await this._eval(
       REMOVE_PRESENCE_SCRIPT,
       [keys.presenceSet, keys.presenceHash, keys.presenceVersion],
-      [String(userId), connectionId === undefined ? '' : String(connectionId)]
+      [losslessText(userId), connectionId === undefined ? '' : String(connectionId)]
     );
     await this._syncPresenceIndex(ctx, docId, toRedisString(result?.[2] || ''), toRedisString(result?.[3] || ''));
   };
