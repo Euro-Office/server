@@ -17,7 +17,7 @@ on:
 jobs:
   oracle-tests:
     name: Oracle
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
 
     steps:
       - name: Run Oracle DB docker container

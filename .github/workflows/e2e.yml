@@ -29,7 +29,7 @@ env:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       contents: read
     steps:
@@ -140,6 +140,9 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
+        # The upload can fail in a private copy when the organisation's artifact
+        # storage quota is used up; that must not fail the check there.
+        continue-on-error: ${{ github.event.repository.private }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.sha }}

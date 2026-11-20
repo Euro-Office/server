@@ -14,7 +14,7 @@ on:
 jobs:
   fs-storage-tests:
     name: File System Storage
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
 
     steps:
       - name: Check out repository code

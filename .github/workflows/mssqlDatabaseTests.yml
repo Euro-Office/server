@@ -17,7 +17,7 @@ on:
 jobs:
   mssql-tests:
     name: MSSQL
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
 
     steps:
       - name: Run MSSQL DB docker container
