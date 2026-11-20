@@ -11,6 +11,8 @@ const ms = require('ms');
 const expire = config.get('services.CoAuthoring.expire');
 
 module.exports = {
-  cfgExpShard: expire.get('shard'),
+  // New with this backend: fall back to the default.json value for an older
+  // operator-supplied default.json.
+  cfgExpShard: expire.has('shard') ? expire.get('shard') : 300,
   cfgExpMonthUniqueUsers: ms(expire.get('monthUniqueUsers'))
 };

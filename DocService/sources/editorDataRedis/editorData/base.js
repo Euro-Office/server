@@ -42,7 +42,10 @@ EditorData.prototype._docKeys = function (ctx, docId) {
     // Keep the claim under the document hash tag so the claim/read/delete
     // script remains atomic on Redis Cluster as well as standalone Redis.
     savedClaim: `${base}saved:claim`,
-    forceSave: `${base}forcesave`
+    forceSave: `${base}forcesave`,
+    // Set by a successful cleanup, removed when a user joins again (see
+    // _wasDocumentClosed).
+    closed: `${base}closed`
   };
 };
 

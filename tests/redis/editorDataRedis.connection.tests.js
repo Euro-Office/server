@@ -239,6 +239,9 @@ describe('editorDataRedis connection contract', () => {
       connection.cluster = false;
       connection.sentinel = false;
     };
+    // Fake clients only: in a Sentinel run, checking the configured Sentinels
+    // would take longer than these short command timeouts.
+    connection._probeSentinelRootNodes = async () => undefined;
 
     const firstCommand = connection.command(['PING']);
     await new Promise(resolve => setImmediate(resolve));
@@ -309,6 +312,31 @@ describe('editorDataRedis connection contract', () => {
   test('applies the adapter timeout to node-redis command options', () => {
     assert.equal(normalizeNodeOptions({}, 0).commandOptions.timeout, 30000);
     assert.equal(normalizeNodeOptions({commandOptions: {timeout: 0}}, 0).commandOptions.timeout, 0);
+  });
+
+  test('passes timeouts to node-redis as numbers', () => {
+    // node-redis gives these to timer APIs that throw for a string; with a
+    // string command timeout the connect succeeds and every command fails.
+    assert.equal(normalizeNodeOptions({commandOptions: {timeout: '5000'}}, 0).commandOptions.timeout, 5000);
+    assert.equal(normalizeNodeOptions({socket: {connectTimeout: '2000'}}, 0).socket.connectTimeout, 2000);
+    assert.equal(normalizeNodeOptions({commandOptions: {timeout: null}}, 0).commandOptions.timeout, null);
+    for (const timeout of ['soon', '', -1, {}, true]) {
+      assert.throws(() => normalizeNodeOptions({commandOptions: {timeout}}, 0), /commandOptions.timeout must be a non-negative number/);
+    }
+    assert.throws(() => normalizeNodeOptions({socket: {connectTimeout: '15s'}}, 0), /socket.connectTimeout must be a non-negative number/);
+  });
+
+  test('treats an empty username like no username', () => {
+    for (const source of [
+      {username: '', password: ''},
+      {user: '', password: ''}
+    ]) {
+      const options = normalizeNodeOptions(source, 0);
+      assert.equal(Object.hasOwn(options, 'username'), false);
+      assert.equal(Object.hasOwn(options, 'password'), false);
+    }
+    assert.equal(normalizeNodeOptions({username: '', password: 'secret'}, 0).password, 'secret');
+    assert.throws(() => normalizeNodeOptions({username: 'user', password: ''}, 0), /requires a password/);
   });
 
   test('reproduces node-redis 6.2.1 offline queuing before initial readiness', async () => {
@@ -406,6 +434,165 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(options.maxCommandRediscovers, 0);
     assert.equal(REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS, 0);
     assert.equal(options.passthroughClientErrorEvents, true);
+  });
+
+  test('starts each new Sentinel client at the next root node', () => {
+    // node-redis asks the root nodes in order; a dead first one must not block
+    // every reconnect.
+    const sentinel = {
+      name: 'mymaster',
+      sentinelRootNodes: [
+        {host: 'sentinel-a', port: 26379},
+        {host: 'sentinel-b', port: 26379},
+        {host: 'sentinel-c', port: 26379}
+      ]
+    };
+    const order = offset =>
+      normalizeSentinelOptions(sentinel, 0, offset)
+        .sentinelRootNodes.map(node => node.host)
+        .join();
+
+    assert.equal(order(undefined), 'sentinel-a,sentinel-b,sentinel-c');
+    assert.equal(order(1), 'sentinel-b,sentinel-c,sentinel-a');
+    assert.equal(order(2), 'sentinel-c,sentinel-a,sentinel-b');
+    assert.equal(order(3), 'sentinel-a,sentinel-b,sentinel-c');
+    assert.equal(sentinel.sentinelRootNodes[0].host, 'sentinel-a');
+  });
+
+  test('gives each Sentinel connection a share of the connect budget unless configured', () => {
+    const rootNodes = count => Array.from({length: count}, (_, index) => ({host: `sentinel-${index}`, port: 26379}));
+    const timeout = (count, sentinelClientOptions) =>
+      normalizeSentinelOptions({name: 'mymaster', sentinelRootNodes: rootNodes(count), sentinelClientOptions}, 0).sentinelClientOptions.socket
+        .connectTimeout;
+
+    assert.equal(timeout(1), 7500);
+    assert.equal(timeout(3), 3750);
+    assert.equal(timeout(30), 1000);
+    assert.equal(timeout(3, {socket: {connectTimeout: 9000}}), 9000);
+    // The data node connection keeps the full budget.
+    assert.equal(normalizeSentinelOptions({name: 'mymaster', sentinelRootNodes: rootNodes(3)}, 0).nodeClientOptions.socket.connectTimeout, 15000);
+  });
+
+  test('rotates the Sentinel root nodes for every client a connection creates', async () => {
+    // Whatever topology this run uses, configure only Sentinel.
+    const configured = {...cfgRedisOptionsSentinel};
+    const configuredCluster = {...cfgRedisOptionsCluster};
+    Object.keys(cfgRedisOptionsCluster).forEach(key => delete cfgRedisOptionsCluster[key]);
+    Object.assign(cfgRedisOptionsSentinel, {
+      name: 'mymaster',
+      sentinelRootNodes: [
+        {host: 'sentinel-a', port: 26379},
+        {host: 'sentinel-b', port: 26379}
+      ]
+    });
+    const createSentinel = jest.spyOn(redis, 'createSentinel');
+    const connection = new RedisConnection();
+    try {
+      // Clients that are never connected.
+      connection._createClient();
+      connection._createClient();
+      connection._createClient();
+
+      assert.equal(createSentinel.mock.calls.map(([options]) => options.sentinelRootNodes[0].host).join(), 'sentinel-a,sentinel-b,sentinel-a');
+    } finally {
+      await connection.close();
+      createSentinel.mockRestore();
+      Object.keys(cfgRedisOptionsSentinel).forEach(key => delete cfgRedisOptionsSentinel[key]);
+      Object.assign(cfgRedisOptionsSentinel, configured);
+      Object.assign(cfgRedisOptionsCluster, configuredCluster);
+    }
+  });
+
+  // Runs operation with only these Sentinel root nodes configured, whatever
+  // topology this test run uses.
+  async function withSentinelRootNodes(sentinelRootNodes, operation) {
+    const configured = {...cfgRedisOptionsSentinel};
+    const configuredCluster = {...cfgRedisOptionsCluster};
+    Object.keys(cfgRedisOptionsCluster).forEach(key => delete cfgRedisOptionsCluster[key]);
+    Object.keys(cfgRedisOptionsSentinel).forEach(key => delete cfgRedisOptionsSentinel[key]);
+    Object.assign(cfgRedisOptionsSentinel, {name: 'mymaster', sentinelRootNodes});
+    try {
+      return await operation();
+    } finally {
+      Object.keys(cfgRedisOptionsSentinel).forEach(key => delete cfgRedisOptionsSentinel[key]);
+      Object.assign(cfgRedisOptionsSentinel, configured);
+      Object.assign(cfgRedisOptionsCluster, configuredCluster);
+    }
+  }
+
+  async function listen(onSocket) {
+    const sockets = new Set();
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.on('error', () => {});
+      onSocket(socket);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    return {
+      port: server.address().port,
+      sockets,
+      close: () => {
+        sockets.forEach(socket => socket.destroy());
+        return new Promise(resolve => server.close(resolve));
+      }
+    };
+  }
+
+  test('checks the Sentinels and leaves out one that accepts connections but never answers', async () => {
+    // Reads but never answers (an unread socket would not report its close).
+    const frozen = await listen(socket => socket.resume());
+    // Answers every RESP command (the handshake and PING) with +PONG.
+    const healthy = await listen(socket =>
+      socket.on('data', data => {
+        const commands = data
+          .toString()
+          .split('\r\n')
+          .filter(line => line.startsWith('*')).length;
+        socket.write('+PONG\r\n'.repeat(commands));
+      })
+    );
+    const connection = new RedisConnection();
+    try {
+      const reachable = await withSentinelRootNodes(
+        [
+          {host: '127.0.0.1', port: frozen.port},
+          {host: '127.0.0.1', port: healthy.port}
+        ],
+        () => connection._probeSentinelRootNodes(300)
+      );
+
+      assert.deepEqual([...reachable], [`127.0.0.1:${healthy.port}`]);
+      // The check closes its own connections, also the one to the frozen Sentinel.
+      await new Promise(resolve => setTimeout(resolve, 50));
+      assert.equal(frozen.sockets.size, 0);
+      assert.equal(healthy.sockets.size, 0);
+    } finally {
+      await connection.close();
+      await Promise.all([frozen.close(), healthy.close()]);
+    }
+  });
+
+  test('gives node-redis only the Sentinels that answered the check, or all when none did', async () => {
+    const rootNodes = [
+      {host: 'sentinel-a', port: 26379},
+      {host: 'sentinel-b', port: 26379}
+    ];
+    const createSentinel = jest.spyOn(redis, 'createSentinel');
+    const connection = new RedisConnection();
+    try {
+      await withSentinelRootNodes(rootNodes, async () => {
+        // Clients that are never connected.
+        connection._createClient({reachableSentinelRootNodes: new Set(['sentinel-b:26379'])});
+        connection._createClient({reachableSentinelRootNodes: new Set()});
+        connection._createClient();
+      });
+      const roots = createSentinel.mock.calls.map(([options]) => options.sentinelRootNodes.map(node => node.host).join('+'));
+      assert.equal(roots.join(), 'sentinel-b,sentinel-b+sentinel-a,sentinel-a+sentinel-b');
+    } finally {
+      await connection.close();
+      createSentinel.mockRestore();
+    }
   });
 
   test('lets Sentinel node options override the shared credentials, also through the legacy user alias', () => {
@@ -785,6 +972,46 @@ describe('editorDataRedis connection contract', () => {
     await connection.close();
   });
 
+  test('starts the next Sentinel connect attempt before a stuck one uses up the connect budget', async () => {
+    // node-redis has no timeout for a Sentinel that accepts the connection and
+    // never answers; the first attempt is stuck behind such a Sentinel.
+    const clients = [];
+    const connection = new RedisConnection();
+    connection.sentinel = true;
+    connection.connector = 'redis';
+    connection._createClient = () => {
+      connection.sentinelRootNodeCount = 3;
+      const stuck = clients.length === 0;
+      const client = fakeClient({
+        isOpen: false,
+        isReady: false,
+        connect() {
+          this.isOpen = true;
+          if (stuck) {
+            return new Promise(() => {});
+          }
+          this.isReady = true;
+          return Promise.resolve();
+        },
+        destroy() {
+          this.isOpen = false;
+        }
+      });
+      clients.push(client);
+      connection.client = client;
+    };
+
+    const startedAt = Date.now();
+    await connection.connect();
+    const elapsed = Date.now() - startedAt;
+
+    assert.equal(clients.length, 2);
+    assert.equal(clients[0].isOpen, false);
+    // Three Sentinels: each attempt gets a third of the 15 s budget.
+    assert.ok(elapsed >= 4900 && elapsed < 7000, `connected after ${elapsed} ms`);
+    await connection.close();
+  }, 15000);
+
   test('does not retry initial Sentinel discovery after deliberate shutdown begins', async () => {
     let attempts = 0;
     const connection = new RedisConnection();
@@ -1072,6 +1299,104 @@ describe('editorDataRedis connection contract', () => {
     await connection.close();
     assert.equal(destroyed, true);
     assert.equal(connection.client, null);
+  });
+
+  // Like node-redis: close() stops accepting commands at once and waits for the
+  // pending ones; destroy() throws once close() has started.
+  function closingClient(properties) {
+    const client = fakeClient({
+      socketDestroyed: false,
+      closeCalls: 0,
+      close() {
+        client.closeCalls++;
+        client.isOpen = false;
+        return new Promise(() => {});
+      },
+      destroy() {
+        if (!client.isOpen) {
+          throw new Error('The client is closed');
+        }
+        client.isOpen = false;
+        client.socketDestroyed = true;
+      },
+      ...properties
+    });
+    return client;
+  }
+
+  test('destroys a client whose connect is still in flight instead of waiting for close', async () => {
+    // For example a server that accepts the connection and never answers.
+    const client = closingClient({isReady: false});
+    const connection = new RedisConnection();
+    connection.client = client;
+
+    await connection.close();
+
+    assert.equal(client.closeCalls, 0);
+    assert.equal(client.socketDestroyed, true);
+    assert.equal(connection.closed, true);
+  });
+
+  test('a graceful close that times out still completes the shutdown', async () => {
+    const client = closingClient({isReady: true});
+    const connection = new RedisConnection();
+    connection.client = client;
+
+    await connection.close();
+
+    assert.equal(client.closeCalls, 1);
+    assert.equal(connection.closed, true);
+    assert.equal(connection.client, null);
+  }, 15000);
+
+  test('an aborted client whose destroy rejects does not raise an unhandled rejection', async () => {
+    const unhandled = [];
+    const onUnhandled = reason => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const connection = new RedisConnection();
+      connection.client = fakeClient({destroy: () => Promise.reject(new Error('sentinel destroy failed'))});
+
+      connection._abortClient();
+      await new Promise(resolve => setImmediate(resolve));
+
+      assert.equal(connection.client, null);
+      assert.equal(unhandled.length, 0);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  test('an editor store cancels its connection attempt for startup cancellation', async () => {
+    const {connectRedisForStartup, StartupRedisCancelledError} = require('../../DocService/sources/startupRedis');
+    const editorData = new EditorData();
+    const editorStat = new EditorStat();
+    const connection = editorData.redis;
+    let aborted = 0;
+    const abortClient = connection._abortClient;
+    connection._abortClient = function (...args) {
+      aborted++;
+      this.connectPromise = null;
+      return abortClient.apply(this, args);
+    };
+    // A connect attempt that only ends when it is cancelled.
+    connection.connect = function () {
+      this.connectPromise = new Promise(() => {});
+      return this.connectPromise;
+    };
+    const controller = new AbortController();
+    try {
+      const startup = connectRedisForStartup({editorData, editorStat, signal: controller.signal, logger: {warn() {}}});
+      await new Promise(resolve => setImmediate(resolve));
+      controller.abort();
+
+      await assert.rejects(startup, error => error instanceof StartupRedisCancelledError);
+      assert.equal(aborted, 1);
+    } finally {
+      delete connection.connect;
+      connection._abortClient = abortClient;
+      await Promise.all([editorData.close(), editorStat.close()]);
+    }
   });
 
   test('uses close instead of the deprecated quit command', async () => {

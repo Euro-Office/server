@@ -36,12 +36,22 @@ const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const pubsubService = require('./pubsubRabbitMQ');
 const sqlBase = require('./databaseConnectors/baseConnector');
-const {documentExpiryTtlsApply, getCronStep, validateDocumentExpiryConfig} = require('./expirationConfig');
+const {
+  DEFAULT_FILES_CRON_STEP_MS,
+  cronStepMs,
+  documentExpiryTtlsApply,
+  getCronStep,
+  resolveDocumentExpiryStep,
+  setDocumentsExpireStepMs
+} = require('./expirationConfig');
+const {POP_EXPIRED_LEASE_MS} = require('./editorDataRedis/editorDataSettings');
 
 const cfgExpFilesCron = config.get('services.CoAuthoring.expire.filesCron');
 const cfgExpDocumentsCron = config.get('services.CoAuthoring.expire.documentsCron');
 const cfgExpPresence = config.get('services.CoAuthoring.expire.presence');
-const cfgExpShard = config.get('services.CoAuthoring.expire.shard');
+// New in the Redis editor-data release: keep its default.json value as a
+// fallback, so that an older operator-supplied default.json still starts.
+const cfgExpShard = config.has('services.CoAuthoring.expire.shard') ? config.get('services.CoAuthoring.expire.shard') : 300;
 const cfgExpFiles = config.get('services.CoAuthoring.expire.files');
 const cfgExpFilesRemovedAtOnce = config.get('services.CoAuthoring.expire.filesremovedatonce');
 const cfgForceSaveStep = config.get('services.CoAuthoring.autoAssembly.step');
@@ -49,7 +59,10 @@ const cfgEditorDataStorage = config.get('services.CoAuthoring.server.editorDataS
 const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatStorage');
 
 const checkExpiryTtls = documentExpiryTtlsApply(cfgEditorDataStorage, cfgEditorStatStorage);
-const baseDocumentExpiryConfig = validateDocumentExpiryConfig(
+// A documentsCron that is too slow for the Redis TTLs is shortened, not
+// rejected: it may come from the AdminPanel's runtime.json, which is merged into
+// the startup config, and rejecting it would stop every DocService.
+const baseDocumentExpiryConfig = resolveDocumentExpiryStep(
   {
     documentsCron: cfgExpDocumentsCron,
     presence: cfgExpPresence,
@@ -61,8 +74,10 @@ const baseDocumentExpiryConfig = validateDocumentExpiryConfig(
 if (!baseDocumentExpiryConfig.valid) {
   throw new Error(baseDocumentExpiryConfig.message);
 }
-const expFilesStep = getCronStep(cfgExpFilesCron);
-const expDocumentsStep = baseDocumentExpiryConfig.documentsCronStepMs;
+const baseFilesCronStep = cronStepMs(cfgExpFilesCron, 'services.CoAuthoring.expire.filesCron', DEFAULT_FILES_CRON_STEP_MS);
+const expFilesStep = baseFilesCronStep.stepMs;
+const expDocumentsStep = baseDocumentExpiryConfig.stepMs;
+setDocumentsExpireStepMs(expDocumentsStep);
 
 function acknowledgeExpired(editorData, method, item) {
   const acknowledge = editorData[method];
@@ -143,9 +158,55 @@ async function processForceSaveItem(ctx, expiredKey, queue, pubsub) {
   }
 }
 
+// A claimed batch is leased for POP_EXPIRED_LEASE_MS; then any instance can
+// claim its unacknowledged items again. Items wait for the ones before them,
+// and a "closed" callback can take up to callbackRequestTimeout (longer than
+// the lease), so an item could be processed by two instances: a second
+// "closed" callback, or one after another instance saved the document. So an
+// item is started only while its claim is still held, and its lease is renewed
+// while it is processed.
+const EXPIRED_LEASE_RENEW_INTERVAL_MS = POP_EXPIRED_LEASE_MS / 3;
+
+function wasDocumentClosed(editorData, ctx, docId) {
+  const check = editorData._wasDocumentClosed;
+  return typeof check === 'function' ? check.call(editorData, ctx, docId) : undefined;
+}
+
+function renewExpired(editorData, item) {
+  const renew = editorData._renewDocumentPresenceExpired;
+  return typeof renew === 'function' ? renew.call(editorData, item) : undefined;
+}
+
 async function processDocumentExpireItem(ctx, expiredKey, state, queue) {
   const tenant = expiredKey[0];
   const docId = expiredKey[1];
+
+  if ((await renewExpired(docsCoServer.editorData, expiredKey)) === false) {
+    return {skipped: true, startSaveCount: 0, removedCount: 0};
+  }
+  const renewTimer = setInterval(() => {
+    Promise.resolve(renewExpired(docsCoServer.editorData, expiredKey)).then(
+      held => {
+        if (held === false) {
+          ctx.logger.warn('checkDocumentExpire lost the claim while processing: tenant=%s docId=%s', tenant, docId);
+        }
+      },
+      error => ctx.logger.warn('checkDocumentExpire claim renewal failed: tenant=%s docId=%s: %s', tenant, docId, error?.stack || error)
+    );
+  }, EXPIRED_LEASE_RENEW_INTERVAL_MS);
+  renewTimer.unref?.();
+  let counts;
+  try {
+    counts = await processClaimedDocument(ctx, tenant, docId, state, queue);
+  } finally {
+    clearInterval(renewTimer);
+  }
+
+  const acknowledged = await acknowledgeExpired(docsCoServer.editorData, '_ackDocumentPresenceExpired', expiredKey);
+  return {acknowledged, ...counts};
+}
+
+async function processClaimedDocument(ctx, tenant, docId, state, queue) {
   let startSaveCount = 0;
   let removedCount = 0;
 
@@ -163,28 +224,35 @@ async function processDocumentExpireItem(ctx, expiredKey, state, queue) {
       //todo opt_initShardKey from getDocumentPresenceExpired data or from db
       await docsCoServer.createSaveTimer(ctx, docId, null, null, null, queue, true, true);
       startSaveCount++;
+    } else if ((await wasDocumentClosed(docsCoServer.editorData, ctx, docId)) === true) {
+      // The document's last exit already sent the "closed" status and cleaned
+      // up; only its documents index update failed. Clean up again (a no-op
+      // then), without sending the status a second time.
+      await docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId, undefined, undefined, false, false, {sent: true});
+      removedCount++;
     } else {
       await docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId);
       removedCount++;
     }
   }
-
-  const acknowledged = await acknowledgeExpired(docsCoServer.editorData, '_ackDocumentPresenceExpired', expiredKey);
-  return {acknowledged, startSaveCount, removedCount};
+  return {startSaveCount, removedCount};
 }
 
 async function processDocumentExpireItems(ctx, expiredKeys, state, queue) {
   let removedCount = 0;
   let startSaveCount = 0;
 
-  for (const expiredKey of expiredKeys) {
+  for (let index = 0; index < expiredKeys.length; ++index) {
+    const expiredKey = expiredKeys[index];
     const tenant = expiredKey[0];
     const docId = expiredKey[1];
     try {
       const result = await processDocumentExpireItem(ctx, expiredKey, state, queue);
       startSaveCount += result.startSaveCount;
       removedCount += result.removedCount;
-      if (result.acknowledged === false) {
+      if (result.skipped) {
+        ctx.logger.info('checkDocumentExpire item skipped, another instance claimed it: tenant=%s docId=%s', tenant, docId);
+      } else if (result.acknowledged === false) {
         ctx.logger.warn('checkDocumentExpire item was not acknowledged: tenant=%s docId=%s', tenant, docId);
       }
     } catch (error) {
@@ -206,7 +274,11 @@ const checkFileExpire = function (expireSeconds) {
       const expFiles = ctx.getCfg('services.CoAuthoring.expire.files', cfgExpFiles);
       const expFilesRemovedAtOnce = ctx.getCfg('services.CoAuthoring.expire.filesremovedatonce', cfgExpFilesRemovedAtOnce);
       const currentFilesCron = ctx.getCfg('services.CoAuthoring.expire.filesCron', cfgExpFilesCron);
-      currentExpFilesStep = getCronStep(currentFilesCron);
+      const filesCronStep = cronStepMs(currentFilesCron, 'services.CoAuthoring.expire.filesCron', expFilesStep);
+      if (filesCronStep.message) {
+        ctx.logger.error('checkFileExpire configuration error: %s', filesCronStep.message);
+      }
+      currentExpFilesStep = filesCronStep.stepMs;
 
       let removedCount = 0;
       let expired;
@@ -271,8 +343,11 @@ const checkDocumentExpire = function () {
     const ctx = new operationContext.Context();
     try {
       ctx.logger.info('checkDocumentExpire start');
+      // Load the runtime (AdminPanel) config first, as getCfg returns the
+      // startup value until then.
+      yield ctx.initTenantCache();
       const currentDocumentsCron = ctx.getCfg('services.CoAuthoring.expire.documentsCron', cfgExpDocumentsCron);
-      const currentDocumentExpiryConfig = validateDocumentExpiryConfig(
+      const currentDocumentExpiryConfig = resolveDocumentExpiryStep(
         {
           documentsCron: currentDocumentsCron,
           presence: ctx.getCfg('services.CoAuthoring.expire.presence', cfgExpPresence),
@@ -285,8 +360,10 @@ const checkDocumentExpire = function () {
         ctx.logger.error('checkDocumentExpire configuration error: %s', currentDocumentExpiryConfig.message);
         return;
       }
-      currentExpDocumentsStep = currentDocumentExpiryConfig.documentsCronStepMs;
-      yield ctx.initTenantCache();
+      if (currentDocumentExpiryConfig.clamped) {
+        ctx.logger.error('checkDocumentExpire configuration error: %s', currentDocumentExpiryConfig.message);
+      }
+      currentExpDocumentsStep = currentDocumentExpiryConfig.stepMs;
       const expiredKeys = yield docsCoServer.editorData.getDocumentPresenceExpired();
       drainRequested = needsExpirationFollowUp(expiredKeys);
       if (expiredKeys.length > 0) {
@@ -381,12 +458,21 @@ const forceSaveTimeout = function () {
 };
 
 exports.startGC = function () {
+  if (baseDocumentExpiryConfig.clamped) {
+    operationContext.global.logger.error('GC configuration error: %s', baseDocumentExpiryConfig.message);
+  }
+  if (baseFilesCronStep.message) {
+    operationContext.global.logger.error('GC configuration error: %s', baseFilesCronStep.message);
+  }
   //runtime config is read on start
   setTimeout(checkDocumentExpire, expDocumentsStep);
   setTimeout(checkFileExpire, expFilesStep);
   setTimeout(forceSaveTimeout, ms(cfgForceSaveStep));
 };
 exports.getCronStep = getCronStep;
+// The presence/statistics refresh interval in DocsCoServer must stay within the
+// TTLs too, so it uses the same (possibly shortened) interval.
+exports.getDocumentsExpireStep = () => expDocumentsStep;
 exports.checkFileExpire = checkFileExpire;
 exports.checkDocumentExpire = checkDocumentExpire;
 exports.forceSaveTimeout = forceSaveTimeout;

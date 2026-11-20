@@ -116,15 +116,68 @@ async function connectRedisForStartup({
       if (attempt === maxAttempts) {
         throw err;
       }
-      logger.warn('Redis startup attempt %d/%d failed; retrying in %dms: %s', attempt, maxAttempts, retryDelayMs, err.message || err);
-      await wait(retryDelayMs * 2 ** (attempt - 1), signal);
+      const delayMs = retryDelayMs * 2 ** (attempt - 1);
+      logger.warn('Redis startup attempt %d/%d failed; retrying in %dms: %s', attempt, maxAttempts, delayMs, err.message || err);
+      await wait(delayMs, signal);
     }
   }
+}
+
+// One DocService start (DocsCoServer.install). The start callback is called
+// once: with the first error, or after the database schema check passed and
+// the Redis stores connected. A newer start or the shutdown cancels a pending
+// one (cancel), which then calls nothing.
+function createStartupAttempt(callbackFunction, logger) {
+  const controller = new AbortController();
+  let called = false;
+  const notify = error => {
+    if (called) {
+      return;
+    }
+    called = true;
+    try {
+      callbackFunction(error);
+    } catch (callbackError) {
+      logger.error('Redis startup callback error: %s', callbackError.stack || callbackError.message || callbackError);
+    }
+  };
+  const connectStores = stores =>
+    connectRedisForStartup({...stores, logger, signal: controller.signal}).then(
+      () => notify(),
+      err => {
+        if (!(err instanceof StartupRedisCancelledError)) {
+          logger.error('Redis startup error: %s', err.stack || err.message || err);
+          notify(err);
+        }
+      }
+    );
+  return {
+    signal: controller.signal,
+    cancel: () => controller.abort(),
+    // schemaChecks resolves to one boolean per checked table.
+    finish(schemaChecks, {editorData, editorStat}) {
+      return Promise.resolve(schemaChecks).then(
+        checkResult => {
+          if (checkResult.includes(false)) {
+            logger.error('Database schema compatibility check failed');
+            notify(new Error('Database schema is incompatible'));
+            return undefined;
+          }
+          return connectStores({editorData, editorStat});
+        },
+        error => {
+          logger.error('getTableColumns error: %s', error.stack || error.message || error);
+          notify(error);
+        }
+      );
+    }
+  };
 }
 
 module.exports = {
   STARTUP_REDIS_MAX_ATTEMPTS,
   STARTUP_REDIS_RETRY_DELAY_MS,
   StartupRedisCancelledError,
-  connectRedisForStartup
+  connectRedisForStartup,
+  createStartupAttempt
 };

@@ -25,6 +25,7 @@ class RedisConnection {
     this.connectionAttempted = false;
     this.lastError = null;
     this.commandTimeoutMs = REDIS_COMMAND_TIMEOUT_MS;
+    this.sentinelRootNodeOffset = 0;
     this.closed = false;
     this.closing = false;
     this.closePromise = null;

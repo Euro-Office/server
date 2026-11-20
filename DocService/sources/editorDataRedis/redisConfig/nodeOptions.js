@@ -12,6 +12,7 @@ const {
   cfgRedisPort,
   cloneConfig,
   normalizeCommandOptions,
+  normalizeTimeoutMs,
   hasControlCharacters
 } = require('./base');
 
@@ -58,6 +59,10 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
   if (includeEndpoint) {
     options.disableOfflineQueue = true;
   }
+  if (options.username === '') {
+    // An empty username is no username (node-redis treats it the same).
+    delete options.username;
+  }
   if (options.password === '') {
     delete options.password;
     // Older entrypoints emitted the implicit default ACL username together
@@ -90,9 +95,7 @@ function normalizeNodeOptions(source, database, includeEndpoint = true, includeC
       delete options.socket.host;
       delete options.socket.port;
     }
-    if (options.socket.connectTimeout === undefined) {
-      options.socket.connectTimeout = REDIS_CONNECT_TIMEOUT_MS;
-    }
+    options.socket.connectTimeout = normalizeTimeoutMs(options.socket.connectTimeout, 'socket.connectTimeout', REDIS_CONNECT_TIMEOUT_MS);
   }
   return options;
 }

@@ -11,6 +11,8 @@ const commonDefines = require('../../Common/sources/commondefines');
 jest.mock('../../DocService/sources/DocsCoServer', () => ({
   editorData: {
     _ackDocumentPresenceExpired: jest.fn(),
+    _renewDocumentPresenceExpired: jest.fn(),
+    _wasDocumentClosed: jest.fn(),
     getDocumentPresenceExpired: jest.fn(),
     _ackForceSaveTimer: jest.fn(),
     getForceSaveTimer: jest.fn()
@@ -31,7 +33,11 @@ const docsCoServer = require('../../DocService/sources/DocsCoServer');
 const operationContext = require('../../Common/sources/operationContext');
 const queueService = require('../../Common/sources/taskqueueRabbitMQ');
 const pubsubService = require('../../DocService/sources/pubsubRabbitMQ');
-const {POP_EXPIRED_BATCH_SIZE, POP_EXPIRED_MAX_BATCH_SIZE} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
+const {
+  POP_EXPIRED_BATCH_SIZE,
+  POP_EXPIRED_LEASE_MS,
+  POP_EXPIRED_MAX_BATCH_SIZE
+} = require('../../DocService/sources/editorDataRedis/editorDataSettings');
 const {checkDocumentExpire, forceSaveTimeout} = require('../../DocService/sources/gc');
 
 function context() {
@@ -68,6 +74,10 @@ beforeEach(() => {
   docsCoServer.cleanDocumentOnExitNoChangesPromise.mockReset();
   docsCoServer.editorData.getDocumentPresenceExpired.mockReset();
   docsCoServer.editorData._ackDocumentPresenceExpired.mockReset();
+  docsCoServer.editorData._renewDocumentPresenceExpired.mockReset();
+  docsCoServer.editorData._renewDocumentPresenceExpired.mockResolvedValue(true);
+  docsCoServer.editorData._wasDocumentClosed.mockReset();
+  docsCoServer.editorData._wasDocumentClosed.mockResolvedValue(false);
   docsCoServer.editorData.getForceSaveTimer.mockReset();
   docsCoServer.editorData._ackForceSaveTimer.mockReset();
   docsCoServer.startForceSave.mockReset();
@@ -117,25 +127,55 @@ describe('document expiry GC', () => {
     assert.equal(setTimeoutSpy.mock.calls.at(-1)[1], 120000);
   });
 
-  test('checkDocumentExpire rejects an unsafe runtime cron before claiming', async () => {
+  test('checkDocumentExpire shortens an unsafe runtime cron and still runs the pass', async () => {
     const ctx = context();
-    const queue = {
-      initPromise: jest.fn().mockResolvedValue(undefined),
-      close: jest.fn().mockResolvedValue(undefined)
-    };
     const setTimeoutSpy = jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
     ctx.getCfg.mockImplementation((path, fallback) => (path === 'services.CoAuthoring.expire.documentsCron' ? '0 */5 * * * *' : fallback));
+    docsCoServer.editorData.getDocumentPresenceExpired.mockResolvedValue(expiredBatch([], false));
 
     operationContext.Context.mockImplementation(() => ctx);
-    queueService.mockImplementation(() => queue);
 
     await checkDocumentExpire();
 
-    assert.equal(ctx.initTenantCache.mock.calls.length, 0);
-    assert.equal(docsCoServer.editorData.getDocumentPresenceExpired.mock.calls.length, 0);
-    assert.equal(queue.initPromise.mock.calls.length, 0);
-    assert.equal(queue.close.mock.calls.length, 0);
+    assert.equal(docsCoServer.editorData.getDocumentPresenceExpired.mock.calls.length, 1);
     assert.match(ctx.logger.error.mock.calls[0][1], /must be shorter than both the presence and shard TTLs with scheduling headroom/);
+    assert.match(ctx.logger.error.mock.calls[0][1], /Using an interval of 272\.727 seconds instead/);
+    // 300 s TTLs: the longest interval with 10% headroom.
+    assert.equal(setTimeoutSpy.mock.calls.at(-1)[1], 272727);
+  });
+
+  test('checkDocumentExpire reads documentsCron after loading the runtime config', async () => {
+    const ctx = context();
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
+    // Like operationContext: getCfg returns the fallback until initTenantCache
+    // has loaded the runtime (AdminPanel) config.
+    let loaded = false;
+    ctx.initTenantCache.mockImplementation(async () => {
+      loaded = true;
+    });
+    ctx.getCfg.mockImplementation((path, fallback) => (loaded && path === 'services.CoAuthoring.expire.documentsCron' ? '0 */1 * * * *' : fallback));
+    docsCoServer.editorData.getDocumentPresenceExpired.mockResolvedValue(expiredBatch([], false));
+
+    operationContext.Context.mockImplementation(() => ctx);
+
+    await checkDocumentExpire();
+
+    assert.equal(setTimeoutSpy.mock.calls.at(-1)[1], 60000);
+  });
+
+  test('checkDocumentExpire uses the default interval for an unparsable runtime cron', async () => {
+    const ctx = context();
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
+    // Six fields pass the AdminPanel schema but are not a cron expression.
+    ctx.getCfg.mockImplementation((path, fallback) => (path === 'services.CoAuthoring.expire.documentsCron' ? 'x x x x x x' : fallback));
+    docsCoServer.editorData.getDocumentPresenceExpired.mockResolvedValue(expiredBatch([], false));
+
+    operationContext.Context.mockImplementation(() => ctx);
+
+    await checkDocumentExpire();
+
+    assert.equal(docsCoServer.editorData.getDocumentPresenceExpired.mock.calls.length, 1);
+    assert.match(ctx.logger.error.mock.calls[0][1], /Invalid services.CoAuthoring.expire.documentsCron/);
     assert.equal(setTimeoutSpy.mock.calls.at(-1)[1], 120000);
   });
 
@@ -175,6 +215,113 @@ describe('document expiry GC', () => {
     assert.match(ctx.logger.error.mock.calls[0][3], /permanent document failure/);
     assert.equal(queue.close.mock.calls.length, 1);
     assert.equal(setTimeoutSpy.mock.calls.at(-1)[1], 120000);
+  });
+
+  test('does not send a second "closed" status for a document whose last exit cleaned up', async () => {
+    const ctx = context();
+    const queue = {
+      initPromise: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined)
+    };
+    jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
+    docsCoServer.hasChanges.mockResolvedValue(false);
+    docsCoServer.editorData._wasDocumentClosed.mockResolvedValue(true);
+
+    operationContext.Context.mockImplementation(() => ctx);
+    queueService.mockImplementation(() => queue);
+    docsCoServer.editorData.getDocumentPresenceExpired.mockResolvedValue(expiredBatch([['tenant-a', 'closed-document']], false));
+
+    await checkDocumentExpire();
+
+    const calls = docsCoServer.cleanDocumentOnExitNoChangesPromise.mock.calls;
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][1], 'closed-document');
+    // The cleanup runs, the status is marked as already sent.
+    assert.equal(calls[0][6].sent, true);
+    assert.equal(docsCoServer.editorData._ackDocumentPresenceExpired.mock.calls.length, 1);
+  });
+
+  test('still saves a document marked closed when it has changes', async () => {
+    const ctx = context();
+    const queue = {
+      initPromise: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined)
+    };
+    jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
+    docsCoServer.hasChanges.mockResolvedValue(true);
+    docsCoServer.editorData._wasDocumentClosed.mockResolvedValue(true);
+
+    operationContext.Context.mockImplementation(() => ctx);
+    queueService.mockImplementation(() => queue);
+    docsCoServer.editorData.getDocumentPresenceExpired.mockResolvedValue(expiredBatch([['tenant-a', 'changed-document']], false));
+
+    await checkDocumentExpire();
+
+    assert.equal(docsCoServer.createSaveTimer.mock.calls.length, 1);
+    assert.equal(docsCoServer.cleanDocumentOnExitNoChangesPromise.mock.calls.length, 0);
+  });
+
+  test('does not start a claimed item that another instance has claimed since', async () => {
+    const ctx = context();
+    const expiredKeys = [
+      ['tenant-a', 'first-document'],
+      ['tenant-a', 'reclaimed-document'],
+      ['tenant-a', 'third-document']
+    ];
+    const queue = {
+      initPromise: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined)
+    };
+    jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
+    docsCoServer.hasChanges.mockResolvedValue(false);
+    // The earlier items took longer than the lease and another instance
+    // claimed this one again.
+    docsCoServer.editorData._renewDocumentPresenceExpired.mockImplementation(async item => item[1] !== 'reclaimed-document');
+
+    operationContext.Context.mockImplementation(() => ctx);
+    queueService.mockImplementation(() => queue);
+    docsCoServer.editorData.getDocumentPresenceExpired.mockResolvedValue(expiredBatch(expiredKeys, false));
+
+    await checkDocumentExpire();
+
+    assert.equal(docsCoServer.cleanDocumentOnExitNoChangesPromise.mock.calls.map(([, docId]) => docId).join(), 'first-document,third-document');
+    assert.equal(docsCoServer.editorData._ackDocumentPresenceExpired.mock.calls.map(([item]) => item[1]).join(), 'first-document,third-document');
+    assert.equal(ctx.logger.error.mock.calls.length, 0);
+  });
+
+  test('renews the claim of an item while it is processed', async () => {
+    const ctx = context();
+    const queue = {
+      initPromise: jest.fn().mockResolvedValue(undefined),
+      close: jest.fn().mockResolvedValue(undefined)
+    };
+    jest.spyOn(global, 'setTimeout').mockImplementation(() => 0);
+    const renewals = [];
+    jest.spyOn(global, 'setInterval').mockImplementation((callback, interval) => {
+      renewals.push({callback, interval});
+      return {unref() {}};
+    });
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
+    docsCoServer.hasChanges.mockResolvedValue(false);
+    docsCoServer.cleanDocumentOnExitNoChangesPromise.mockImplementation(async () => {
+      // The integrator answers the "closed" callback slowly: the interval fires.
+      renewals[0].callback();
+      renewals[0].callback();
+      await new Promise(resolve => setImmediate(resolve));
+    });
+
+    operationContext.Context.mockImplementation(() => ctx);
+    queueService.mockImplementation(() => queue);
+    docsCoServer.editorData.getDocumentPresenceExpired.mockResolvedValue(expiredBatch([['tenant-a', 'slow-document']], false));
+
+    await checkDocumentExpire();
+
+    assert.equal(renewals.length, 1);
+    assert.equal(renewals[0].interval, POP_EXPIRED_LEASE_MS / 3);
+    // Once before the item starts, then on every interval.
+    assert.equal(docsCoServer.editorData._renewDocumentPresenceExpired.mock.calls.length, 3);
+    assert.equal(clearIntervalSpy.mock.calls.length, 1);
+    assert.equal(docsCoServer.editorData._ackDocumentPresenceExpired.mock.calls.length, 1);
   });
 
   test('retries the failed item while avoiding reprocessing the already acknowledged items', async () => {

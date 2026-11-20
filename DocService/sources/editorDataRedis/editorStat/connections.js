@@ -7,7 +7,7 @@
 
 const {SET_CONNECTION_SAMPLE_SCRIPT, SET_SHARD_COUNT_SCRIPT, INCR_SHARD_COUNT_SCRIPT, GET_SHARD_COUNT_SCRIPT} = require('../scripts');
 const {cfgExpShard} = require('../editorStatSettings');
-const {ttlSeconds, jsonEncode, jsonDecode, strictMax} = require('../redisValueCodec');
+const {refreshedTtlSeconds, jsonEncode, jsonDecode, strictMax} = require('../redisValueCodec');
 
 module.exports = function attachConnections(EditorStat) {
   EditorStat.prototype.setEditorConnections = async function (ctx, countEdit, countLiveView, countView, now, precision) {
@@ -45,19 +45,19 @@ module.exports = function attachConnections(EditorStat) {
   };
 
   EditorStat.prototype._setShardCount = async function (ctx, type, shardId, count) {
-    const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
+    const ttl = refreshedTtlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
     const keys = this._shardKeys(ctx, type);
     return this._eval(SET_SHARD_COUNT_SCRIPT, [keys.count, keys.updated], [String(shardId), String(count), String(Date.now()), String(ttl)]);
   };
 
   EditorStat.prototype._incrShardCount = async function (ctx, type, shardId, count) {
-    const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
+    const ttl = refreshedTtlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
     const keys = this._shardKeys(ctx, type);
     return this._eval(INCR_SHARD_COUNT_SCRIPT, [keys.count, keys.updated], [String(shardId), String(count), String(Date.now()), String(ttl)]);
   };
 
   EditorStat.prototype._getShardCount = async function (ctx, type) {
-    const ttl = ttlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
+    const ttl = refreshedTtlSeconds(ctx, 'services.CoAuthoring.expire.shard', cfgExpShard);
     const keys = this._shardKeys(ctx, type);
     const result = await this._eval(GET_SHARD_COUNT_SCRIPT, [keys.count, keys.updated], [String(Date.now() - ttl * 1000)]);
     return Number(result) || 0;

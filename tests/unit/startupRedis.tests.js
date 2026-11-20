@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const {describe, test} = require('@jest/globals');
-const {StartupRedisCancelledError, connectRedisForStartup} = require('../../DocService/sources/startupRedis');
+const {StartupRedisCancelledError, connectRedisForStartup, createStartupAttempt} = require('../../DocService/sources/startupRedis');
 
 const logger = {error() {}, warn() {}};
 
@@ -126,5 +126,38 @@ describe('Redis startup recovery', () => {
     controller.abort();
     await assert.rejects(startup, StartupRedisCancelledError);
     assert.equal(cancelCalls, 1);
+  });
+
+  test('a start callback that throws is logged and not called again', async () => {
+    const errors = [];
+    const errorLogger = {error: (...args) => errors.push(args), warn() {}};
+    let calls = 0;
+    const attempt = createStartupAttempt(() => {
+      calls++;
+      throw new Error('listen failed');
+    }, errorLogger);
+    const stores = {editorData: {connect: async () => {}}, editorStat: {connect: async () => {}}};
+
+    await attempt.finish(Promise.resolve([true, true]), stores);
+    await attempt.finish(Promise.resolve([false]), stores);
+
+    assert.equal(calls, 1);
+    assert.match(errors[0][1], /listen failed/);
+  });
+
+  test('a cancelled start attempt calls nothing', async () => {
+    let calls = 0;
+    const attempt = createStartupAttempt(() => calls++, {error() {}, warn() {}});
+    const stores = {
+      editorData: {connect: () => new Promise(() => {}), cancelConnect: () => true},
+      editorStat: {connect: async () => {}}
+    };
+
+    const finished = attempt.finish(Promise.resolve([true]), stores);
+    await new Promise(resolve => setImmediate(resolve));
+    attempt.cancel();
+    await finished;
+
+    assert.equal(calls, 0);
   });
 });

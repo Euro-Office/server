@@ -12,4 +12,23 @@ local function redisTimeMillis()
 end
 `;
 
-module.exports = {REDIS_TIME_MILLIS};
+// Presence entries and locks are JSON.stringify output. JSON.stringify writes a
+// lone UTF-16 surrogate (for example a user name cut inside an emoji) as a
+// \\udXXX escape, which Redis' cjson rejects. Decoding retries with every
+// surrogate escape replaced; the fields read (connectionId, view,
+// isCloseCoAuthoring, user) do not change. Returns nil for anything that is not
+// a JSON object.
+const DECODE_JSON_OBJECT = `
+local function decodeJsonObject(value)
+  local ok, decoded = pcall(cjson.decode, value)
+  if not ok then
+    ok, decoded = pcall(cjson.decode, (string.gsub(value, '\\\\u[dD][89a-fA-F]%x%x', '\\\\ufffd')))
+  end
+  if ok and type(decoded) == 'table' then
+    return decoded
+  end
+  return nil
+end
+`;
+
+module.exports = {DECODE_JSON_OBJECT, REDIS_TIME_MILLIS};

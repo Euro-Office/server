@@ -110,6 +110,47 @@ function wait(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
+// Releases a client at once. node-redis rejects destroy() once close() has
+// started (ClientClosedError), and Sentinel's destroy() is async: neither may
+// fail a shutdown or become an unhandled rejection.
+function destroyClient(client) {
+  try {
+    let result;
+    if (typeof client.destroy === 'function') {
+      result = client.destroy();
+    } else if (typeof client.disconnect === 'function') {
+      result = client.disconnect();
+    }
+    Promise.resolve(result).catch(error => log('warn', 'Redis client destroy failed: %s', errorDetails(error)));
+  } catch (error) {
+    log('warn', 'Redis client destroy failed: %s', errorDetails(error));
+  }
+}
+
+// Whether a Sentinel answers PING within timeoutMs, checked with a client of
+// our own that is always closed afterwards (node-redis cannot close its own
+// connection to a Sentinel that accepts it but never answers).
+async function probeSentinel(node, sentinelClientOptions, timeoutMs) {
+  const client = redis.createClient({
+    ...sentinelClientOptions,
+    socket: {...sentinelClientOptions.socket, host: node.host, port: node.port, connectTimeout: timeoutMs, reconnectStrategy: false}
+  });
+  client.on('error', () => {});
+  try {
+    await withTimeout(
+      client.connect().then(() => client.sendCommand(['PING'])),
+      timeoutMs,
+      'Redis Sentinel check'
+    );
+    return true;
+  } catch (error) {
+    log('warn', 'Sentinel %s:%s did not answer the check: %s', node.host, node.port, errorDetails(error));
+    return false;
+  } finally {
+    destroyClient(client);
+  }
+}
+
 module.exports = {
   REDIS_UNAVAILABLE_CODE,
   log,
@@ -119,5 +160,7 @@ module.exports = {
   waitForReady,
   createConnectTimeoutError,
   wait,
+  destroyClient,
+  probeSentinel,
   RedisUnavailableError
 };

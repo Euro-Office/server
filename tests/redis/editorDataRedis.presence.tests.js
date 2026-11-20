@@ -432,4 +432,315 @@ describe('editorDataRedis presence invariants', () => {
       await stores[1].cleanDocumentOnExit(ctx, docId);
     }
   });
+
+  describe('viewers do not block terminal cleanup', () => {
+    const viewerCases = [
+      ['a viewer', {id: 'viewer', view: true}],
+      ['an editor whose co-authoring was closed', {id: 'closed-editor', view: false, isCloseCoAuthoring: true}]
+    ];
+
+    for (const [name, entry] of viewerCases) {
+      test(`cleans document state while only ${name} remains and keeps its presence`, async () => {
+        const ctx = context(`presence-cleanup-viewer-${entry.id}`);
+        const docId = 'document';
+        const info = JSON.stringify(entry);
+
+        await stores[1].addPresence(ctx, docId, entry.id, info);
+        await seedDocumentState(stores[1], ctx, docId);
+        try {
+          assert.equal(await stores[0].cleanDocumentOnExit(ctx, docId), true);
+
+          assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+          assert.deepEqual(await readDocumentState(stores[0], ctx, docId), emptyDocumentState());
+          const indexKeys = stores[0]._indexKeys(ctx, docId);
+          assert.notEqual(await stores[0]._command(['ZSCORE', indexKeys.documents, documentMember(ctx, docId)]), null);
+        } finally {
+          await stores[1].removePresence(ctx, docId, entry.id);
+          await stores[1].cleanDocumentOnExit(ctx, docId);
+        }
+      });
+    }
+
+    test('keeps the in-flight save state on final-viewer cleanup while viewers remain', async () => {
+      const ctx = context('presence-cleanup-viewer-preserve');
+      const docId = 'document';
+      const info = JSON.stringify({id: 'viewer', view: true});
+
+      await stores[1].addPresence(ctx, docId, 'viewer', info);
+      await seedDocumentState(stores[1], ctx, docId);
+      try {
+        const before = await readDocumentState(stores[1], ctx, docId);
+
+        assert.equal(await stores[0].cleanDocumentOnExit(ctx, docId, undefined, {preserveSavedClaim: true}), true);
+
+        assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+        assert.deepEqual(await readDocumentState(stores[0], ctx, docId), {
+          ...emptyDocumentState(),
+          saved: before.saved,
+          forceSave: before.forceSave
+        });
+      } finally {
+        await stores[1].removePresence(ctx, docId, 'viewer');
+        await stores[1].cleanDocumentOnExit(ctx, docId);
+      }
+    });
+
+    const blockingCases = [
+      ['an editor next to a viewer', [JSON.stringify({id: 'viewer', view: true}), JSON.stringify({id: 'editor', view: false})]],
+      ['an entry without a view flag', [JSON.stringify({id: 'editor'})]],
+      ['an entry that is not JSON', ['not-json']],
+      ['a JSON value that is not an object', ['"viewer"']]
+    ];
+
+    for (const [name, infos] of blockingCases) {
+      test(`skips cleanup while ${name} remains`, async () => {
+        const ctx = context(`presence-cleanup-blocked-${name.replace(/\W+/g, '-')}`);
+        const docId = 'document';
+
+        for (let i = 0; i < infos.length; ++i) {
+          await stores[1].addPresence(ctx, docId, `user-${i}`, infos[i]);
+        }
+        await seedDocumentState(stores[1], ctx, docId);
+        try {
+          const before = await readDocumentState(stores[1], ctx, docId);
+
+          assert.equal(await stores[0].cleanDocumentOnExit(ctx, docId), false);
+
+          assert.deepEqual((await stores[0].getPresence(ctx, docId)).sort(), [...infos].sort());
+          assert.deepEqual(await readDocumentState(stores[0], ctx, docId), before);
+        } finally {
+          for (let i = 0; i < infos.length; ++i) {
+            await stores[1].removePresence(ctx, docId, `user-${i}`);
+          }
+          await stores[1].cleanDocumentOnExit(ctx, docId);
+        }
+      });
+    }
+  });
+
+  describe('documents index after exits and crashes', () => {
+    test('a read after presence expired keeps the document for GC', async () => {
+      // A replica died: nobody removed the presence, it expired on its own.
+      const ctx = context('presence-index-crash-read', {'services.CoAuthoring.expire.presence': 1});
+      const docId = 'crashed-document';
+      await stores[1].addPresence(ctx, docId, 'editor', JSON.stringify({id: 'editor', view: false}));
+      const indexKeys = stores[0]._indexKeys(ctx, docId);
+      const member = documentMember(ctx, docId);
+      const score = await stores[0]._command(['ZSCORE', indexKeys.documents, member]);
+      try {
+        await wait(2200);
+
+        assert.deepEqual(await stores[0].getPresence(ctx, docId), []);
+
+        assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), score);
+        // Nothing cleaned up, so GC must still send the "closed" status.
+        assert.equal(await stores[0]._wasDocumentClosed(ctx, docId), false);
+      } finally {
+        await stores[0]._command(['ZREM', indexKeys.documents, member]);
+      }
+    });
+
+    test('a clean exit whose index update fails leaves the document marked closed', async () => {
+      const ctx = context('presence-index-closed-marker');
+      const docId = 'document';
+      const indexKeys = stores[0]._indexKeys(ctx, docId);
+      const member = documentMember(ctx, docId);
+      await stores[0].addPresence(ctx, docId, 'user', JSON.stringify({id: 'user', connectionId: 'c1'}));
+      // The index is in another Cluster slot; its shard fails during the exit.
+      const sync = stores[0]._syncPresenceIndex;
+      stores[0]._syncPresenceIndex = async function (syncCtx, syncDocId, expected, desired) {
+        if (desired === '') {
+          throw new Error('index shard unavailable');
+        }
+        return sync.call(this, syncCtx, syncDocId, expected, desired);
+      };
+      try {
+        await assert.rejects(stores[0].removePresence(ctx, docId, 'user', 'c1'), /index shard unavailable/);
+        await assert.rejects(stores[0].cleanDocumentOnExit(ctx, docId), /index shard unavailable/);
+      } finally {
+        stores[0]._syncPresenceIndex = sync;
+      }
+      try {
+        // GC will find this entry; the marker tells it the exit was clean.
+        assert.notEqual(await stores[1]._command(['ZSCORE', indexKeys.documents, member]), null);
+        assert.equal(await stores[1]._wasDocumentClosed(ctx, docId), true);
+        // Two presence TTLs plus one GC claim lease.
+        const ttl = await stores[1]._command(['TTL', stores[1]._docKeys(ctx, docId).closed]);
+        assert.ok(ttl > 890 && ttl <= 900, `closed marker TTL ${ttl}`);
+
+        // A user joining starts a new session that GC must handle again.
+        await stores[1].addPresence(ctx, docId, 'user-2', JSON.stringify({id: 'user-2', connectionId: 'c2'}));
+        assert.equal(await stores[1]._wasDocumentClosed(ctx, docId), false);
+      } finally {
+        await stores[1].removePresence(ctx, docId, 'user-2', 'c2');
+        await stores[1].cleanDocumentOnExit(ctx, docId);
+        await stores[1]._command(['ZREM', indexKeys.documents, member]);
+      }
+    });
+
+    test('a presence heartbeat that re-creates an entry removes the closed marker', async () => {
+      const ctx = context('presence-index-closed-heartbeat');
+      const docId = 'document';
+      const info = JSON.stringify({id: 'user', connectionId: 'c1'});
+      await stores[0].addPresence(ctx, docId, 'user', info);
+      await stores[0].removePresence(ctx, docId, 'user', 'c1');
+      assert.equal(await stores[0].cleanDocumentOnExit(ctx, docId), true);
+      assert.equal(await stores[0]._wasDocumentClosed(ctx, docId), true);
+      try {
+        // A heartbeat for an entry that is gone (for example after a Redis
+        // restart) re-creates it: the user is still connected.
+        await stores[1].updatePresence(ctx, docId, 'user', info);
+        assert.equal(await stores[1]._wasDocumentClosed(ctx, docId), false);
+      } finally {
+        await stores[1].removePresence(ctx, docId, 'user', 'c1');
+        await stores[1].cleanDocumentOnExit(ctx, docId);
+      }
+    });
+
+    test('a failing index update does not fail a presence read', async () => {
+      const ctx = context('presence-index-read-failure');
+      const docId = 'document';
+      const info = JSON.stringify({id: 'user-1', connectionId: 'connection-1'});
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      const sync = stores[1]._syncPresenceIndex;
+      stores[1]._syncPresenceIndex = async () => {
+        throw new Error('index shard unavailable');
+      };
+      try {
+        assert.deepEqual(await stores[1].getPresence(ctx, docId), [info]);
+      } finally {
+        stores[1]._syncPresenceIndex = sync;
+        await stores[0].removePresence(ctx, docId, 'user-1');
+        await stores[0].cleanDocumentOnExit(ctx, docId);
+      }
+    });
+
+    test('removes the documents index entry when the user who refreshed first leaves last', async () => {
+      const ctx = context('presence-index-two-users');
+      const docId = 'document';
+      await stores[0].addPresence(ctx, docId, 'x', JSON.stringify({id: 'x', connectionId: 'cx'}));
+      await wait(20);
+      await stores[1].addPresence(ctx, docId, 'y', JSON.stringify({id: 'y', connectionId: 'cy'}));
+      const indexKeys = stores[0]._indexKeys(ctx, docId);
+      const member = documentMember(ctx, docId);
+
+      await stores[1].removePresence(ctx, docId, 'y', 'cy');
+      await stores[0].removePresence(ctx, docId, 'x', 'cx');
+      await stores[0].removePresenceDocument(ctx, docId);
+      assert.equal(await stores[0].cleanDocumentOnExit(ctx, docId), true);
+
+      // Otherwise GC later finds the closed document and sends a second
+      // "closed" status callback for it.
+      assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), null);
+    });
+
+    test('keeps the documents index entry when another replica joins after the last exit', async () => {
+      const ctx = context('presence-index-rejoin');
+      const docId = 'document';
+      await stores[0].addPresence(ctx, docId, 'x', JSON.stringify({id: 'x', connectionId: 'cx'}));
+      const indexKeys = stores[0]._indexKeys(ctx, docId);
+      const member = documentMember(ctx, docId);
+      // The exit's removal script ran, but its index update is delayed until
+      // after another replica added presence and updated the index.
+      const version = await stores[0]._command(['GET', stores[0]._docKeys(ctx, docId).presenceVersion]);
+      await stores[0].removePresence(ctx, docId, 'x', 'cx');
+      await wait(20);
+      await stores[1].addPresence(ctx, docId, 'z', JSON.stringify({id: 'z', connectionId: 'cz'}));
+      const joined = await stores[0]._command(['ZSCORE', indexKeys.documents, member]);
+      try {
+        await stores[0]._syncPresenceIndex(ctx, docId, version, '');
+
+        assert.equal(await stores[0]._command(['ZSCORE', indexKeys.documents, member]), joined);
+      } finally {
+        await stores[1].removePresence(ctx, docId, 'z', 'cz');
+        await stores[1].cleanDocumentOnExit(ctx, docId);
+      }
+    });
+  });
+
+  describe('user names with a lone UTF-16 surrogate', () => {
+    // fillUsername cuts names at 255 UTF-16 units, which can split an emoji;
+    // JSON.stringify then writes the half as a \udXXX escape.
+    const username = ('x'.repeat(254) + '\u{1F600}').substr(0, 255);
+
+    test('removePresence removes the entry of that connection', async () => {
+      const ctx = context('presence-lone-surrogate-remove');
+      const docId = 'document';
+      const info = JSON.stringify({id: 'user-1', username, connectionId: 'connection-1'});
+      assert.match(info, /\\ud83d"/);
+
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      await stores[1].removePresence(ctx, docId, 'user-1', 'connection-1');
+      try {
+        assert.deepEqual(await stores[0].getPresence(ctx, docId), []);
+      } finally {
+        await stores[0].cleanDocumentOnExit(ctx, docId);
+      }
+    });
+
+    test('removePresence still ignores another connection of that user', async () => {
+      const ctx = context('presence-lone-surrogate-other');
+      const docId = 'document';
+      const info = JSON.stringify({id: 'user-1', username, connectionId: 'connection-2'});
+
+      await stores[0].addPresence(ctx, docId, 'user-1', info);
+      await stores[1].removePresence(ctx, docId, 'user-1', 'connection-1');
+      try {
+        assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+      } finally {
+        await stores[0].removePresence(ctx, docId, 'user-1');
+        await stores[0].cleanDocumentOnExit(ctx, docId);
+      }
+    });
+
+    test('cleanup treats such a viewer as a viewer', async () => {
+      const ctx = context('presence-lone-surrogate-viewer');
+      const docId = 'document';
+      const info = JSON.stringify({id: 'viewer', username, view: true});
+
+      await stores[0].addPresence(ctx, docId, 'viewer', info);
+      try {
+        assert.equal(await stores[1].cleanDocumentOnExit(ctx, docId), true);
+        assert.deepEqual(await stores[0].getPresence(ctx, docId), [info]);
+      } finally {
+        await stores[0].removePresence(ctx, docId, 'viewer');
+        await stores[0].cleanDocumentOnExit(ctx, docId);
+      }
+    });
+  });
+
+  test('raises a tenant presence or shard TTL that would expire between two refreshes', async () => {
+    const {setDocumentsExpireStepMs} = require('../../DocService/sources/expirationConfig');
+    const {EditorStat} = require('../../DocService/sources/editorDataRedis');
+    const stat = new EditorStat();
+    // gc.js sets the refresh interval at startup: here 2 minutes, which needs a
+    // TTL of more than 132 seconds.
+    setDocumentsExpireStepMs(120000);
+    try {
+      for (const [tenantTtl, expected] of [
+        [60, 133],
+        [600, 600]
+      ]) {
+        const ctx = context(`presence-refreshed-ttl-${tenantTtl}`, {
+          'services.CoAuthoring.expire.presence': tenantTtl,
+          'services.CoAuthoring.expire.shard': tenantTtl
+        });
+        await stores[0].addPresence(ctx, 'document', 'user', JSON.stringify({id: 'user'}));
+        await stat.setEditorConnectionsCountByShard(ctx, 'shard', 1);
+        try {
+          const presenceTtl = await stores[0]._command(['TTL', stores[0]._docKeys(ctx, 'document').presenceHash]);
+          const shardTtl = await stat._command(['TTL', stat._shardKeys(ctx, 'edit').count]);
+          assert.ok(presenceTtl > expected - 5 && presenceTtl <= expected, `presence TTL ${presenceTtl} for ${tenantTtl}`);
+          assert.ok(shardTtl > expected - 5 && shardTtl <= expected, `shard TTL ${shardTtl} for ${tenantTtl}`);
+        } finally {
+          await stores[0].removePresence(ctx, 'document', 'user');
+          await stores[0].cleanDocumentOnExit(ctx, 'document');
+          await stat._command(['DEL', stat._shardKeys(ctx, 'edit').count, stat._shardKeys(ctx, 'edit').updated]);
+        }
+      }
+    } finally {
+      setDocumentsExpireStepMs(undefined);
+      await stat.close();
+    }
+  });
 });

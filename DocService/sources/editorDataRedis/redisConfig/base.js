@@ -16,6 +16,8 @@ const REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS = 250;
 const REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS = 2000;
 const REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH = 256;
 const REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES = 3;
+// The shortest connect attempt through Sentinel (see sentinelAttemptTimeoutMs).
+const REDIS_SENTINEL_MIN_ATTEMPT_MS = 3000;
 // Keep command rediscovery disabled because the command may have committed
 // before its response was lost. Initial discovery retries are handled by the
 // Redis connection wrapper with a fresh Sentinel client instead.
@@ -36,11 +38,28 @@ function cloneConfig(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+// node-redis hands timeouts to timer APIs that accept only numbers: a string
+// commandOptions.timeout (easy to get from an environment-templated config)
+// lets the connect succeed and then fails every command. A numeric string is
+// converted; anything else that is not a non-negative number is a
+// configuration error. null keeps its meaning (no library timeout).
+function normalizeTimeoutMs(value, name, fallback) {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (value === null) {
+    return value;
+  }
+  const timeout = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout < 0) {
+    throw new Error(`Redis option ${name} must be a non-negative number of milliseconds; received ${JSON.stringify(value)}`);
+  }
+  return timeout;
+}
+
 function normalizeCommandOptions(source) {
   const options = cloneConfig(source) || {};
-  if (options.timeout === undefined) {
-    options.timeout = REDIS_COMMAND_TIMEOUT_MS;
-  }
+  options.timeout = normalizeTimeoutMs(options.timeout, 'commandOptions.timeout', REDIS_COMMAND_TIMEOUT_MS);
   return options;
 }
 
@@ -60,6 +79,7 @@ module.exports = {
   REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS,
   REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH,
   REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES,
+  REDIS_SENTINEL_MIN_ATTEMPT_MS,
   REDIS_SENTINEL_MAX_COMMAND_REDISCOVERS,
   cfgRedisName,
   cfgRedisHost,
@@ -69,5 +89,6 @@ module.exports = {
   cfgRedisOptionsSentinel,
   cloneConfig,
   normalizeCommandOptions,
+  normalizeTimeoutMs,
   hasControlCharacters
 };

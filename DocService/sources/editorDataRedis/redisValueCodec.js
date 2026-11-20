@@ -6,6 +6,7 @@
 'use strict';
 
 const ms = require('ms');
+const {minimumRefreshedTtlSeconds} = require('../expirationConfig');
 
 function toRedisString(value) {
   if (Buffer.isBuffer(value)) {
@@ -25,6 +26,16 @@ function ttlSeconds(ctx, path, fallback) {
     return Math.max(1, Math.ceil(numeric));
   }
   return Math.max(1, Math.ceil(ms(value) / 1000));
+}
+
+// Presence and connection shard counters are refreshed once per refresh
+// interval, which DocService checks against the global TTLs only. A tenant or
+// runtime value is raised to the shortest TTL that outlives one interval, or
+// live entries would expire between two refreshes.
+function refreshedTtlSeconds(ctx, path, globalValue) {
+  const ttl = ttlSeconds(ctx, path, globalValue);
+  const minimum = minimumRefreshedTtlSeconds();
+  return minimum === undefined ? ttl : Math.max(ttl, minimum);
 }
 
 function ttlMilliseconds(value) {
@@ -92,6 +103,7 @@ function strictMax(now) {
 
 module.exports = {
   toRedisString,
+  refreshedTtlSeconds,
   ttlSeconds,
   ttlMilliseconds,
   jsonEncode,

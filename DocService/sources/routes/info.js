@@ -4,11 +4,11 @@ const express = require('express');
 const cors = require('cors');
 const ms = require('ms');
 const config = require('config');
-const cron = require('cron');
 const utils = require('../../../Common/sources/utils');
 const commonDefines = require('../../../Common/sources/commondefines');
 const operationContext = require('../../../Common/sources/operationContext');
 const tenantManager = require('../../../Common/sources/tenantManager');
+const {DEFAULT_DOCUMENTS_CRON_STEP_MS, cronStepMs, getDocumentsExpireStepMs} = require('../expirationConfig');
 const path = require('path');
 const fs = require('fs');
 
@@ -29,19 +29,6 @@ const PRECISION = [
   {name: 'month', val: ms('30d')},
   {name: 'year', val: ms('365d')}
 ];
-
-/**
- * Get the time step in milliseconds between cron job executions
- * @param {string} cronTime - Cron time expression
- * @returns {number} Time difference in milliseconds between consecutive executions
- */
-function getCronStep(cronTime) {
-  const cronJob = new cron.CronJob(cronTime, () => {});
-  const dates = cronJob.nextDates(2);
-  return dates[1] - dates[0];
-}
-
-const expDocumentsStep = getCronStep(cfgExpDocumentsCron);
 
 /**
  * Get current UTC timestamp for license calculations
@@ -96,6 +83,11 @@ if (USE_FIXTURES) {
  * @returns {Promise<{output: Object, isError: boolean}>} Output data and error flag
  */
 async function buildLicenseInfoOutput(ctx, getConnections = null) {
+  // DocService writes one statistics sample per refresh interval, which is
+  // shorter than documentsCron when that is too slow for the Redis TTLs.
+  const expDocumentsStep =
+    getDocumentsExpireStepMs() ?? cronStepMs(cfgExpDocumentsCron, 'services.CoAuthoring.expire.documentsCron', DEFAULT_DOCUMENTS_CRON_STEP_MS).stepMs;
+
   // Return fixture data if enabled and available
   if (USE_FIXTURES && fixtureFiles.length > 0) {
     fixtureRequestCounter++;
@@ -174,11 +166,12 @@ async function buildLicenseInfoOutput(ctx, getConnections = null) {
         let edit = elem.edit || 0;
         let view = elem.view || 0;
         let liveview = elem.liveview || 0;
-        // For cluster
+        // For cluster: samples of several instances in one interval add up.
         while (i > 0 && elem.time - redisRes[i - 1].time < expDocumentsStep95) {
-          edit += elem.edit || 0;
-          view += elem.view || 0;
-          liveview += elem.liveview || 0;
+          const sample = redisRes[i - 1];
+          edit += sample.edit || 0;
+          view += sample.view || 0;
+          liveview += sample.liveview || 0;
           i--;
         }
         for (let j = precisionIndex; j < PRECISION.length; ++j) {

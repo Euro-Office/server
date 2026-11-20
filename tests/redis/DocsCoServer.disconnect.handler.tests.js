@@ -125,18 +125,23 @@ describe('DocsCoServer viewer disconnect handler', () => {
     await isolatedEditorData.addPresence(ctx, docId, editor.conn.user.id, editorInfo);
     await isolatedEditorData.addPresence(ctx, docId, viewer.conn.user.id, viewerInfo);
     await seedDocumentState(isolatedEditorData, ctx, docId);
-    const stateWithEditorAndViewer = await readDocumentState(isolatedEditorData, ctx, docId);
     connections.push(editor.conn, viewer.conn);
 
     await mockSocketIo.connection(editor.conn);
     await mockSocketIo.connection(viewer.conn);
     await editor.handlers.disconnect('transport close');
 
+    // The last editor's exit cleans up although a viewer remains (as the
+    // in-memory backend does); only the viewer's presence and the documents
+    // index entry for it are kept.
     assert.deepEqual(await isolatedEditorData.getPresence(ctx, docId), [viewerInfo]);
-    assert.deepEqual(await readDocumentState(isolatedEditorData, ctx, docId), stateWithEditorAndViewer);
+    assert.deepEqual(await readDocumentState(isolatedEditorData, ctx, docId), emptyDocumentState());
     assert.equal(docsCoServer.editorData.cleanDocumentOnExit.mock.calls.length, 1);
     assert.notEqual(await readDocumentIndexScore(isolatedEditorData, ctx, docId), null);
 
+    // A final save still in flight writes the state it reads back later.
+    await seedDocumentState(isolatedEditorData, ctx, docId);
+    const stateWithEditorAndViewer = await readDocumentState(isolatedEditorData, ctx, docId);
     await viewer.handlers.disconnect('transport close');
 
     assert.deepEqual(await isolatedEditorData.getPresence(ctx, docId), []);
@@ -152,5 +157,36 @@ describe('DocsCoServer viewer disconnect handler', () => {
     assert.equal(await readDocumentIndexScore(isolatedEditorData, ctx, docId), null);
     assert.equal(docsCoServer.editorData.cleanDocumentOnExit.mock.calls.length, 2);
     assert.deepEqual(docsCoServer.editorData.cleanDocumentOnExit.mock.calls[1][3], {preserveSavedClaim: true});
+  });
+
+  test('leaves editor data alone for sockets the server closes when it shuts down', async () => {
+    const ctx = context(tenantManager.getDefautTenant());
+    const editor = connectionHandlers({id: 'editor-connection', userId: 'editor', view: false});
+    const docId = editor.conn.docId;
+    const editorInfo = JSON.stringify({...editor.conn.user, connectionId: editor.conn.id});
+    await isolatedEditorData.addPresence(ctx, docId, editor.conn.user.id, editorInfo);
+    await seedDocumentState(isolatedEditorData, ctx, docId);
+    const state = await readDocumentState(isolatedEditorData, ctx, docId);
+    const indexScore = await readDocumentIndexScore(isolatedEditorData, ctx, docId);
+    connections.push(editor.conn);
+    await mockSocketIo.connection(editor.conn);
+
+    try {
+      // SIGTERM or a fatal error: the server closes Socket.IO, which
+      // disconnects every socket with this reason.
+      await docsCoServer.close();
+      await editor.handlers.disconnect('server shutting down');
+
+      // As after a killed process: the presence expires later and GC on
+      // another instance saves or closes the document.
+      assert.deepEqual(await isolatedEditorData.getPresence(ctx, docId), [editorInfo]);
+      assert.deepEqual(await readDocumentState(isolatedEditorData, ctx, docId), state);
+      assert.equal(await readDocumentIndexScore(isolatedEditorData, ctx, docId), indexScore);
+      assert.equal(docsCoServer.editorData.removePresence.mock.calls.length, 0);
+      assert.equal(docsCoServer.editorData.cleanDocumentOnExit.mock.calls.length, 0);
+    } finally {
+      await isolatedEditorData.removePresence(ctx, docId, editor.conn.user.id);
+      await isolatedEditorData.cleanDocumentOnExit(ctx, docId);
+    }
   });
 });

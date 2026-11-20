@@ -46,6 +46,7 @@ jest.mock(
 );
 jest.mock('../../DocService/sources/gc', () => ({
   getCronStep: () => 2147483647,
+  getDocumentsExpireStep: () => 2147483647,
   startGC: jest.fn()
 }));
 

@@ -396,6 +396,11 @@ async function runCrossProcessRedisScenarios(harness) {
     WAIT_TIMEOUT_MS,
     POLL_INTERVAL_MS
   );
+  // Presence that expired without an exit is what a replica that died leaves
+  // behind. Reading it must not hide the document from GC.
+  const expiredWithoutExit = await harness.request('replica-b', 'data', 'getDocumentPresenceExpired', [Date.now()], 'expired presence GC claim');
+  assertObservableEqual(expiredWithoutExit, [['cross-process-tenant', 'expiring-document']], 'expired presence must stay indexed for GC');
+  await harness.request('replica-b', 'data', '_ackDocumentPresenceExpired', [expiredWithoutExit[0]], 'expired presence GC acknowledgement');
 
   const recoveryDoc = 'cross-process-presence-recovery';
   await harness.request('replica-a', 'data', 'addPresence', [ctx, recoveryDoc, 'presence-user', info], 'presence recovery write');

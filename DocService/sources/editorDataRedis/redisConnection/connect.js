@@ -9,6 +9,7 @@ const redis = require('redis');
 const {
   REDIS_CONNECT_TIMEOUT_MS,
   REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES,
+  REDIS_SENTINEL_MIN_ATTEMPT_MS,
   REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS,
   REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS,
   cfgRedisName,
@@ -31,11 +32,30 @@ const {
   waitForReady,
   createConnectTimeoutError,
   wait,
+  probeSentinel,
   RedisUnavailableError
 } = require('./helpers');
 
+// How long each Sentinel gets to answer the check before a new Sentinel client
+// is created (all Sentinels are checked at the same time).
+const REDIS_SENTINEL_PROBE_TIMEOUT_MS = 2000;
+
+const sentinelNodeKey = node => `${node.host}:${node.port}`;
+
+// node-redis asks the Sentinels one after another and has no timeout for a
+// Sentinel that accepts the connection but never answers. Such a Sentinel would
+// use up the whole connect budget in one attempt. So an attempt through
+// Sentinel gets a share of the budget, and the next attempt starts at the next
+// Sentinel (see normalizeSentinelOptions).
+function sentinelAttemptTimeoutMs(rootNodeCount) {
+  const count = Number.isInteger(rootNodeCount) && rootNodeCount > 0 ? rootNodeCount : 1;
+  return Math.max(REDIS_SENTINEL_MIN_ATTEMPT_MS, Math.floor(REDIS_CONNECT_TIMEOUT_MS / count));
+}
+
 module.exports = function attachConnect(RedisConnection) {
-  RedisConnection.prototype._createClient = function () {
+  // reachableSentinelRootNodes: the "host:port" keys of the Sentinels that
+  // answered the check (see _probeSentinelRootNodes).
+  RedisConnection.prototype._createClient = function ({reachableSentinelRootNodes} = {}) {
     if (this.closing) {
       throw new RedisUnavailableError(new Error('Redis connection is closing'));
     }
@@ -51,7 +71,16 @@ module.exports = function attachConnect(RedisConnection) {
     }
     let client;
     if (this.sentinel) {
-      client = createSentinelClient(normalizeSentinelOptions(cfgRedisOptionsSentinel, this.database));
+      // Each new Sentinel client starts at the next root node.
+      const sentinelOptions = normalizeSentinelOptions(cfgRedisOptionsSentinel, this.database, this.sentinelRootNodeOffset++);
+      // Leave out the Sentinels that did not answer the check, unless none did:
+      // then node-redis reports the failure as usual.
+      const reachable = sentinelOptions.sentinelRootNodes.filter(node => reachableSentinelRootNodes?.has(sentinelNodeKey(node)));
+      if (reachable.length > 0) {
+        sentinelOptions.sentinelRootNodes = reachable;
+      }
+      this.sentinelRootNodeCount = sentinelOptions.sentinelRootNodes.length;
+      client = createSentinelClient(sentinelOptions);
     } else if (this.cluster) {
       if (this.database !== undefined && this.database !== null && Number(this.database) !== 0) {
         log('error', 'Redis Cluster cannot use logical database %s; configure database 0', this.database);
@@ -87,6 +116,20 @@ module.exports = function attachConnect(RedisConnection) {
     });
   };
 
+  // Checks every configured Sentinel at the same time. Resolves the keys of the
+  // ones that answered, or undefined when the Sentinel options are invalid
+  // (_createClient then reports that).
+  RedisConnection.prototype._probeSentinelRootNodes = async function (timeoutMs) {
+    let options;
+    try {
+      options = normalizeSentinelOptions(cfgRedisOptionsSentinel, this.database);
+    } catch (_error) {
+      return undefined;
+    }
+    const answered = await Promise.all(options.sentinelRootNodes.map(node => probeSentinel(node, options.sentinelClientOptions, timeoutMs)));
+    return new Set(options.sentinelRootNodes.filter((_node, index) => answered[index]).map(sentinelNodeKey));
+  };
+
   RedisConnection.prototype.connect = async function () {
     await this._withOperation(() => this._connect());
   };
@@ -102,11 +145,13 @@ module.exports = function attachConnect(RedisConnection) {
     if (this.client && this.connectionAttempted && !this.client.isOpen) {
       this._abortClient();
     }
-    if (!this.client) {
+    // A Sentinel client is created by _connectWithRetries, after the
+    // Sentinels were checked.
+    if (!this.client && !hasNodeSentinel()) {
       this._createClient();
     }
     const currentClient = this.client;
-    if (this.connectionAttempted && currentClient.isOpen && !currentClient.isReady) {
+    if (currentClient && this.connectionAttempted && currentClient.isOpen && !currentClient.isReady) {
       throw new RedisUnavailableError(this.lastError);
     }
     const startedAt = Date.now();
@@ -114,9 +159,9 @@ module.exports = function attachConnect(RedisConnection) {
       'debug',
       'connect start (connector=%s, status=%s, open=%s, ready=%s)',
       this.connector,
-      currentClient.status || 'n/a',
-      currentClient.isOpen ?? 'n/a',
-      currentClient.isReady ?? 'n/a'
+      currentClient?.status || 'n/a',
+      currentClient?.isOpen ?? 'n/a',
+      currentClient?.isReady ?? 'n/a'
     );
     this.connectionAttempted = true;
     const connectPromise = this._connectWithRetries(startedAt);
@@ -136,7 +181,7 @@ module.exports = function attachConnect(RedisConnection) {
         this.database ?? 0,
         errorDetails(error)
       );
-      await this._closeClient(currentClient);
+      await this._closeClient(currentClient ?? undefined);
       throw error;
     } finally {
       if (this.connectPromise === connectPromise) {
@@ -152,7 +197,10 @@ module.exports = function attachConnect(RedisConnection) {
         throw new RedisUnavailableError(new Error('Redis connection is closing'));
       }
       if (!this.client) {
-        this._createClient();
+        const reachableSentinelRootNodes = hasNodeSentinel()
+          ? await this._probeSentinelRootNodes(Math.min(REDIS_SENTINEL_PROBE_TIMEOUT_MS, REDIS_CONNECT_TIMEOUT_MS - (Date.now() - startedAt)))
+          : undefined;
+        this._createClient({reachableSentinelRootNodes});
       }
       const currentClient = this.client;
       this.connectionAttempted = true;
@@ -160,12 +208,13 @@ module.exports = function attachConnect(RedisConnection) {
       if (remaining <= 0) {
         throw createConnectTimeoutError();
       }
+      const attemptDeadline = Date.now() + (this.sentinel ? Math.min(remaining, sentinelAttemptTimeoutMs(this.sentinelRootNodeCount)) : remaining);
       try {
         if (!currentClient.isOpen) {
-          await withTimeout(currentClient.connect(), remaining, 'Redis connect');
+          await withTimeout(currentClient.connect(), attemptDeadline - Date.now(), 'Redis connect');
         }
         if (!currentClient.isReady) {
-          const readyTimeout = REDIS_CONNECT_TIMEOUT_MS - (Date.now() - startedAt);
+          const readyTimeout = attemptDeadline - Date.now();
           if (readyTimeout <= 0) {
             throw createConnectTimeoutError();
           }

@@ -36,8 +36,8 @@ belong in `nodeClientOptions`; Sentinel credentials belong in
 `sentinelClientOptions`. Omit both credential objects when the corresponding
 deployment is unauthenticated. For compatibility with older entrypoints, an
 empty password with no username or with the legacy `default` username is
-treated as omitted authentication; any other configured username requires a
-non-empty password.
+treated as omitted authentication; an empty username is treated as no
+username. Any other configured username requires a non-empty password.
 
 ```json
 {
@@ -53,6 +53,14 @@ outer connection attempt is bounded by 15 seconds; commands have a 30-second
 adapter timeout and fail before readiness rather than entering an unbounded
 offline queue. A deliberate store or process shutdown remains terminal until
 the store is recreated.
+
+Before each new Sentinel client is created, DocService sends every configured
+Sentinel a `PING` over a connection of its own (2 seconds, all at the same
+time). Sentinels that do not answer are left out of the list that node-redis
+gets, so a Sentinel that accepts connections but never answers cannot stall
+discovery; if none answers, the full list is used. Each new client also starts
+at the next Sentinel in the list, and one connection attempt through Sentinel
+gets an equal share of the 15-second budget (at least 3 seconds).
 
 A standalone endpoint that follows a managed failover, such as a DNS name or a
 Kubernetes Service in front of a primary and its replicas, is handled the same
@@ -138,6 +146,16 @@ force-save indexes are sorted sets with timestamp scores; cleanup removes
 expired members, so an index key itself can remain present after its members
 expire.
 
+Each DocService refreshes its users' presence and its connection shard counters
+at the `services.CoAuthoring.expire.documentsCron` interval, which is also the
+document expiration GC interval. With Redis editor data, this interval must be
+at least 10% (and at least one second) shorter than both
+`services.CoAuthoring.expire.presence` and `services.CoAuthoring.expire.shard`;
+otherwise live users would expire between refreshes. A longer interval, for
+example one set in the AdminPanel, is shortened to the longest safe interval
+and an error is logged; it does not stop DocService from starting. An invalid
+cron expression still does.
+
 Saved status has a separate claim lease. A claim is created only when a save
 result is consumed: the backend creates a per-document `saved:claim` key and
 removes the `saved` key as one operation. The claim prevents another operation
@@ -182,8 +200,13 @@ Tenant and document identifiers are encoded with URL-safe Base64. For a tenant
 
 The per-document keys are the base followed by `presence:set`,
 `presence:hash`, `presence:version`, `savelock`, `lockdocument`, `locks`,
-`message`, `saved`, `saved:claim`, and `forcesave`. `saved:claim` is the
-lease-limited coordination key used while a saved status is being consumed.
+`message`, `saved`, `saved:claim`, `forcesave`, and `closed`. `saved:claim` is
+the lease-limited coordination key used while a saved status is being consumed.
+`closed` is set when a document's cleanup has run and removed when a user joins
+again; it expires after twice the presence TTL plus one GC claim lease. GC uses
+it to tell a documents index entry left over from a clean exit (whose index
+update failed) from one left by a DocService that stopped, and then does not
+send the "closed" status callback a second time.
 
 Cross-document editor-data indexes use 16 fixed shards. The shard is the
 FNV-1a hash of the UTF-8 JSON pair `[tenant, document]`, reduced modulo 16.

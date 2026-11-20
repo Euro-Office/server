@@ -9,11 +9,45 @@ const cron = require('cron');
 const ms = require('ms');
 
 const EXPIRY_SAFETY_MARGIN_RATIO = 0.1;
+// setTimeout runs a longer delay after 1 ms instead (with a warning), which
+// would turn a schedule such as "0 0 0 31 2 *" into a busy loop.
+const MAX_TIMER_DELAY_MS = 2147483647;
+// The default.json values: documentsCron "0 */2 * * * *", filesCron "00 00 */1 * * *".
+const DEFAULT_DOCUMENTS_CRON_STEP_MS = 120000;
+const DEFAULT_FILES_CRON_STEP_MS = 3600000;
 
 function getCronStep(cronTime) {
   const cronJob = new cron.CronJob(cronTime, () => {});
   const dates = cronJob.nextDates(2);
   return dates[1] - dates[0];
+}
+
+// The interval of a cron setting that the AdminPanel can change (its schema
+// only checks for six fields). An expression that cannot be parsed, or gives no
+// positive interval, falls back to fallbackMs, and an interval longer than a
+// timer allows is shortened, so neither stops DocService from starting nor
+// makes a timer fire every millisecond. message explains a replacement.
+function cronStepMs(cronTime, name, fallbackMs, getStep = getCronStep) {
+  let stepMs;
+  let problem;
+  try {
+    stepMs = getStep(cronTime);
+  } catch (error) {
+    problem = `Invalid ${name}: ${error.message}`;
+  }
+  if (!problem && (!Number.isFinite(stepMs) || stepMs <= 0)) {
+    problem = `${name} must produce a positive interval`;
+  }
+  if (problem) {
+    return {stepMs: fallbackMs, message: `${problem}. Using the default interval of ${fallbackMs / 1000} seconds instead.`};
+  }
+  if (stepMs > MAX_TIMER_DELAY_MS) {
+    return {
+      stepMs: MAX_TIMER_DELAY_MS,
+      message: `${name} runs every ${Math.ceil(stepMs / 1000)} seconds, longer than a timer allows. Using ${MAX_TIMER_DELAY_MS / 1000} seconds instead.`
+    };
+  }
+  return {stepMs};
 }
 
 function ttlMilliseconds(value) {
@@ -87,9 +121,89 @@ function validateDocumentExpiryConfig(expire, getStep = getCronStep, {checkTtls 
   return {valid: true, documentsCronStepMs, presenceTtlMs, shardTtlMs};
 }
 
+function passesTtlRule(stepMs, ttlMs) {
+  return Math.max(stepMs * (1 + EXPIRY_SAFETY_MARGIN_RATIO), stepMs + 1000) < ttlMs;
+}
+
+// The longest whole-millisecond interval that passes the TTL rule, or NaN when
+// the TTLs are too short for any interval of at least one second.
+function maxSafeDocumentsStepMs(presenceTtlMs, shardTtlMs) {
+  const ttlMs = Math.min(presenceTtlMs, shardTtlMs);
+  let stepMs = Math.min(Math.floor(ttlMs / (1 + EXPIRY_SAFETY_MARGIN_RATIO)), ttlMs - 1001);
+  while (stepMs >= 1000 && !passesTtlRule(stepMs, ttlMs)) {
+    stepMs--;
+  }
+  return stepMs >= 1000 ? stepMs : NaN;
+}
+
+// Like validateDocumentExpiryConfig, but a documentsCron that is only too slow
+// for the TTLs does not fail: the interval is shortened to the longest safe one
+// (`clamped`, with `message` for the log). documentsCron is editable in the
+// AdminPanel and only sets this interval, so a slow value must not stop
+// DocService from starting or GC from running; an invalid one uses the default
+// interval (see cronStepMs). Only unusable TTLs still fail.
+function resolveDocumentExpiryStep(expire, getStep = getCronStep, options = {}) {
+  const cronStep = cronStepMs(expire?.documentsCron, 'services.CoAuthoring.expire.documentsCron', DEFAULT_DOCUMENTS_CRON_STEP_MS, getStep);
+  const validation = validateDocumentExpiryConfig(expire, () => cronStep.stepMs, options);
+  if (validation.valid) {
+    return cronStep.message
+      ? {...validation, stepMs: cronStep.stepMs, clamped: true, message: cronStep.message}
+      : {...validation, stepMs: validation.documentsCronStepMs, clamped: false};
+  }
+  if (!Number.isFinite(validation.documentsCronStepMs)) {
+    return validation;
+  }
+  const stepMs = maxSafeDocumentsStepMs(validation.presenceTtlMs, validation.shardTtlMs);
+  if (!Number.isFinite(stepMs)) {
+    return validation;
+  }
+  return {
+    valid: true,
+    clamped: true,
+    stepMs,
+    documentsCronStepMs: validation.documentsCronStepMs,
+    presenceTtlMs: validation.presenceTtlMs,
+    shardTtlMs: validation.shardTtlMs,
+    message: `${cronStep.message ? `${cronStep.message} ` : ''}${validation.message} Using an interval of ${stepMs / 1000} seconds instead.`
+  };
+}
+
+// The interval DocService really refreshes presence and connection statistics
+// at: gc.js sets it at startup, and it can be shorter than documentsCron (see
+// resolveDocumentExpiryStep). /info groups the statistics samples by it.
+let documentsExpireStepMs;
+
+function setDocumentsExpireStepMs(stepMs) {
+  documentsExpireStepMs = stepMs;
+}
+
+function getDocumentsExpireStepMs() {
+  return documentsExpireStepMs;
+}
+
+// The shortest presence or connection shard TTL, in seconds, that outlives one
+// refresh interval with the headroom validateDocumentExpiryConfig asks for.
+// undefined until gc.js has set the interval.
+function minimumRefreshedTtlSeconds() {
+  if (!Number.isFinite(documentsExpireStepMs) || documentsExpireStepMs <= 0) {
+    return undefined;
+  }
+  const minimumMs = Math.max(documentsExpireStepMs * (1 + EXPIRY_SAFETY_MARGIN_RATIO), documentsExpireStepMs + 1000);
+  return Math.floor(minimumMs / 1000) + 1;
+}
+
 module.exports = {
+  DEFAULT_DOCUMENTS_CRON_STEP_MS,
+  DEFAULT_FILES_CRON_STEP_MS,
+  MAX_TIMER_DELAY_MS,
+  cronStepMs,
   documentExpiryTtlsApply,
   getCronStep,
+  getDocumentsExpireStepMs,
+  maxSafeDocumentsStepMs,
+  minimumRefreshedTtlSeconds,
+  resolveDocumentExpiryStep,
+  setDocumentsExpireStepMs,
   ttlMilliseconds,
   validateDocumentExpiryConfig
 };

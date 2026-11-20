@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {afterEach, beforeEach, describe, test} = require('@jest/globals');
 
 const {EditorData, EditorStat} = require('../../DocService/sources/editorDataRedis');
+const {EditorData: MemoryEditorData} = require('../../DocService/sources/editorDataMemory');
 const {documentMember} = require('../../DocService/sources/editorDataRedis/redisKeys');
 const {context} = require('./testHelpers');
 
@@ -177,4 +178,34 @@ describe('editorDataRedis edge cases', () => {
 
     assert.deepEqual(await stat.getPresenceUniqueUsersOfMonth(context('empty-month')), {});
   });
+});
+
+describe('removeLocks', () => {
+  for (const [name, createStore] of [
+    ['Redis', () => new EditorData()],
+    ['in-memory', () => new MemoryEditorData()]
+  ]) {
+    test(`${name}: keeps a lock that another user holds by now`, async () => {
+      const store = createStore();
+      const ctx = context(`remove-locks-owner-${name}`);
+      const docId = 'document';
+      try {
+        await store.addLocksNX(ctx, docId, {block: {time: 1, user: 'user-a', block: 'block'}});
+        const userLocks = await store.getLocks(ctx, docId);
+        // Before user A's removal arrives, another replica released the block
+        // and granted it to user B.
+        await store.removeAllLocks(ctx, docId);
+        await store.addLocksNX(ctx, docId, {block: {time: 2, user: 'user-b', block: 'block'}});
+
+        await store.removeLocks(ctx, docId, userLocks);
+
+        assert.equal((await store.getLocks(ctx, docId)).block.user, 'user-b');
+        await store.removeLocks(ctx, docId, {block: {time: 2, user: 'user-b', block: 'block'}});
+        assert.equal(Object.keys(await store.getLocks(ctx, docId)).length, 0);
+      } finally {
+        await store.removeAllLocks(ctx, docId);
+        await store.close();
+      }
+    });
+  }
 });

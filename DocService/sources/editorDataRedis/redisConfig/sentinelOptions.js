@@ -27,8 +27,16 @@ function sentinelReconnectStrategy(retries) {
   return Math.min(REDIS_SENTINEL_RECONNECT_BASE_DELAY_MS * 2 ** retries, REDIS_SENTINEL_RECONNECT_MAX_DELAY_MS);
 }
 
-function normalizeSentinelOptions(source, database) {
+// node-redis asks the Sentinel root nodes one after another, always in the
+// given order, and a fresh client starts again at the first one. So:
+// - each new client starts at the next root node (rootNodeOffset), so that a
+//   dead first Sentinel costs one connect attempt, not every attempt;
+// - unless configured, a Sentinel connection gets only its share of the connect
+//   budget, so that a Sentinel that does not accept connections does not use
+//   up the whole budget before the next one is asked.
+function normalizeSentinelOptions(source, database, rootNodeOffset = 0) {
   const options = cloneConfig(source) || {};
+  const sentinelConnectTimeoutConfigured = options.sentinelClientOptions?.socket?.connectTimeout !== undefined;
   options.RESP = REDIS_RESP_VERSION;
   options.name = normalizeSentinelName(options.name);
   if (!Array.isArray(options.sentinelRootNodes) || options.sentinelRootNodes.length === 0) {
@@ -39,6 +47,9 @@ function normalizeSentinelOptions(source, database) {
   if (sentinelNodes.size !== options.sentinelRootNodes.length) {
     throw new Error('Redis Sentinel optionsSentinel.sentinelRootNodes must not contain duplicate nodes');
   }
+  const rootNodeCount = options.sentinelRootNodes.length;
+  const firstRootNode = ((rootNodeOffset % rootNodeCount) + rootNodeCount) % rootNodeCount;
+  options.sentinelRootNodes = [...options.sentinelRootNodes.slice(firstRootNode), ...options.sentinelRootNodes.slice(0, firstRootNode)];
   const nodeDatabase = database ?? options.database;
   delete options.database;
   options.nodeClientOptions = normalizeNodeOptions(
@@ -58,7 +69,10 @@ function normalizeSentinelOptions(source, database) {
   delete options.sentinelClientOptions.url;
   delete options.sentinelClientOptions.commandOptions;
   options.sentinelClientOptions.socket = options.sentinelClientOptions.socket || {};
-  options.sentinelClientOptions.socket.connectTimeout ??= REDIS_CONNECT_TIMEOUT_MS;
+  if (!sentinelConnectTimeoutConfigured) {
+    // Leave room for the master connection after asking every Sentinel.
+    options.sentinelClientOptions.socket.connectTimeout = Math.max(1000, Math.floor(REDIS_CONNECT_TIMEOUT_MS / (rootNodeCount + 1)));
+  }
   options.sentinelClientOptions.disableOfflineQueue = true;
   options.sentinelClientOptions.commandsQueueMaxLength = REDIS_SENTINEL_COMMAND_QUEUE_MAX_LENGTH;
   // Native Sentinel intentionally uses one-shot clients for Sentinel discovery;

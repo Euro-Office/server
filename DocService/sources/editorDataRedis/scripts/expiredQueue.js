@@ -76,6 +76,21 @@ end
 return values
 `;
 
+// Extends the lease of a claimed member while its claim is still this one. A
+// lease that ran out but was not claimed again is still this claim's. Returns
+// 0 once another worker has claimed the member, or it was acknowledged.
+const RENEW_EXPIRED_SCRIPT = `
+${REDIS_TIME_MILLIS}
+if redis.call('HGET', KEYS[2], ARGV[2]) ~= ARGV[1] then
+  return 0
+end
+if not redis.call('ZSCORE', KEYS[1], ARGV[2]) then
+  return 0
+end
+redis.call('ZADD', KEYS[1], 'XX', redisTimeMillis() + tonumber(ARGV[3]), ARGV[2])
+return 1
+`;
+
 const ACK_EXPIRED_SCRIPT = `
 if redis.call('HGET', KEYS[2], ARGV[2]) ~= ARGV[1] then
   return 0
@@ -89,5 +104,6 @@ module.exports = {
   ADD_FORCE_SAVE_TIMER_SCRIPT,
   CLEAN_FORCE_SAVE_TIMER_SCRIPT,
   POP_EXPIRED_SCRIPT,
+  RENEW_EXPIRED_SCRIPT,
   ACK_EXPIRED_SCRIPT
 };

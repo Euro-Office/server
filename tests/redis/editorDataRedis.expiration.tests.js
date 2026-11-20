@@ -325,6 +325,36 @@ describe('editorDataRedis expiration claims', () => {
   testForEachQueue('recovers only the unacknowledged %s item after a partial batch', assertPartialBatchRecovery);
   testForEachQueue('processes %s expiration from every shard', assertAllShards);
 
+  test('renews a document presence claim until another worker claims it', async () => {
+    const data = new EditorData();
+    const other = new EditorData();
+    const queue = queues.presence;
+    data.expiredClaimLeaseMs = 300;
+    other.expiredClaimLeaseMs = 300;
+    try {
+      await seed(data, queue, 'renew-claim', 1);
+      const claimed = await queue.pop(data, Date.now());
+      assert.equal(claimed.length, 1);
+
+      await wait(200);
+      assert.equal(await data._renewDocumentPresenceExpired(claimed[0]), true);
+      // Past the first lease but within the renewed one.
+      await wait(200);
+      assert.deepEqual(await queue.pop(other, Date.now()), []);
+
+      // Past the renewed lease: another worker claims the item again.
+      await wait(250);
+      const reclaimed = await queue.pop(other, Date.now());
+      assert.deepEqual(reclaimed, claimed);
+      assert.equal(await data._renewDocumentPresenceExpired(claimed[0]), false);
+      assert.equal(await queue.acknowledge(data, claimed[0]), false);
+      assert.equal(await queue.acknowledge(other, reclaimed[0]), true);
+      assert.equal(await other._renewDocumentPresenceExpired(reclaimed[0]), false);
+    } finally {
+      await Promise.all([data.close(), other.close()]);
+    }
+  });
+
   testForEachQueue(
     'recovers %s expiration after a client timeout',
     async queueName => {

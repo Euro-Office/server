@@ -22,7 +22,9 @@ module.exports = {
   cfgExpMessage: expire.get('message'),
   cfgExpForceSave: expire.get('forcesave'),
   cfgExpSaved: expire.get('saved'),
-  cfgExpSavedClaim: expire.get('savedClaim'),
+  // New with this backend: fall back to the default.json value for an older
+  // operator-supplied default.json.
+  cfgExpSavedClaim: expire.has('savedClaim') ? expire.get('savedClaim') : 86400,
   POP_EXPIRED_BATCH_SIZE,
   POP_EXPIRED_MAX_BATCH_SIZE,
   POP_EXPIRED_LEASE_MS

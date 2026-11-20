@@ -35,6 +35,15 @@ EditorCommon.prototype.connect = async function () {
   return this._ensureRedisLease().connect();
 };
 
+// Startup calls this when the process shuts down during a connect attempt, so
+// that shutdown does not wait for the connect timeout.
+EditorCommon.prototype.cancelConnect = function () {
+  if (this.closed || !redisConnectionManager.owns(this.redis)) {
+    return false;
+  }
+  return this.redis.cancelConnect();
+};
+
 EditorCommon.prototype.isConnected = function () {
   return !this.closed && redisConnectionManager.owns(this.redis) && this.redis.isConnected();
 };

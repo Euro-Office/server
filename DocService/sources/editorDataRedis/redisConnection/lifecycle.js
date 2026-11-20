@@ -5,7 +5,7 @@
 
 'use strict';
 
-const {errorDetails, withTimeout, RedisUnavailableError} = require('./helpers');
+const {errorDetails, withTimeout, destroyClient, RedisUnavailableError} = require('./helpers');
 const {log} = require('./helpers');
 
 module.exports = function attachLifecycle(RedisConnection) {
@@ -63,6 +63,15 @@ module.exports = function attachLifecycle(RedisConnection) {
     if (!client || !client.isOpen) {
       return;
     }
+    if (client.isReady === false) {
+      // A connect or handshake is still in flight. close() would wait for it,
+      // forever against a server that accepts connections but does not answer,
+      // and once close() has started node-redis no longer lets destroy()
+      // release the socket.
+      log('debug', 'destroying redis client that is not ready');
+      destroyClient(client);
+      return;
+    }
     try {
       log('debug', 'closing redis client');
       const close =
@@ -74,11 +83,7 @@ module.exports = function attachLifecycle(RedisConnection) {
       }
     } catch (error) {
       log('warn', 'graceful Redis close failed; forcing disconnect: %s', errorDetails(error));
-      if (typeof client.destroy === 'function') {
-        client.destroy();
-      } else if (typeof client.disconnect === 'function') {
-        client.disconnect();
-      }
+      destroyClient(client);
     }
   };
 
@@ -115,10 +120,6 @@ module.exports = function attachLifecycle(RedisConnection) {
     if (!client || !client.isOpen) {
       return;
     }
-    if (typeof client.destroy === 'function') {
-      client.destroy();
-    } else if (typeof client.disconnect === 'function') {
-      client.disconnect();
-    }
+    destroyClient(client);
   };
 };

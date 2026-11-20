@@ -8,7 +8,7 @@
 const redisConnection = require('../redisConnection');
 const {EDITOR_INDEX_SHARD_COUNT, EDITOR_INDEX_QUEUES, documentMember, decodeDocumentMember, forceSaveTimerCleanupKey} = require('../redisKeys');
 const {POP_EXPIRED_BATCH_SIZE} = require('../editorDataSettings');
-const {POP_EXPIRED_SCRIPT, ACK_EXPIRED_SCRIPT, ADD_FORCE_SAVE_TIMER_SCRIPT} = require('../scripts');
+const {POP_EXPIRED_SCRIPT, RENEW_EXPIRED_SCRIPT, ACK_EXPIRED_SCRIPT, ADD_FORCE_SAVE_TIMER_SCRIPT} = require('../scripts');
 const {strictMax} = require('../redisValueCodec');
 
 const expiredClaimIds = new WeakMap();
@@ -52,6 +52,24 @@ module.exports = function attachExpiredQueue(EditorData) {
     }
     const member = documentMember({tenant: item[0]}, item[1]);
     const result = await this._eval(ACK_EXPIRED_SCRIPT, [leaseKey, claimsKey], [claimId, member]);
+    return Number(result) === 1;
+  };
+
+  // Document presence leases use Redis time, so they can be renewed (see
+  // gc.js). Resolves true while the claim is still held.
+  EditorData.prototype._renewDocumentPresenceExpired = async function (item) {
+    const claimId = item && expiredClaimIds.get(item);
+    const keys = this._indexKeysForItem(item);
+    if (!claimId || !keys) {
+      return false;
+    }
+    const queue = EDITOR_INDEX_QUEUES.documents;
+    const member = documentMember({tenant: item[0]}, item[1]);
+    const result = await this._eval(
+      RENEW_EXPIRED_SCRIPT,
+      [keys[queue.lease], keys[queue.claims]],
+      [claimId, member, String(this.expiredClaimLeaseMs)]
+    );
     return Number(result) === 1;
   };
 
