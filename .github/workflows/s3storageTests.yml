@@ -14,7 +14,7 @@ on:
 jobs:
   storage-tests:
     name: Storage Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     env:
       MINIO_CONTAINER: minio-${{ github.run_id }}-${{ github.run_attempt }}
 
