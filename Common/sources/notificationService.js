@@ -138,7 +138,14 @@ async function notifyRule(ctx, tenRule, title, message) {
   }
 }
 
+async function close() {
+  if (editorStat?.close) {
+    await editorStat.close();
+  }
+}
+
 module.exports = {
   notificationTypes,
-  notify
+  notify,
+  close
 };

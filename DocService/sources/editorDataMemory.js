@@ -36,6 +36,10 @@ function EditorCommon() {
   this.data = {};
 }
 EditorCommon.prototype.connect = async function () {};
+// Nothing to cancel: the in-memory store has no connection (see the Redis store).
+EditorCommon.prototype.cancelConnect = function () {
+  return false;
+};
 EditorCommon.prototype.isConnected = function () {
   return true;
 };
@@ -160,6 +164,12 @@ EditorData.prototype.removeLocks = async function (ctx, docId, locks) {
   const data = this._getDocumentData(ctx, docId);
   if (data.locks) {
     for (const lockId in locks) {
+      // As the Redis backend: a lock another user holds by now stays.
+      const stored = data.locks[lockId];
+      const expected = locks[lockId];
+      if (stored?.user != null && expected?.user != null && stored.user !== expected.user) {
+        continue;
+      }
       delete data.locks[lockId];
     }
   }

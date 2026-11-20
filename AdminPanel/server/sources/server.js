@@ -180,12 +180,91 @@ app.use((err, req, res, _next) => {
   res.sendStatus(err.status || err.statusCode || 500);
 });
 
+// How long to wait for open HTTP connections before forcing them closed.
+const SHUTDOWN_TIMEOUT = 10000;
+
+let shutdownPromise;
+
+/**
+ * Closes the HTTP server, giving keep-alive connections a bounded grace period.
+ * @param {string} signal - What triggered the shutdown, for the log
+ * @returns {Promise<void>} Resolves once the server is closed or forced closed
+ */
+function closeHttpServer(signal) {
+  if (!server.listening) {
+    return Promise.resolve();
+  }
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      operationContext.global.logger.warn('AdminPanel HTTP shutdown timed out (%s); forcing connections closed', signal);
+      server.closeAllConnections?.();
+      resolve();
+    }, SHUTDOWN_TIMEOUT);
+    server.close(error => {
+      if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') {
+        operationContext.global.logger.error('AdminPanel HTTP close error (%s):%s', signal, error.stack || error.message || error);
+      }
+      clearTimeout(timer);
+      resolve();
+    });
+    server.closeIdleConnections?.();
+  });
+}
+
+/**
+ * Releases this process's resources once. The AdminPanel serves the DocService
+ * statistics, so it holds an editor-stat store of its own (see
+ * DocService/sources/routes/info.js). With Redis-backed statistics that is a
+ * Redis connection, which has to be released here the same way DocService
+ * releases its own stores, instead of staying open until the process is killed.
+ * @param {string} signal - What triggered the shutdown, for the log
+ * @param {number} exitCode - Exit code to resolve with
+ * @returns {Promise<number>} The exit code to terminate with
+ */
+function shutdownAdminPanel(signal, exitCode = 0) {
+  if (shutdownPromise) {
+    return shutdownPromise;
+  }
+  shutdownPromise = (async () => {
+    await closeHttpServer(signal);
+    try {
+      runtimeConfigManager.closeRuntimeConfigWatcher();
+    } catch (error) {
+      operationContext.global.logger.error('AdminPanel runtime config watcher close error (%s):%s', signal, error.stack || error.message || error);
+    }
+    try {
+      await infoRouter.close?.();
+    } catch (error) {
+      operationContext.global.logger.error('AdminPanel statistics store close error (%s):%s', signal, error.stack || error.message || error);
+    }
+    await new Promise(resolve => logger.shutdown(resolve));
+    return exitCode;
+  })();
+  return shutdownPromise;
+}
+
+/**
+ * Runs the shutdown and terminates, whatever the shutdown reports.
+ * @param {string} signal - What triggered the shutdown, for the log
+ * @param {number} exitCode - Exit code to terminate with
+ * @returns {void}
+ */
+function requestAdminPanelShutdown(signal, exitCode = 0) {
+  shutdownAdminPanel(signal, exitCode).then(
+    code => process.exit(code ?? exitCode),
+    error => {
+      operationContext.global.logger.error('AdminPanel shutdown error (%s):%s', signal, error.stack || error.message || error);
+      process.exit(exitCode);
+    }
+  );
+}
+
 process.on('uncaughtException', err => {
   operationContext.global.logger.error('uncaughtException:', err);
-  logger.shutdown(() => {
-    process.exit(1);
-  });
+  requestAdminPanelShutdown('uncaughtException', 1);
 });
+process.once('SIGTERM', () => requestAdminPanelShutdown('SIGTERM'));
+process.once('SIGINT', () => requestAdminPanelShutdown('SIGINT'));
 
 server.listen(port, () => {
   operationContext.global.logger.warn('AdminPanel server listening on port %d', port);
