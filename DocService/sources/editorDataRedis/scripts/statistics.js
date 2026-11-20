@@ -81,7 +81,9 @@ end
 local values = redis.call('HVALS', KEYS[1])
 local result = 0
 for _, value in ipairs(values) do
-  result = result + tonumber(value)
+  -- A field that is not a number would abort the script and break every count
+  -- for this tenant until the key expires. Skip it instead.
+  result = result + (tonumber(value) or 0)
 end
 return result
 `;

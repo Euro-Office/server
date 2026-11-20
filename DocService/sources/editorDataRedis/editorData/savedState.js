@@ -10,7 +10,7 @@ const {randomUUID} = require('crypto');
 const {CLAIM_SAVED_SCRIPT, ACK_SAVED_SCRIPT} = require('../scripts');
 const {cfgExpSaved, cfgExpSavedClaim} = require('../editorDataSettings');
 const {encodePart} = require('../redisKeys');
-const {ttlSeconds, toRedisString} = require('../redisValueCodec');
+const {ttlSeconds, toRedisString, jsonDecode} = require('../redisValueCodec');
 
 class SavedStateUnknownError extends Error {
   constructor(docId) {
@@ -81,7 +81,9 @@ module.exports = function attachSavedState(EditorData) {
 
   EditorData.prototype.getSavedCallbackAccepted = async function (ctx, docId, operationId) {
     const value = await this._command(['GET', callbackAcceptedKey(this, ctx, docId, operationId)]);
-    return value === null ? undefined : JSON.parse(toRedisString(value));
+    // A value that is not JSON means the record is unusable, as an absent one
+    // does. Throwing here would fail the save path over a corrupt marker.
+    return value === null || value === undefined ? undefined : jsonDecode(value, undefined);
   };
 
   EditorData.prototype.clearSavedCallbackAccepted = async function (ctx, docId, operationId) {

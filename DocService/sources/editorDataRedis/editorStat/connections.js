@@ -11,7 +11,13 @@ const {refreshedTtlSeconds, jsonEncode, jsonDecode, strictMax} = require('../red
 
 module.exports = function attachConnections(EditorStat) {
   EditorStat.prototype.setEditorConnections = async function (ctx, countEdit, countLiveView, countView, now, precision) {
-    const maxAge = precision[precision.length - 1].val;
+    // The longest precision is the retention window. An empty or malformed list
+    // would otherwise fail with a bare TypeError inside the statistics pass.
+    const longest = Array.isArray(precision) && precision.length > 0 ? precision[precision.length - 1] : undefined;
+    const maxAge = Number(longest?.val);
+    if (!Number.isFinite(maxAge) || maxAge <= 0) {
+      throw new Error('setEditorConnections requires a precision list whose last entry has a positive val');
+    }
     const data = {time: now, edit: countEdit, liveview: countLiveView, view: countView};
     const member = jsonEncode({
       id: `${this.sampleId}:${this.sampleSequence++}`,
