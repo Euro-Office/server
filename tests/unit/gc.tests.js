@@ -139,9 +139,9 @@ describe('document expiry GC', () => {
 
     assert.equal(docsCoServer.editorData.getDocumentPresenceExpired.mock.calls.length, 1);
     assert.match(ctx.logger.error.mock.calls[0][1], /must be shorter than both the presence and shard TTLs with scheduling headroom/);
-    assert.match(ctx.logger.error.mock.calls[0][1], /Using an interval of 272\.727 seconds instead/);
-    // 300 s TTLs: the longest interval with 10% headroom.
-    assert.equal(setTimeoutSpy.mock.calls.at(-1)[1], 272727);
+    assert.match(ctx.logger.error.mock.calls[0][1], /Using an interval of 120 seconds instead/);
+    // 300 s TTLs: the default interval leaves room for the refresh pass.
+    assert.equal(setTimeoutSpy.mock.calls.at(-1)[1], 120000);
   });
 
   test('checkDocumentExpire reads documentsCron after loading the runtime config', async () => {

@@ -131,14 +131,14 @@ function createStartupAttempt(callbackFunction, logger) {
   const controller = new AbortController();
   let called = false;
   const notify = error => {
-    if (called) {
+    if (called || controller.signal.aborted) {
       return;
     }
     called = true;
     try {
       callbackFunction(error);
     } catch (callbackError) {
-      logger.error('Redis startup callback error: %s', callbackError.stack || callbackError.message || callbackError);
+      logger.error('Redis startup callback error:', callbackError);
     }
   };
   const connectStores = stores =>
@@ -146,7 +146,7 @@ function createStartupAttempt(callbackFunction, logger) {
       () => notify(),
       err => {
         if (!(err instanceof StartupRedisCancelledError)) {
-          logger.error('Redis startup error: %s', err.stack || err.message || err);
+          logger.error('Redis startup error:', err);
           notify(err);
         }
       }
@@ -166,7 +166,7 @@ function createStartupAttempt(callbackFunction, logger) {
           return connectStores({editorData, editorStat});
         },
         error => {
-          logger.error('getTableColumns error: %s', error.stack || error.message || error);
+          logger.error('getTableColumns error:', error);
           notify(error);
         }
       );

@@ -8,7 +8,7 @@ const utils = require('../../../Common/sources/utils');
 const commonDefines = require('../../../Common/sources/commondefines');
 const operationContext = require('../../../Common/sources/operationContext');
 const tenantManager = require('../../../Common/sources/tenantManager');
-const {DEFAULT_DOCUMENTS_CRON_STEP_MS, cronStepMs, getDocumentsExpireStepMs} = require('../expirationConfig');
+const {DEFAULT_DOCUMENTS_CRON_STEP_MS, cronStepMs, documentExpiryFromConfig, getDocumentsExpireStepMs} = require('../expirationConfig');
 const path = require('path');
 const fs = require('fs');
 
@@ -82,11 +82,24 @@ if (USE_FIXTURES) {
  * @param {Function} getConnections Function to get active connections
  * @returns {Promise<{output: Object, isError: boolean}>} Output data and error flag
  */
+// The interval DocService writes statistics samples at. gc.js sets it in the
+// DocService process; another process (the AdminPanel serves the same
+// statistics) resolves it from the configuration the same way.
+let configuredDocumentsExpireStep;
+function configuredDocumentsExpireStepMs() {
+  if (configuredDocumentsExpireStep === undefined) {
+    const resolved = documentExpiryFromConfig(config);
+    configuredDocumentsExpireStep = resolved.valid
+      ? resolved.stepMs
+      : cronStepMs(cfgExpDocumentsCron, 'services.CoAuthoring.expire.documentsCron', DEFAULT_DOCUMENTS_CRON_STEP_MS).stepMs;
+  }
+  return configuredDocumentsExpireStep;
+}
+
 async function buildLicenseInfoOutput(ctx, getConnections = null) {
   // DocService writes one statistics sample per refresh interval, which is
   // shorter than documentsCron when that is too slow for the Redis TTLs.
-  const expDocumentsStep =
-    getDocumentsExpireStepMs() ?? cronStepMs(cfgExpDocumentsCron, 'services.CoAuthoring.expire.documentsCron', DEFAULT_DOCUMENTS_CRON_STEP_MS).stepMs;
+  const expDocumentsStep = getDocumentsExpireStepMs() ?? configuredDocumentsExpireStepMs();
 
   // Return fixture data if enabled and available
   if (USE_FIXTURES && fixtureFiles.length > 0) {

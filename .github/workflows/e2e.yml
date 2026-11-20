@@ -100,7 +100,6 @@ jobs:
           ( cd DocService    && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/docservice" )
           ( cd FileConverter && pkg . -t linux-x64 -o "$BUILD_ROOT/fileconverter" )
           ( cd Metrics       && pkg . -t linux-x64 -o "$BUILD_ROOT/metrics" )
-          cp Common/config/default.json "$BUILD_ROOT/default.json"
 
       - name: Build overlay image with fresh server binaries
         run: |

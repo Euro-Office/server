@@ -125,20 +125,20 @@ function passesTtlRule(stepMs, ttlMs) {
   return Math.max(stepMs * (1 + EXPIRY_SAFETY_MARGIN_RATIO), stepMs + 1000) < ttlMs;
 }
 
-// The longest whole-millisecond interval that passes the TTL rule, or NaN when
-// the TTLs are too short for any interval of at least one second.
-function maxSafeDocumentsStepMs(presenceTtlMs, shardTtlMs) {
+// The interval used instead of one that is too slow for the TTLs: the default
+// interval, or half the shorter TTL when that is shorter. Unlike the longest
+// interval that passes the rule, this leaves room for the time each refresh
+// pass itself takes. NaN when the TTLs are too short for any interval of at
+// least one second.
+function safeDocumentsStepMs(presenceTtlMs, shardTtlMs) {
   const ttlMs = Math.min(presenceTtlMs, shardTtlMs);
-  let stepMs = Math.min(Math.floor(ttlMs / (1 + EXPIRY_SAFETY_MARGIN_RATIO)), ttlMs - 1001);
-  while (stepMs >= 1000 && !passesTtlRule(stepMs, ttlMs)) {
-    stepMs--;
-  }
-  return stepMs >= 1000 ? stepMs : NaN;
+  const stepMs = Math.min(DEFAULT_DOCUMENTS_CRON_STEP_MS, Math.floor(ttlMs / 2));
+  return stepMs >= 1000 && passesTtlRule(stepMs, ttlMs) ? stepMs : NaN;
 }
 
 // Like validateDocumentExpiryConfig, but a documentsCron that is only too slow
-// for the TTLs does not fail: the interval is shortened to the longest safe one
-// (`clamped`, with `message` for the log). documentsCron is editable in the
+// for the TTLs does not fail: the interval is shortened (see
+// safeDocumentsStepMs; `clamped`, with `message` for the log). documentsCron is editable in the
 // AdminPanel and only sets this interval, so a slow value must not stop
 // DocService from starting or GC from running; an invalid one uses the default
 // interval (see cronStepMs). Only unusable TTLs still fail.
@@ -153,7 +153,7 @@ function resolveDocumentExpiryStep(expire, getStep = getCronStep, options = {}) 
   if (!Number.isFinite(validation.documentsCronStepMs)) {
     return validation;
   }
-  const stepMs = maxSafeDocumentsStepMs(validation.presenceTtlMs, validation.shardTtlMs);
+  const stepMs = safeDocumentsStepMs(validation.presenceTtlMs, validation.shardTtlMs);
   if (!Number.isFinite(stepMs)) {
     return validation;
   }
@@ -181,15 +181,35 @@ function getDocumentsExpireStepMs() {
   return documentsExpireStepMs;
 }
 
-// The shortest presence or connection shard TTL, in seconds, that outlives one
-// refresh interval with the headroom validateDocumentExpiryConfig asks for.
-// undefined until gc.js has set the interval.
+// The shortest presence or connection shard TTL, in seconds, for a tenant or
+// runtime value: twice the refresh interval, so that a refresh pass that takes
+// a while still renews entries before they expire. undefined until gc.js has
+// set the interval.
 function minimumRefreshedTtlSeconds() {
   if (!Number.isFinite(documentsExpireStepMs) || documentsExpireStepMs <= 0) {
     return undefined;
   }
-  const minimumMs = Math.max(documentsExpireStepMs * (1 + EXPIRY_SAFETY_MARGIN_RATIO), documentsExpireStepMs + 1000);
-  return Math.floor(minimumMs / 1000) + 1;
+  return Math.ceil((2 * documentsExpireStepMs) / 1000);
+}
+
+// The document expiry interval for the startup configuration (a `config`
+// module), as gc.js resolves it. Lets a process that does not run gc.js, such
+// as the AdminPanel, group statistics by the interval DocService really uses.
+function documentExpiryFromConfig(config) {
+  const get = (path, fallback) => (config.has(path) ? config.get(path) : fallback);
+  const checkTtls = documentExpiryTtlsApply(
+    get('services.CoAuthoring.server.editorDataStorage', 'editorDataMemory'),
+    get('services.CoAuthoring.server.editorStatStorage', '')
+  );
+  return resolveDocumentExpiryStep(
+    {
+      documentsCron: get('services.CoAuthoring.expire.documentsCron'),
+      presence: get('services.CoAuthoring.expire.presence'),
+      shard: get('services.CoAuthoring.expire.shard', 300)
+    },
+    undefined,
+    {checkTtls}
+  );
 }
 
 module.exports = {
@@ -197,12 +217,13 @@ module.exports = {
   DEFAULT_FILES_CRON_STEP_MS,
   MAX_TIMER_DELAY_MS,
   cronStepMs,
+  documentExpiryFromConfig,
   documentExpiryTtlsApply,
   getCronStep,
   getDocumentsExpireStepMs,
-  maxSafeDocumentsStepMs,
   minimumRefreshedTtlSeconds,
   resolveDocumentExpiryStep,
+  safeDocumentsStepMs,
   setDocumentsExpireStepMs,
   ttlMilliseconds,
   validateDocumentExpiryConfig

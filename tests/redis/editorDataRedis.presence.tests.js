@@ -713,12 +713,12 @@ describe('editorDataRedis presence invariants', () => {
     const {setDocumentsExpireStepMs} = require('../../DocService/sources/expirationConfig');
     const {EditorStat} = require('../../DocService/sources/editorDataRedis');
     const stat = new EditorStat();
-    // gc.js sets the refresh interval at startup: here 2 minutes, which needs a
-    // TTL of more than 132 seconds.
+    // gc.js sets the refresh interval at startup: here 2 minutes. A tenant TTL
+    // is raised to at least twice that.
     setDocumentsExpireStepMs(120000);
     try {
       for (const [tenantTtl, expected] of [
-        [60, 133],
+        [60, 240],
         [600, 600]
       ]) {
         const ctx = context(`presence-refreshed-ttl-${tenantTtl}`, {

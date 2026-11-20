@@ -112,11 +112,11 @@ function installShutdownHandlers({processObject = process, logger, shutdown, exi
       });
   };
   const handleUncaughtException = error => {
-    logger.error('uncaughtException:%s', error?.stack || error);
+    logger.error('uncaughtException:', error);
     requestShutdown('uncaughtException', 1);
   };
   const handleUnhandledRejection = reason => {
-    logger.error('unhandledRejection:%s', reason?.stack || reason);
+    logger.error('unhandledRejection:', reason);
     requestShutdown('unhandledRejection', 1);
   };
   const handleSigterm = () => requestShutdown('SIGTERM');

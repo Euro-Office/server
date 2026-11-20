@@ -374,15 +374,43 @@ describe('editorDataRedis final-viewer cleanup preserves in-flight save state', 
     assert.equal(forceSave.ended, false);
   });
 
-  test.each([
-    ['owner', 'save-key'],
-    ['claim-less', undefined]
-  ])('%s cleanup without preserveSavedClaim still wipes the saved status and force-save', async (_name, savedClaimId) => {
-    const ctx = context(`final-viewer-wipes-${_name}`);
+  test('keeps an active claim, a newer saved status and the force-save entry', async () => {
+    const ctx = context('final-viewer-keeps-claim');
+    const keys = store._docKeys(ctx, 'document');
+    await store.setSaved(ctx, 'document', '2');
+    assert.equal(await store.getdelSaved(ctx, 'document', 'save-key'), '2');
+    await store.setSaved(ctx, 'document', '3');
+    await store.setForceSave(ctx, 'document', 1, 2, 'https://callback.example.test/save', undefined, undefined);
+
+    assert.equal(await store.cleanDocumentOnExit(ctx, 'document', undefined, {preserveSavedClaim: true}), true);
+
+    assert.equal(await store._command(['HGET', keys.savedClaim, 'id']), 'save-key');
+    assert.equal(await store._command(['GET', keys.saved]), '3');
+    assert.equal((await store.getForceSave(ctx, 'document')).index, 2);
+  });
+
+  test('claim-less cleanup without preserveSavedClaim still wipes the saved status and force-save', async () => {
+    const ctx = context('final-viewer-wipes-claim-less');
     await store.setSaved(ctx, 'document', '2');
     await store.setForceSave(ctx, 'document', 1, 2, 'https://callback.example.test/save', undefined, undefined);
-    assert.equal(await store.cleanDocumentOnExit(ctx, 'document', savedClaimId), true);
+    assert.equal(await store.cleanDocumentOnExit(ctx, 'document'), true);
     assert.equal(await store.getdelSaved(ctx, 'document', 'save-key'), null);
     assert.equal(await store.getForceSave(ctx, 'document'), null);
+  });
+
+  test('the claim owner cleanup wipes the saved status and force-save but keeps its claim', async () => {
+    const ctx = context('final-viewer-wipes-owner');
+    const keys = store._docKeys(ctx, 'document');
+    await store.setSaved(ctx, 'document', '2');
+    assert.equal(await store.getdelSaved(ctx, 'document', 'save-key'), '2');
+    await store.setSaved(ctx, 'document', '3');
+    await store.setForceSave(ctx, 'document', 1, 2, 'https://callback.example.test/save', undefined, undefined);
+
+    assert.equal(await store.cleanDocumentOnExit(ctx, 'document', 'save-key'), true);
+
+    assert.equal(await store._command(['GET', keys.saved]), null);
+    assert.equal(await store.getForceSave(ctx, 'document'), null);
+    // Kept until the owner acknowledges it.
+    assert.equal(await store._command(['HGET', keys.savedClaim, 'id']), 'save-key');
   });
 });

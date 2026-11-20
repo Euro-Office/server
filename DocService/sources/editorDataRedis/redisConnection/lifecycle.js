@@ -17,6 +17,8 @@ module.exports = function attachLifecycle(RedisConnection) {
       return;
     }
     this.closing = true;
+    // A connect in progress would otherwise run to its deadline first.
+    this.connectAbort?.abort();
     this.closePromise = (async () => {
       await this._waitForIdle();
       await this._closeClient();
@@ -30,11 +32,14 @@ module.exports = function attachLifecycle(RedisConnection) {
     }
   };
 
+  // Ends the connect in progress. connectPromise stays until that connect has
+  // unwound, so a new connect() cannot run a second loop beside it.
   RedisConnection.prototype.cancelConnect = function () {
     if (!this.connectPromise) {
       return false;
     }
-    this._abortClient();
+    this.connectAbort?.abort();
+    this._abortClient(undefined, {preserveConnectPromise: true});
     return true;
   };
 
@@ -115,8 +120,8 @@ module.exports = function attachLifecycle(RedisConnection) {
     return new Promise(resolve => this.idleWaiters.push(resolve));
   };
 
-  RedisConnection.prototype._abortClient = function (clientSnapshot = this._getClientSnapshot()) {
-    const client = this._detachClient(clientSnapshot.client, clientSnapshot.generation);
+  RedisConnection.prototype._abortClient = function (clientSnapshot = this._getClientSnapshot(), {preserveConnectPromise = false} = {}) {
+    const client = this._detachClient(clientSnapshot.client, clientSnapshot.generation, {preserveConnectPromise});
     if (!client || !client.isOpen) {
       return;
     }

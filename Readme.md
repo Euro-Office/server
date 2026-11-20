@@ -63,7 +63,7 @@ at the next Sentinel in the list, and one connection attempt through Sentinel
 gets an equal share of the 15-second budget (at least 3 seconds).
 
 A standalone endpoint that follows a managed failover, such as a DNS name or a
-Kubernetes Service in front of a primary and its replicas, is handled the same
+Kubernetes Service that always points at the current primary, is handled the same
 way as Sentinel: a command answered with `READONLY` or `MASTERDOWN` closes the
 client, and the next operation reconnects through the endpoint. The failed
 command is not replayed. Cluster clients follow `MOVED` redirects instead.
@@ -148,13 +148,16 @@ expire.
 
 Each DocService refreshes its users' presence and its connection shard counters
 at the `services.CoAuthoring.expire.documentsCron` interval, which is also the
-document expiration GC interval. With Redis editor data, this interval must be
-at least 10% (and at least one second) shorter than both
-`services.CoAuthoring.expire.presence` and `services.CoAuthoring.expire.shard`;
-otherwise live users would expire between refreshes. A longer interval, for
-example one set in the AdminPanel, is shortened to the longest safe interval
-and an error is logged; it does not stop DocService from starting. An invalid
-cron expression still does.
+document expiration GC interval. With Redis editor data,
+`services.CoAuthoring.expire.presence` and `services.CoAuthoring.expire.shard`
+must both be more than 10% (and at least one second) longer than this interval;
+otherwise live users would expire between refreshes. When they are not, for
+example with a slow value set in the AdminPanel, DocService uses the default
+interval of 2 minutes (or half the shorter TTL, if that is shorter) and logs an
+error. A cron expression that cannot be parsed also falls back to the default
+interval, and an interval longer than a timer allows (about 24.8 days) is
+capped. None of these stops DocService from starting. A tenant's presence or
+shard TTL is raised to at least twice the interval DocService uses.
 
 Saved status has a separate claim lease. A claim is created only when a save
 result is consumed: the backend creates a per-document `saved:claim` key and

@@ -38,11 +38,13 @@ function cloneConfig(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-// node-redis hands timeouts to timer APIs that accept only numbers: a string
+// node-redis hands timeouts to timer APIs that accept only whole milliseconds
+// up to the longest timer: a string, a fraction or a larger value in
 // commandOptions.timeout (easy to get from an environment-templated config)
 // lets the connect succeed and then fails every command. A numeric string is
-// converted; anything else that is not a non-negative number is a
-// configuration error. null keeps its meaning (no library timeout).
+// converted; anything else that is not such a number is a configuration error.
+// null keeps its meaning (no library timeout).
+const MAX_TIMEOUT_MS = 2147483647;
 function normalizeTimeoutMs(value, name, fallback) {
   if (value === undefined) {
     return fallback;
@@ -51,8 +53,8 @@ function normalizeTimeoutMs(value, name, fallback) {
     return value;
   }
   const timeout = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
-  if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout < 0) {
-    throw new Error(`Redis option ${name} must be a non-negative number of milliseconds; received ${JSON.stringify(value)}`);
+  if (typeof timeout !== 'number' || !Number.isInteger(timeout) || timeout < 0 || timeout > MAX_TIMEOUT_MS) {
+    throw new Error(`Redis option ${name} must be a whole number of milliseconds from 0 to ${MAX_TIMEOUT_MS}; received ${JSON.stringify(value)}`);
   }
   return timeout;
 }

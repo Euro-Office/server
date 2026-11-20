@@ -142,7 +142,7 @@ describe('Redis startup recovery', () => {
     await attempt.finish(Promise.resolve([false]), stores);
 
     assert.equal(calls, 1);
-    assert.match(errors[0][1], /listen failed/);
+    assert.match(errors[0][1].message, /listen failed/);
   });
 
   test('a cancelled start attempt calls nothing', async () => {
@@ -157,6 +157,9 @@ describe('Redis startup recovery', () => {
     await new Promise(resolve => setImmediate(resolve));
     attempt.cancel();
     await finished;
+    // Nor does a schema check that finishes after the cancellation.
+    await attempt.finish(Promise.resolve([false]), stores);
+    await attempt.finish(Promise.reject(new Error('getTableColumns failed')), stores);
 
     assert.equal(calls, 0);
   });

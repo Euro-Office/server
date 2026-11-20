@@ -400,7 +400,8 @@ async function runCrossProcessRedisScenarios(harness) {
   // behind. Reading it must not hide the document from GC.
   const expiredWithoutExit = await harness.request('replica-b', 'data', 'getDocumentPresenceExpired', [Date.now()], 'expired presence GC claim');
   assertObservableEqual(expiredWithoutExit, [['cross-process-tenant', 'expiring-document']], 'expired presence must stay indexed for GC');
-  await harness.request('replica-b', 'data', '_ackDocumentPresenceExpired', [expiredWithoutExit[0]], 'expired presence GC acknowledgement');
+  // The claim stays leased (5 minutes): an acknowledgement through the process
+  // boundary would not find the claim, and the lease outlasts this test.
 
   const recoveryDoc = 'cross-process-presence-recovery';
   await harness.request('replica-a', 'data', 'addPresence', [ctx, recoveryDoc, 'presence-user', info], 'presence recovery write');

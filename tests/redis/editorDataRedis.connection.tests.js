@@ -320,10 +320,12 @@ describe('editorDataRedis connection contract', () => {
     assert.equal(normalizeNodeOptions({commandOptions: {timeout: '5000'}}, 0).commandOptions.timeout, 5000);
     assert.equal(normalizeNodeOptions({socket: {connectTimeout: '2000'}}, 0).socket.connectTimeout, 2000);
     assert.equal(normalizeNodeOptions({commandOptions: {timeout: null}}, 0).commandOptions.timeout, null);
-    for (const timeout of ['soon', '', -1, {}, true]) {
-      assert.throws(() => normalizeNodeOptions({commandOptions: {timeout}}, 0), /commandOptions.timeout must be a non-negative number/);
+    // Fractions and values above the longest timer also fail every command.
+    for (const timeout of ['soon', '', -1, {}, true, 1.5, '1500.5', 2147483648]) {
+      assert.throws(() => normalizeNodeOptions({commandOptions: {timeout}}, 0), /commandOptions.timeout must be a whole number of milliseconds/);
     }
-    assert.throws(() => normalizeNodeOptions({socket: {connectTimeout: '15s'}}, 0), /socket.connectTimeout must be a non-negative number/);
+    assert.equal(normalizeNodeOptions({commandOptions: {timeout: 2147483647}}, 0).commandOptions.timeout, 2147483647);
+    assert.throws(() => normalizeNodeOptions({socket: {connectTimeout: '15s'}}, 0), /socket.connectTimeout must be a whole number of milliseconds/);
   });
 
   test('treats an empty username like no username', () => {
@@ -979,6 +981,8 @@ describe('editorDataRedis connection contract', () => {
     const connection = new RedisConnection();
     connection.sentinel = true;
     connection.connector = 'redis';
+    // Fake clients only: in a Sentinel run, do not check the configured Sentinels.
+    connection._probeSentinelRootNodes = async () => undefined;
     connection._createClient = () => {
       connection.sentinelRootNodeCount = 3;
       const stuck = clients.length === 0;
@@ -1011,6 +1015,62 @@ describe('editorDataRedis connection contract', () => {
     assert.ok(elapsed >= 4900 && elapsed < 7000, `connected after ${elapsed} ms`);
     await connection.close();
   }, 15000);
+
+  test('cancelConnect ends a Sentinel connect that is still checking the Sentinels', async () => {
+    await withSentinelRootNodes([{host: 'sentinel-a', port: 26379}], async () => {
+      const connection = new RedisConnection();
+      let created = 0;
+      connection._probeSentinelRootNodes = () => new Promise(() => {});
+      connection._createClient = () => {
+        created++;
+      };
+      try {
+        const first = connection.connect();
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(connection.cancelConnect(), true);
+        // A connect started now waits for the cancelled one instead of running
+        // a second loop beside it.
+        const second = connection.connect();
+
+        const startedAt = Date.now();
+        await assert.rejects(first, error => error instanceof RedisUnavailableError);
+        await assert.rejects(second, error => error instanceof RedisUnavailableError);
+        assert.ok(Date.now() - startedAt < 500);
+        assert.equal(created, 0);
+      } finally {
+        await connection.close();
+      }
+    });
+  });
+
+  test('close ends a Sentinel connect that is still checking the Sentinels', async () => {
+    await withSentinelRootNodes([{host: 'sentinel-a', port: 26379}], async () => {
+      const connection = new RedisConnection();
+      connection._probeSentinelRootNodes = () => new Promise(() => {});
+      connection._createClient = () => {};
+      const connecting = connection.connect();
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      const startedAt = Date.now();
+      await connection.close();
+
+      assert.ok(Date.now() - startedAt < 500, `close took ${Date.now() - startedAt} ms`);
+      await assert.rejects(connecting, error => error instanceof RedisUnavailableError);
+    });
+  });
+
+  test('a Sentinel check with no time left does not stop the process', async () => {
+    const {probeSentinel} = require('../../DocService/sources/editorDataRedis/redisConnection/helpers');
+    // A port that refuses connections: node-redis would throw on a negative
+    // connect timeout after opening the socket, leaving its error unhandled.
+    const refused = net.createServer();
+    await new Promise(resolve => refused.listen(0, '127.0.0.1', resolve));
+    const {port} = refused.address();
+    await new Promise(resolve => refused.close(resolve));
+
+    assert.equal(await probeSentinel({host: '127.0.0.1', port}, {RESP: 2, socket: {}}, -1), false);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  });
 
   test('does not retry initial Sentinel discovery after deliberate shutdown begins', async () => {
     let attempts = 0;

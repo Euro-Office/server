@@ -39,6 +39,7 @@ const sqlBase = require('./databaseConnectors/baseConnector');
 const {
   DEFAULT_FILES_CRON_STEP_MS,
   cronStepMs,
+  documentExpiryFromConfig,
   documentExpiryTtlsApply,
   getCronStep,
   resolveDocumentExpiryStep,
@@ -62,15 +63,7 @@ const checkExpiryTtls = documentExpiryTtlsApply(cfgEditorDataStorage, cfgEditorS
 // A documentsCron that is too slow for the Redis TTLs is shortened, not
 // rejected: it may come from the AdminPanel's runtime.json, which is merged into
 // the startup config, and rejecting it would stop every DocService.
-const baseDocumentExpiryConfig = resolveDocumentExpiryStep(
-  {
-    documentsCron: cfgExpDocumentsCron,
-    presence: cfgExpPresence,
-    shard: cfgExpShard
-  },
-  undefined,
-  {checkTtls: checkExpiryTtls}
-);
+const baseDocumentExpiryConfig = documentExpiryFromConfig(config);
 if (!baseDocumentExpiryConfig.valid) {
   throw new Error(baseDocumentExpiryConfig.message);
 }
@@ -226,8 +219,9 @@ async function processClaimedDocument(ctx, tenant, docId, state, queue) {
       startSaveCount++;
     } else if ((await wasDocumentClosed(docsCoServer.editorData, ctx, docId)) === true) {
       // The document's last exit already sent the "closed" status and cleaned
-      // up; only its documents index update failed. Clean up again (a no-op
-      // then), without sending the status a second time.
+      // up; only its documents index update failed. Run the cleanup again (it
+      // finds little left; a WOPI unlock is best effort), without sending the
+      // status a second time.
       await docsCoServer.cleanDocumentOnExitNoChangesPromise(ctx, docId, undefined, undefined, false, false, {sent: true});
       removedCount++;
     } else {

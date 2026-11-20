@@ -10,8 +10,9 @@ const {
   MAX_TIMER_DELAY_MS,
   cronStepMs,
   documentExpiryTtlsApply,
-  maxSafeDocumentsStepMs,
+  documentExpiryFromConfig,
   resolveDocumentExpiryStep,
+  safeDocumentsStepMs,
   validateDocumentExpiryConfig
 } = require('../../DocService/sources/expirationConfig');
 
@@ -109,9 +110,9 @@ describe('document expiry configuration', () => {
       assert.equal(result.valid, true);
       assert.equal(result.clamped, true);
       assert.equal(result.documentsCronStepMs, 7200000);
-      assert.equal(result.stepMs, 272727);
+      assert.equal(result.stepMs, 120000);
       assert.match(result.message, /runs every 7200 seconds/);
-      assert.match(result.message, /Using an interval of 272\.727 seconds instead/);
+      assert.match(result.message, /Using an interval of 120 seconds instead/);
       assert.equal(validateDocumentExpiryConfig({documentsCron: '*', presence: 300, shard: 300}, () => result.stepMs).valid, true);
     });
 
@@ -119,8 +120,8 @@ describe('document expiry configuration', () => {
       const result = resolveDocumentExpiryStep({documentsCron: '0 */5 * * * *', presence: 600, shard: 60}, () => 300000);
 
       assert.equal(result.clamped, true);
-      assert.equal(result.stepMs, maxSafeDocumentsStepMs(60000, 60000));
-      assert.ok(result.stepMs < 60000);
+      // Half the shorter TTL, since that is shorter than the default interval.
+      assert.equal(result.stepMs, 30000);
     });
 
     test('does not shorten when the TTL rule does not apply', () => {
@@ -142,7 +143,8 @@ describe('document expiry configuration', () => {
     });
 
     test('caps an interval longer than a timer allows when the TTL rule does not apply', () => {
-      // February 31 never comes; the next dates are leap-year February 29ths.
+      // Once a year: "0 0 0 31 2 *" is 31 March (this cron library counts
+      // months from 0).
       const result = resolveDocumentExpiryStep({documentsCron: '0 0 0 31 2 *', presence: 300, shard: 300}, () => 366 * 86400000, {
         checkTtls: false
       });
@@ -158,16 +160,36 @@ describe('document expiry configuration', () => {
     });
   });
 
-  test('maxSafeDocumentsStepMs returns the longest interval that passes the TTL rule', () => {
-    for (const ttlMs of [2200, 3000, 10000, 60000, 110000, 300000, 1100000, 86400000]) {
-      const stepMs = maxSafeDocumentsStepMs(ttlMs, ttlMs);
-      const passes = step => validateDocumentExpiryConfig({documentsCron: '*', presence: ttlMs / 1000, shard: ttlMs / 1000}, () => step).valid;
-
-      assert.ok(Number.isInteger(stepMs), `ttl ${ttlMs}`);
-      assert.equal(passes(stepMs), true, `ttl ${ttlMs} step ${stepMs}`);
-      assert.equal(passes(stepMs + 1), false, `ttl ${ttlMs} step ${stepMs + 1}`);
+  test('safeDocumentsStepMs uses the default interval, or half the TTL when that is shorter', () => {
+    assert.equal(safeDocumentsStepMs(300000, 300000), 120000);
+    assert.equal(safeDocumentsStepMs(300000, 100000), 50000);
+    assert.equal(safeDocumentsStepMs(3000, 3000), 1500);
+    // Every result passes the rule with room left for the refresh pass.
+    for (const ttlMs of [3000, 10000, 100000, 300000, 86400000]) {
+      const stepMs = safeDocumentsStepMs(ttlMs, ttlMs);
+      assert.equal(validateDocumentExpiryConfig({documentsCron: '*', presence: ttlMs / 1000, shard: ttlMs / 1000}, () => stepMs).valid, true);
     }
-    assert.ok(Number.isNaN(maxSafeDocumentsStepMs(2000, 2000)));
+    assert.ok(Number.isNaN(safeDocumentsStepMs(2000, 2000)));
+  });
+
+  test('documentExpiryFromConfig resolves the interval from a config module as gc.js does', () => {
+    const configModule = values => ({
+      has: path => Object.hasOwn(values, path),
+      get: path => values[path]
+    });
+    const slow = {
+      'services.CoAuthoring.expire.documentsCron': '0 0 */2 * * *',
+      'services.CoAuthoring.expire.presence': 300
+    };
+
+    // Redis editor data: shortened; an older config without expire.shard uses 300 s.
+    const redis = documentExpiryFromConfig(configModule({...slow, 'services.CoAuthoring.server.editorDataStorage': 'editorDataRedis'}));
+    assert.equal(redis.stepMs, 120000);
+    assert.equal(redis.clamped, true);
+    // In-memory editor data: kept as configured.
+    const memory = documentExpiryFromConfig(configModule({...slow, 'services.CoAuthoring.server.editorDataStorage': 'editorDataMemory'}));
+    assert.equal(memory.stepMs, 7200000);
+    assert.equal(memory.clamped, false);
   });
 
   describe('cronStepMs', () => {

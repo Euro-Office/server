@@ -131,15 +131,18 @@ function destroyClient(client) {
 // our own that is always closed afterwards (node-redis cannot close its own
 // connection to a Sentinel that accepts it but never answers).
 async function probeSentinel(node, sentinelClientOptions, timeoutMs) {
+  // node-redis throws on a negative connectTimeout after it has opened the
+  // socket, whose later error then has no listener and stops the process.
+  const timeout = Math.max(1, Math.floor(Number(timeoutMs) || 0));
   const client = redis.createClient({
     ...sentinelClientOptions,
-    socket: {...sentinelClientOptions.socket, host: node.host, port: node.port, connectTimeout: timeoutMs, reconnectStrategy: false}
+    socket: {...sentinelClientOptions.socket, host: node.host, port: node.port, connectTimeout: timeout, reconnectStrategy: false}
   });
   client.on('error', () => {});
   try {
     await withTimeout(
       client.connect().then(() => client.sendCommand(['PING'])),
-      timeoutMs,
+      timeout,
       'Redis Sentinel check'
     );
     return true;
@@ -147,8 +150,31 @@ async function probeSentinel(node, sentinelClientOptions, timeoutMs) {
     log('warn', 'Sentinel %s:%s did not answer the check: %s', node.host, node.port, errorDetails(error));
     return false;
   } finally {
-    destroyClient(client);
+    // A client whose connect failed has already closed its socket.
+    if (client.isOpen) {
+      destroyClient(client);
+    }
   }
+}
+
+function createConnectCancelledError() {
+  return new RedisUnavailableError(new Error('Redis connect was cancelled'));
+}
+
+// Settles like promise, or rejects as soon as signal aborts.
+function untilAborted(promise, signal) {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(createConnectCancelledError());
+  }
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(createConnectCancelledError());
+    signal.addEventListener('abort', onAbort, {once: true});
+  });
+  return Promise.race([promise, aborted]).finally(() => signal.removeEventListener('abort', onAbort));
 }
 
 module.exports = {
@@ -162,5 +188,7 @@ module.exports = {
   wait,
   destroyClient,
   probeSentinel,
+  createConnectCancelledError,
+  untilAborted,
   RedisUnavailableError
 };

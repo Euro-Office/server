@@ -31,6 +31,8 @@ const {
   withTimeout,
   waitForReady,
   createConnectTimeoutError,
+  createConnectCancelledError,
+  untilAborted,
   wait,
   probeSentinel,
   RedisUnavailableError
@@ -164,7 +166,10 @@ module.exports = function attachConnect(RedisConnection) {
       currentClient?.isReady ?? 'n/a'
     );
     this.connectionAttempted = true;
-    const connectPromise = this._connectWithRetries(startedAt);
+    // cancelConnect() and close() abort this connect loop (see untilAborted).
+    const connectAbort = new AbortController();
+    this.connectAbort = connectAbort;
+    const connectPromise = this._connectWithRetries(startedAt, connectAbort.signal);
     this.connectPromise = connectPromise;
     try {
       const connectedClient = await connectPromise;
@@ -187,19 +192,33 @@ module.exports = function attachConnect(RedisConnection) {
       if (this.connectPromise === connectPromise) {
         this.connectPromise = null;
       }
+      if (this.connectAbort === connectAbort) {
+        this.connectAbort = null;
+      }
     }
   };
 
-  RedisConnection.prototype._connectWithRetries = async function (startedAt) {
+  RedisConnection.prototype._connectWithRetries = async function (startedAt, signal) {
     let retries = 0;
     while (true) {
       if (this.closing || this.closed) {
         throw new RedisUnavailableError(new Error('Redis connection is closing'));
       }
+      if (signal?.aborted) {
+        throw createConnectCancelledError();
+      }
       if (!this.client) {
-        const reachableSentinelRootNodes = hasNodeSentinel()
-          ? await this._probeSentinelRootNodes(Math.min(REDIS_SENTINEL_PROBE_TIMEOUT_MS, REDIS_CONNECT_TIMEOUT_MS - (Date.now() - startedAt)))
-          : undefined;
+        let reachableSentinelRootNodes;
+        if (hasNodeSentinel()) {
+          const remainingForProbe = REDIS_CONNECT_TIMEOUT_MS - (Date.now() - startedAt);
+          if (remainingForProbe <= 0) {
+            throw createConnectTimeoutError();
+          }
+          reachableSentinelRootNodes = await untilAborted(
+            this._probeSentinelRootNodes(Math.min(REDIS_SENTINEL_PROBE_TIMEOUT_MS, remainingForProbe)),
+            signal
+          );
+        }
         this._createClient({reachableSentinelRootNodes});
       }
       const currentClient = this.client;
@@ -211,20 +230,21 @@ module.exports = function attachConnect(RedisConnection) {
       const attemptDeadline = Date.now() + (this.sentinel ? Math.min(remaining, sentinelAttemptTimeoutMs(this.sentinelRootNodeCount)) : remaining);
       try {
         if (!currentClient.isOpen) {
-          await withTimeout(currentClient.connect(), attemptDeadline - Date.now(), 'Redis connect');
+          await untilAborted(withTimeout(currentClient.connect(), attemptDeadline - Date.now(), 'Redis connect'), signal);
         }
         if (!currentClient.isReady) {
           const readyTimeout = attemptDeadline - Date.now();
           if (readyTimeout <= 0) {
             throw createConnectTimeoutError();
           }
-          await waitForReady(currentClient, this.connector, readyTimeout);
+          await untilAborted(waitForReady(currentClient, this.connector, readyTimeout), signal);
         }
         return currentClient;
       } catch (error) {
         await this._closeClient(currentClient, {preserveConnectPromise: true});
         const canRetry =
           this.sentinel &&
+          !signal?.aborted &&
           !this.closing &&
           !this.closed &&
           retries < REDIS_SENTINEL_INITIAL_DISCOVERY_MAX_RETRIES &&
@@ -241,7 +261,7 @@ module.exports = function attachConnect(RedisConnection) {
         if (retryDelay <= 0) {
           throw createConnectTimeoutError();
         }
-        await wait(retryDelay);
+        await untilAborted(wait(retryDelay), signal);
       }
     }
   };
