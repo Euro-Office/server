@@ -124,7 +124,9 @@ async function copyPath(ctx, sourcePath, destinationPath, opt_specialDirSrc, opt
     })
   );
 }
-async function listObjects(ctx, strPath, opt_specialDir) {
+// opt_throwOnError: rethrow a storage error instead of returning an empty list,
+// for callers that must not mistake a failed listing for an empty folder.
+async function listObjects(ctx, strPath, opt_specialDir, opt_throwOnError) {
   const storageCfg = getStorageCfg(ctx, opt_specialDir);
   const storage = getStorage(storageCfg);
   const prefix = getStoragePath(ctx, '', opt_specialDir);
@@ -135,6 +137,9 @@ async function listObjects(ctx, strPath, opt_specialDir) {
     });
   } catch (e) {
     ctx.logger.error('storage.listObjects:', e);
+    if (opt_throwOnError) {
+      throw e;
+    }
     return [];
   }
 }

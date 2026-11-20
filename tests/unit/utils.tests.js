@@ -52,3 +52,35 @@ describe('AES encryption & decryption', () => {
     expect(decrypted).toEqual('secretstring');
   });
 });
+
+describe('forgotten partial output', () => {
+  const name = 'output';
+
+  test('has its own name next to the regular forgotten file', () => {
+    expect(utils.getForgottenPartialName(name)).toEqual('output-partial');
+  });
+
+  test.each([
+    ['docId/output-partial.docx', true],
+    ['docId/output-partial', true],
+    ['/tmp/source/output-partial.xlsx', true],
+    ['docId/output.docx', false],
+    ['docId/output', false],
+    ['docId/output-partial.docx/other.docx', false],
+    ['docId/custom.docx', false]
+  ])('isForgottenPartial(%s) is %s', (file, expected) => {
+    expect(utils.isForgottenPartial(file, name)).toEqual(expected);
+  });
+
+  test('follows the configured forgotten file name', () => {
+    expect(utils.isForgottenPartial('docId/saved-partial.docx', 'saved')).toEqual(true);
+    expect(utils.isForgottenPartial('docId/output-partial.docx', 'saved')).toEqual(false);
+  });
+
+  test('getForgottenRegular keeps every file except the partial output', () => {
+    const list = ['docId/output-partial.docx', 'docId/output.docx', 'docId/custom.docx'];
+    expect(utils.getForgottenRegular(list, name)).toEqual(['docId/output.docx', 'docId/custom.docx']);
+    expect(utils.getForgottenRegular(['docId/output-partial.docx'], name)).toEqual([]);
+    expect(utils.getForgottenRegular([], name)).toEqual([]);
+  });
+});

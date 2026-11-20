@@ -39,6 +39,7 @@ const taskResult = require('./taskresult');
 const newFileTemplateUtils = require('./newFileTemplateUtils');
 const wopiUtils = require('./wopiUtils');
 const wopiClient = require('./wopiClient');
+const forgottenFiles = require('./forgottenFiles');
 const utils = require('./../../Common/sources/utils');
 const {consumeSavedState} = require('./savedState');
 const constants = require('./../../Common/sources/constants');
@@ -717,7 +718,8 @@ function* retryTakeoverMetadata(ctx, mask, action) {
 // - its changes are gone: its cleanup ran, so the integrator has the file (an
 //   accepted save) or the forgotten file has it (a cleanup claim), and the
 //   document is opened from there (reloadTask).  An accepted save's forgotten
-//   file is obsolete then, as after a completed save.
+//   file is obsolete then, as after a completed save; the partial output of a
+//   CONVERT_CORRUPTED save stays, as it does then.
 // The row is held first (FINAL_SAVE_TAKEOVER_STATUS_INFO, which keeps opens
 // out and which no save owns): from then on a slow attempt of the save can no
 // longer delete the changes (every deletion of a save is conditional on its
@@ -727,7 +729,6 @@ function* retryTakeoverMetadata(ctx, mask, action) {
 // on it.
 // Returns 'resume' or 'reload', or undefined if the row changed meanwhile.
 function* takeOverAbandonedSave(ctx, docId, row, resumeTask, reloadTask) {
-  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const holdTask = newTaskMask(ctx, docId, commonDefines.FileStatus.UpdateVersion, commonDefines.FINAL_SAVE_TAKEOVER_STATUS_INFO);
   const holdMask = newTaskMask(ctx, docId, row.status, row.status_info);
   holdMask.additional = row.additional || null;
@@ -754,7 +755,7 @@ function* takeOverAbandonedSave(ctx, docId, row, resumeTask, reloadTask) {
     (commonDefines.FINAL_SAVE_TAKEOVER_STATUS_INFO === row.status_info && 'accepted' === lastMarker?.phase);
   if (!resume && accepted) {
     const cleaned = yield* retryTakeoverMetadata(ctx, ownedHoldMask, () =>
-      taskResult.withCleanupOwnership(ctx, ownedHoldMask, () => storage.deletePath(ctx, docId, tenForgottenFiles))
+      taskResult.withCleanupOwnership(ctx, ownedHoldMask, () => forgottenFiles.deleteForgottenAfterSave(ctx, docId))
     );
     if (!cleaned) {
       return undefined;
@@ -889,6 +890,7 @@ function commandOpenStartPromise(ctx, docId, baseUrl, opt_documentCallbackUrl, o
 }
 function* commandOpen(ctx, conn, cmd, outputData, opt_upsertRes, opt_bIsRestore) {
   const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
 
   let upsertRes;
   if (opt_upsertRes) {
@@ -921,7 +923,8 @@ function* commandOpen(ctx, conn, cmd, outputData, opt_upsertRes, opt_bIsRestore)
     if (updateIfRes.affectedRows > 0) {
       const forgotten = yield storage.listObjects(ctx, cmd.getDocId(), tenForgottenFiles);
       //replace url with forgotten file because it absorbed all lost changes
-      if (forgotten.length > 0) {
+      //the partial output of a CONVERT_CORRUPTED save has not absorbed them, so it is not opened as the document
+      if (utils.getForgottenRegular(forgotten, tenForgottenFilesName).length > 0) {
         ctx.logger.debug('commandOpen from forgotten');
         cmd.setUrl(undefined);
         cmd.setForgotten(cmd.getDocId());
@@ -2010,7 +2013,8 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
       if ((!isError || isErrorCorrupted) && !callbackAccepted && !callbackDeclined) {
         try {
           const forgotten = yield storage.listObjects(ctx, docId, tenForgottenFiles);
-          let isSendHistory = 0 === forgotten.length;
+          //the partial output of a CONVERT_CORRUPTED save is never opened, so it does not decide the history
+          let isSendHistory = 0 === utils.getForgottenRegular(forgotten, tenForgottenFilesName).length;
           if (!isSendHistory) {
             //check indicator file to determine if opening was from the forgotten file
             const forgottenMarkPath = docId + '/' + tenForgottenFilesName + '.txt';
@@ -2060,7 +2064,11 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
           } else {
             try {
               if (wopiParams) {
-                if (outputSfc.getUrl()) {
+                // Error callbacks may carry a partial-output URL; WOPI writes must only send successful conversions.
+                if (isError) {
+                  ctx.logger.error('Skipping WOPI write for failed output: statusInfo=%d', statusInfo);
+                  replyStr = JSON.stringify({error: 1, descr: 'wopi: conversion failed'});
+                } else if (outputSfc.getUrl()) {
                   if (forceSaveType === commonDefines.c_oAscForceSaveTypes.Form) {
                     yield processWopiSaveAs(ctx, cmd);
                     replyStr = JSON.stringify({error: 0});
@@ -2132,7 +2140,10 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
             if (!callbackAccepted && !callbackDeclined) {
               try {
                 if (wopiParams) {
-                  if (outputSfc.getUrl()) {
+                  if (isError) {
+                    ctx.logger.error('Skipping WOPI write for failed output: statusInfo=%d', statusInfo);
+                    replyStr = JSON.stringify({error: 1, descr: 'wopi: conversion failed'});
+                  } else if (outputSfc.getUrl()) {
                     replyStr = yield processWopiPutFile(ctx, docId, wopiParams, savePathDoc, userLastChangeId, !notModified, false, true);
                   } else {
                     replyStr = JSON.stringify({error: 1, descr: 'wopi: no file'});
@@ -2363,8 +2374,11 @@ const commandSfcCallback = co.wrap(function* (ctx, cmd, isSfcm, isEncrypted, opt
       let forgottenStored = resumeForgottenCleanup;
       try {
         if (!forgottenStored) {
-          ctx.logger.warn('storeForgotten');
-          const forgottenName = tenForgottenFilesName + pathModule.extname(cmd.getOutputPath());
+          //CONVERT_CORRUPTED: x2t applied only a part of the changes. Keep the output under its own name,
+          //so the next open does not load it as the document and a close without edits does not save it
+          ctx.logger.warn('storeForgotten: partial=%s statusInfo=%d', isErrorCorrupted, statusInfo);
+          const forgottenBaseName = isErrorCorrupted ? utils.getForgottenPartialName(tenForgottenFilesName) : tenForgottenFilesName;
+          const forgottenName = forgottenBaseName + pathModule.extname(cmd.getOutputPath());
           const copyForgottenFile = () => storage.copyObject(ctx, savePathDoc, docId + '/' + forgottenName, undefined, tenForgottenFiles);
           // The row is SaveVersion again, so an open may start a new session.
           // Hold ownership until the shared-file write has finished.

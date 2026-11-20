@@ -90,6 +90,7 @@ const gc = require('./gc');
 const shutdown = require('./shutdown');
 const pubsubService = require('./pubsubRabbitMQ');
 const wopiClient = require('./wopiClient');
+const forgottenFiles = require('./forgottenFiles');
 const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
@@ -1698,7 +1699,6 @@ const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesM
 // final save still in flight needs (see savedState.js); {skipWopiUnlock} skips
 // the WOPI UNLOCK (and its task-row update) at the end.
 function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_changesMask, opt_cleanupOptions) {
-  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
   const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
   if (opt_changesMask) {
     const selectRes = yield taskResult.select(ctx, docId);
@@ -1734,12 +1734,12 @@ function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_save
     }
     //delete forgotten after successful send on callbackUrl
     if (opt_changesMask) {
-      const cleaned = yield taskResult.withCleanupOwnership(ctx, opt_changesMask, () => storage.deletePath(ctx, docId, tenForgottenFiles));
+      const cleaned = yield taskResult.withCleanupOwnership(ctx, opt_changesMask, () => forgottenFiles.deleteForgottenAfterSave(ctx, docId));
       if (!cleaned) {
         return false;
       }
     } else {
-      yield storage.deletePath(ctx, docId, tenForgottenFiles);
+      yield forgottenFiles.deleteForgottenAfterSave(ctx, docId);
     }
   }
   if (opt_cleanupOptions?.skipWopiUnlock === true) {
@@ -2283,8 +2283,6 @@ exports.install = function (server, app, callbackFunction) {
    * @param reason - the reason of the disconnection (either client or server-side)
    */
   function* closeDocument(ctx, conn, reason) {
-    const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
-
     ctx.logger.info('Connection closed or timed out: reason = %s', reason);
     let userLocks,
       reconnected = false,
@@ -2390,14 +2388,7 @@ exports.install = function (server, app, callbackFunction) {
           // Just in case, remove the lock
           yield editorData.unlockSave(ctx, docId, tmpUser.id);
 
-          let needSaveChanges = bHasChanges;
-          if (!needSaveChanges) {
-            //start save changes if forgotten file exists.
-            //more effective to send file without sfc, but this method is simpler by code
-            const forgotten = yield storage.listObjects(ctx, docId, tenForgottenFiles);
-            needSaveChanges = forgotten.length > 0;
-            ctx.logger.debug('closeDocument hasForgotten %s', needSaveChanges);
-          }
+          const needSaveChanges = yield forgottenFiles.needSaveOnClose(ctx, docId, bHasChanges);
           if (needSaveChanges && !conn.encrypted) {
             // Send changes to save server
             const user_lcid = utilsDocService.localeToLCID(conn.lang);
@@ -4695,7 +4686,11 @@ function* findForgottenFile(ctx, docId) {
   const tenForgottenFilesName = ctx.getCfg('services.CoAuthoring.server.forgottenfilesname', cfgForgottenFilesName);
 
   const forgottenList = yield storage.listObjects(ctx, docId, tenForgottenFiles);
-  return forgottenList.find(forgotten => tenForgottenFilesName === pathModule.basename(forgotten, pathModule.extname(forgotten)));
+  //the partial output of a CONVERT_CORRUPTED save is returned only if there is no regular forgotten file
+  return (
+    forgottenList.find(forgotten => tenForgottenFilesName === pathModule.basename(forgotten, pathModule.extname(forgotten))) ||
+    forgottenList.find(forgotten => utils.isForgottenPartial(forgotten, tenForgottenFilesName))
+  );
 }
 
 function* commandLicense(ctx) {

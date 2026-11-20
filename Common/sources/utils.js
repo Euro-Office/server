@@ -1400,6 +1400,31 @@ exports.isUselesSfc = function (row, cmd) {
 exports.getChangesFileHeader = function () {
   return `CHANGES\t${commonDefines.buildVersion}\n`;
 };
+/**
+ * Base name of the forgotten file that keeps the output of a save with CONVERT_CORRUPTED (x2t applied only a part of the changes).
+ * It is stored next to the regular forgotten file, but it is never opened as the document and never saved on close.
+ * @param {string} forgottenFilesName - services.CoAuthoring.server.forgottenfilesname
+ * @returns {string}
+ */
+exports.getForgottenPartialName = function (forgottenFilesName) {
+  return forgottenFilesName + '-partial';
+};
+/**
+ * @param {string} forgottenPath - file in the forgotten folder
+ * @param {string} forgottenFilesName - services.CoAuthoring.server.forgottenfilesname
+ * @returns {boolean} true if the file is the partial output of a save with CONVERT_CORRUPTED
+ */
+exports.isForgottenPartial = function (forgottenPath, forgottenFilesName) {
+  return exports.getForgottenPartialName(forgottenFilesName) === path.basename(forgottenPath, path.extname(forgottenPath));
+};
+/**
+ * @param {string[]} forgottenList - files of one document in the forgotten folder
+ * @param {string} forgottenFilesName - services.CoAuthoring.server.forgottenfilesname
+ * @returns {string[]} files that can be opened as the document: everything except the partial output
+ */
+exports.getForgottenRegular = function (forgottenList, forgottenFilesName) {
+  return forgottenList.filter(forgotten => !exports.isForgottenPartial(forgotten, forgottenFilesName));
+};
 exports.checksumFile = function (hashName, path) {
   //https://stackoverflow.com/a/44643479
   return new Promise((resolve, reject) => {

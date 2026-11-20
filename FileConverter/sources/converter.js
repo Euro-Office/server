@@ -1275,7 +1275,8 @@ function* ExecuteTask(ctx, task) {
   } else if (cmd.getForgotten()) {
     yield* downloadFileFromStorage(ctx, cmd.getForgotten(), tempDirs.source, tenForgottenFiles);
     ctx.logger.debug('downloadFileFromStorage complete');
-    const list = yield utils.listObjects(tempDirs.source, false);
+    //the partial output of a CONVERT_CORRUPTED save can be stored next to the forgotten file. It is not the document to open
+    const list = utils.getForgottenRegular(yield utils.listObjects(tempDirs.source, false), tenForgottenFilesName);
     if (list.length > 0) {
       dataConvert.fileFrom = list[0];
       //store indicator file to determine if opening was from the forgotten file
