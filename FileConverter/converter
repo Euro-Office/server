@@ -1,0 +1,5 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+d="${0%/*}"
+exec "$d/../node" "$d/sources/convertermaster.js" "$@"
