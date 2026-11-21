@@ -130,6 +130,9 @@ const cfgMaxRequestChanges = config.get('services.CoAuthoring.server.maxRequestC
 const cfgErrorFiles = config.get('FileConverter.converter.errorfiles');
 const cfgOpenProtectedFile = config.get('services.CoAuthoring.server.openProtectedFile');
 const cfgIsAnonymousSupport = config.get('services.CoAuthoring.server.isAnonymousSupport');
+const cfgAllowLocalNetworkAccessIframes = config.has('security.allowLocalNetworkAccessIframes')
+  ? config.get('security.allowLocalNetworkAccessIframes')
+  : false;
 const cfgTokenRequiredParams = config.get('services.CoAuthoring.server.tokenRequiredParams');
 const cfgImageSize = config.get('services.CoAuthoring.server.limits_image_size');
 const cfgTypesUpload = config.get('services.CoAuthoring.utils.limits_image_types_upload');
@@ -550,6 +553,8 @@ function fillJwtByConnection(ctx, conn) {
     return yield signToken(ctx, payload, tenTokenSessionAlgorithm, tenTokenSessionExpires / 1000, commonDefines.c_oAscSecretType.Session);
   });
 }
+
+const getAllowLocalNetworkAccess = ctx => ctx.getCfg('security.allowLocalNetworkAccessIframes', cfgAllowLocalNetworkAccessIframes) === true;
 
 function sendData(ctx, conn, data) {
   conn.emit('message', data);
@@ -1979,6 +1984,7 @@ exports.editorData = editorData;
 exports.editorStat = editorStat;
 exports.editorStatProxy = editorStatProxy;
 exports.sendData = sendData;
+exports.getAllowLocalNetworkAccess = getAllowLocalNetworkAccess;
 exports.modifyConnectionForPassword = modifyConnectionForPassword;
 exports.parseUrl = parseUrl;
 exports.parseReplyData = parseReplyData;
@@ -4138,7 +4144,8 @@ exports.install = function (server, app, callbackFunction) {
             customization: licenseInfo.customization,
             advancedApi: licenseInfo.advancedApi
           },
-          aiPluginSettings: pluginSettings
+          aiPluginSettings: pluginSettings,
+          allowLocalNetworkAccess: getAllowLocalNetworkAccess(ctx)
         });
         ctx.logger.info('_checkLicense end');
       } catch (err) {
