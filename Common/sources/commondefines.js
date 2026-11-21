@@ -889,6 +889,172 @@ TaskQueueData.prototype = {
   }
 };
 
+/**
+ * Body of the requests the server sends to the integrator's callback URL.
+ * @openapi
+ * webhooks:
+ *   documentStatus:
+ *     post:
+ *       operationId: documentStatusCallback
+ *       tags: [Callback]
+ *       summary: Document status and save callback
+ *       description: >-
+ *         Sent to the `callbackUrl` of the document (or the `callback` of an `info` command) when users
+ *         connect or disconnect (status 1, 4), when the document is saved after the last user left
+ *         (2, 3), on force save (6, 7) and for mail merge (5). When outbox JWT is enabled
+ *         (`services.CoAuthoring.token.enable.request.outbox`, unless the URL matches
+ *         `token.outbox.urlExclusionRegex`) the request carries the outbox token twice: as `token` in the
+ *         body (claims are the payload fields) and in the `token.outbox.header` header, default `Authorization: Bearer` (claims wrapped
+ *         in `payload`). If the header token of a save callback would exceed 7168 bytes, `changesurl` and
+ *         `history` are removed from the body fields and the header token (the body `token` keeps them).
+ *         Failed deliveries of status 2 are retried with backoff
+ *         (`services.CoAuthoring.callbackBackoffOptions`).
+ *       security:
+ *         - outboxJwt: []
+ *         - {}
+ *       requestBody:
+ *         required: true
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/CallbackPayload'
+ *       responses:
+ *         '200':
+ *           description: >-
+ *             The integrator must answer `{"error": 0}`. Any other answer means the save was not accepted:
+ *             for status 2 the document is kept as a forgotten file, for status 1 and 4 the editors get a warning.
+ *           content:
+ *             application/json:
+ *               schema:
+ *                 $ref: '#/components/schemas/CallbackReply'
+ * components:
+ *   securitySchemes:
+ *     outboxJwt:
+ *       type: http
+ *       scheme: bearer
+ *       bearerFormat: JWT
+ *       description: JWT signed with the outbox secret, sent when `services.CoAuthoring.token.enable.request.outbox` is true.
+ *   schemas:
+ *     CallbackReply:
+ *       type: object
+ *       required: [error]
+ *       properties:
+ *         error:
+ *           type: integer
+ *           description: 0 accepts the callback, anything else rejects it.
+ *     CallbackPayload:
+ *       type: object
+ *       required: [key, status]
+ *       properties:
+ *         key:
+ *           type: string
+ *           description: Document key.
+ *         status:
+ *           type: integer
+ *           description: Document state (`c_oAscServerStatus`).
+ *           oneOf:
+ *             - const: 1
+ *               description: Being edited; `users` lists the connected users (Editing).
+ *             - const: 2
+ *               description: All users left and the document is ready to be stored from `url` (MustSave).
+ *             - const: 3
+ *               description: Saving after the last user left failed (Corrupted). Also used for a failed mail merge.
+ *             - const: 4
+ *               description: Closed without changes (Closed).
+ *             - const: 5
+ *               description: Mail merge result in `url` and `mailMerge` (MailMerge).
+ *             - const: 6
+ *               description: Force save while editing continues; store the document from `url` (MustSaveForce).
+ *             - const: 7
+ *               description: Force save failed (CorruptedForce).
+ *         url:
+ *           type: string
+ *           format: uri
+ *           description: Temporary signed URL of the saved document or mail merge result.
+ *         filetype:
+ *           type: string
+ *           description: Extension of the file at `url`.
+ *         changesurl:
+ *           type: string
+ *           format: uri
+ *           description: Temporary signed URL of the zipped document changes, sent together with `history`.
+ *         history:
+ *           $ref: '#/components/schemas/CallbackChangesHistory'
+ *         users:
+ *           type: array
+ *           items:
+ *             type: string
+ *           description: Status 1, connected user ids; status 2, 3, 6, 7, the user of the last change; status 5, the user who started the merge.
+ *         actions:
+ *           type: array
+ *           items:
+ *             $ref: '#/components/schemas/CallbackAction'
+ *         userdata:
+ *           description: Passed through unchanged from the `userdata` of the command or editor request that caused the callback.
+ *         formsdataurl:
+ *           type: string
+ *           format: uri
+ *           description: Temporary signed URL of `formsdata.json` with submitted form data.
+ *         lastsave:
+ *           type: string
+ *           format: date-time
+ *           description: Time of the last (force) save.
+ *         notmodified:
+ *           type: boolean
+ *           description: Status 2, true if nothing changed since the last force save.
+ *         forcesavetype:
+ *           type: integer
+ *           description: Status 6 and 7, what triggered the force save (`c_oAscForceSaveTypes`). 4 (Internal) is never sent.
+ *           oneOf:
+ *             - const: 0
+ *               description: The `forcesave` command (Command).
+ *             - const: 1
+ *               description: Save button in the editor (Button).
+ *             - const: 2
+ *               description: Automatic force save timer (Timeout).
+ *             - const: 3
+ *               description: Form submission (Form).
+ *         encrypted:
+ *           type: boolean
+ *           description: The document is end-to-end encrypted.
+ *         mailMerge:
+ *           $ref: '#/components/schemas/CallbackMailMerge'
+ *         token:
+ *           type: string
+ *           description: JWT signed with the outbox secret, set when outbox JWT is enabled.
+ *     CallbackAction:
+ *       type: object
+ *       properties:
+ *         type:
+ *           type: integer
+ *           description: 0 user disconnected, 1 user connected, 2 user pressed the force save button (`c_oAscUserAction`).
+ *           enum: [0, 1, 2]
+ *         userid:
+ *           type: string
+ *     CallbackChangesHistory:
+ *       type: object
+ *       description: Change authors since the last save. Empty object when the history is not sent (forgotten file, encrypted document).
+ *       properties:
+ *         serverVersion:
+ *           type: string
+ *         changes:
+ *           type: array
+ *           items:
+ *             type: object
+ *             properties:
+ *               created:
+ *                 type: string
+ *                 description: UTC time as `YYYY-MM-DD hh:mm:ss`.
+ *               documentSha256:
+ *                 type: string
+ *               user:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                   name:
+ *                     type: string
+ */
 function OutputSfcData(key) {
   this['key'] = key;
   this['status'] = undefined;
@@ -1004,6 +1170,35 @@ OutputSfcData.prototype.setToken = function (v) {
   this['token'] = v;
 };
 
+/**
+ * Mail merge part of the callback payload.
+ * @openapi
+ * components:
+ *   schemas:
+ *     CallbackMailMerge:
+ *       type: object
+ *       properties:
+ *         from:
+ *           type: [string, 'null']
+ *         to:
+ *           type: [string, 'null']
+ *           description: Value of the recipient field for this record.
+ *         subject:
+ *           type: [string, 'null']
+ *         message:
+ *           type: [string, 'null']
+ *         title:
+ *           type: [string, 'null']
+ *         type:
+ *           type: [integer, 'null']
+ *           description: Mail format, 0 HTML, 1 DOCX, 2 PDF.
+ *         recordCount:
+ *           type: [integer, 'null']
+ *         recordIndex:
+ *           type: [integer, 'null']
+ *         recordErrorCount:
+ *           type: [integer, 'null']
+ */
 function OutputMailMerge(mailMergeSendData) {
   if (mailMergeSendData) {
     this['from'] = mailMergeSendData.getFrom();
@@ -1237,6 +1432,32 @@ const c_oAscUserAction = {
   In: 1,
   ForceSaveButton: 2
 };
+/**
+ * Error codes of the command service and of the integrator's callback reply.
+ * @openapi
+ * components:
+ *   schemas:
+ *     CommandErrorCode:
+ *       type: integer
+ *       description: Error code of the command service (`c_oAscServerCommandErrors`).
+ *       oneOf:
+ *         - const: 0
+ *           description: No error (NoError).
+ *         - const: 1
+ *           description: Missing or non-string `key`, unknown document, or no forgotten file for the key (DocumentIdError).
+ *         - const: 2
+ *           description: The `info` command could not notify a callback, for example a URL that is blocked or no stored callback (ParseError).
+ *         - const: 3
+ *           description: Internal error (UnknownError).
+ *         - const: 4
+ *           description: The `forcesave` command found no changes since the last save (NotModified).
+ *         - const: 5
+ *           description: Unknown `c`, or `meta` without a `meta` object (UnknownCommand).
+ *         - const: 6
+ *           description: Missing or invalid token (Token).
+ *         - const: 7
+ *           description: Expired token (TokenExpire).
+ */
 const c_oAscServerCommandErrors = {
   NoError: 0,
   DocumentIdError: 1,

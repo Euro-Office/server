@@ -437,13 +437,356 @@ function convertRequest(req, res, isJson) {
     }
   });
 }
+/**
+ * Conversion service, JSON flavour. Request parsing is shared with convertRequestXml (see convertRequest).
+ * @openapi
+ * paths:
+ *   /converter:
+ *     post:
+ *       operationId: convert
+ *       tags: [Conversion]
+ *       summary: Convert a document
+ *       description: >-
+ *         Downloads the file from `url` and converts it to `outputtype`.
+ *         The conversion result is cached under `key`: repeating a request with the same `key`
+ *         and output format returns the existing result (or its progress) without downloading `url` again.
+ *         Parameters are read from the JSON body, or from the query string if the body is not valid JSON.
+ *         With `async: true` the call returns at once and has to be repeated with the same parameters
+ *         until `endConvert` is true; otherwise it waits until the conversion ends or times out.
+ *         The response is XML instead of JSON if the `Accept` header prefers `application/xml` or `text/xml`.
+ *       security:
+ *         - inboxJwt: []
+ *         - {}
+ *       parameters:
+ *         - $ref: '#/components/parameters/ShardKey'
+ *       requestBody:
+ *         required: true
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ConvertRequest'
+ *       responses:
+ *         '200':
+ *           description: Conversion state or error. Errors are also returned with HTTP 200.
+ *           content:
+ *             application/json:
+ *               schema:
+ *                 $ref: '#/components/schemas/ConvertResponse'
+ *             text/xml:
+ *               schema:
+ *                 $ref: '#/components/schemas/ConvertResponseXml'
+ *         '403':
+ *           $ref: '#/components/responses/IpFilterDenied'
+ * components:
+ *   parameters:
+ *     ShardKey:
+ *       name: shardkey
+ *       in: query
+ *       required: false
+ *       description: >-
+ *         Shard key (usually the document `key`) for sharded clusters. When the server runs with
+ *         `DEFAULT_SHARD_KEY` and this parameter (or `WOPISrc`) is missing, async conversion and
+ *         docbuilder requests fall back to synchronous mode and commands with a `key` are proxied
+ *         to `/command?shardkey=<key>`.
+ *       schema:
+ *         type: string
+ *   responses:
+ *     IpFilterDenied:
+ *       description: Rejected by the IP filter (`services.CoAuthoring.ipfilter`).
+ *   schemas:
+ *     ConvertRequest:
+ *       type: object
+ *       description: >-
+ *         When inbox JWT is enabled and the request carries a valid token, the decoded token claims
+ *         (and its `payload` and `query` objects) are merged into these parameters. With
+ *         `services.CoAuthoring.server.tokenRequiredParams` (default true) only the token claims are used.
+ *       properties:
+ *         url:
+ *           type: string
+ *           format: uri
+ *           description: URL of the source file. The server downloads it, subject to the request filters.
+ *         filetype:
+ *           type: string
+ *           pattern: '^[a-zA-Z0-9]*$'
+ *           description: Extension of the source file, for example `docx`. `fileType` is accepted as an alias. Detected from the content if empty.
+ *           examples: [docx]
+ *         outputtype:
+ *           type: string
+ *           description: Target extension, for example `pdf`, `png` or `xlsx`. `outputType` is accepted as an alias. Unknown values return error -7.
+ *           examples: [pdf]
+ *         key:
+ *           type: string
+ *           pattern: '^[0-9-.a-zA-Z_=]*$'
+ *           description: >-
+ *             Identifier of the conversion. Results are cached per `key` and output format,
+ *             so use a new key whenever the source changes.
+ *         title:
+ *           type: string
+ *           description: File name used for the result URL; its extension is replaced by the output extension.
+ *         async:
+ *           type: [boolean, string]
+ *           description: Return immediately instead of waiting for the result. The string `"true"` is accepted.
+ *         password:
+ *           type: string
+ *           maxLength: 255
+ *           description: Password of an encrypted source file.
+ *         codePage:
+ *           type: integer
+ *           description: Windows code page of a text or CSV source, for example 65001 (UTF-8, the default). Unknown values fall back to UTF-8.
+ *         delimiter:
+ *           type: [integer, string]
+ *           description: >-
+ *             CSV delimiter: 0 none, 1 tab, 2 semicolon, 3 colon, 4 comma (default), 5 space.
+ *             Ignored for `tsv`, which always uses tab.
+ *         delimiterChar:
+ *           type: string
+ *           description: Custom CSV delimiter character.
+ *         region:
+ *           type: string
+ *           description: Locale used for number and date formats, for example `en-US`.
+ *         documentLayout:
+ *           type: object
+ *           description: Page layout options for text documents, passed to the converter as is.
+ *         spreadsheetLayout:
+ *           type: object
+ *           description: Page layout options for spreadsheets, passed to the converter as is.
+ *         pdfLayout:
+ *           type: object
+ *           description: Layout options for PDF output, passed to the converter as is.
+ *         watermark:
+ *           type: object
+ *           description: Watermark settings, passed to the converter as is.
+ *         thumbnail:
+ *           $ref: '#/components/schemas/ConvertThumbnail'
+ *         documentRenderer:
+ *           type: object
+ *           description: Text layout options for the converter (`textAssociation`). May be a JSON string.
+ *           properties:
+ *             textAssociation:
+ *               type: string
+ *               enum: [blockChar, blockLine, plainLine, plainParagraph]
+ *               default: blockChar
+ *         pdf:
+ *           type: object
+ *           properties:
+ *             pdfa:
+ *               type: boolean
+ *               description: true turns `pdf` output into PDF/A, false turns `pdfa` output into PDF.
+ *             form:
+ *               type: boolean
+ *               description: true produces a fillable PDF form for PDF output; false converts forms to plain PDF.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret. Alternative to the `Authorization` header.
+ *     ConvertThumbnail:
+ *       type: [object, string]
+ *       description: Thumbnail options for image output, passed to the converter. May be a JSON string.
+ *       properties:
+ *         aspect:
+ *           type: integer
+ *           description: Aspect ratio mode, passed to the converter.
+ *         first:
+ *           type: boolean
+ *           description: Only the first page. If false the result is a zip with one image per page.
+ *         width:
+ *           type: integer
+ *         height:
+ *           type: integer
+ *     ConvertResponse:
+ *       oneOf:
+ *         - type: object
+ *           title: Progress or result
+ *           required: [endConvert, percent]
+ *           properties:
+ *             endConvert:
+ *               type: boolean
+ *             percent:
+ *               type: integer
+ *               description: 100 when finished, otherwise 0.
+ *             fileUrl:
+ *               type: string
+ *               format: uri
+ *               description: Temporary signed URL of the result, set when `endConvert` is true.
+ *             fileType:
+ *               type: string
+ *               description: Extension of the result.
+ *         - type: object
+ *           title: Error
+ *           required: [error]
+ *           properties:
+ *             error:
+ *               $ref: '#/components/schemas/ConvertErrorCode'
+ *     ConvertResponseXml:
+ *       type: object
+ *       xml:
+ *         name: FileResult
+ *       description: Either `Error` alone or the other four elements.
+ *       properties:
+ *         Error:
+ *           $ref: '#/components/schemas/ConvertErrorCode'
+ *         FileUrl:
+ *           type: string
+ *         FileType:
+ *           type: string
+ *         Percent:
+ *           type: integer
+ *         EndConvert:
+ *           type: string
+ *           enum: ['True', 'False']
+ */
 function convertRequestJson(req, res) {
   return convertRequest(req, res, true);
 }
+/**
+ * Legacy conversion service, XML response by default. Shares request parsing with convertRequestJson.
+ * @openapi
+ * paths:
+ *   /ConvertService.ashx:
+ *     get:
+ *       operationId: convertLegacyGet
+ *       tags: [Conversion]
+ *       summary: Convert a document (legacy, query string)
+ *       description: >-
+ *         Same as `POST /converter` with the parameters in the query string. Responds with XML
+ *         unless the `Accept` header prefers JSON.
+ *       security:
+ *         - inboxJwt: []
+ *         - {}
+ *       parameters:
+ *         - name: params
+ *           in: query
+ *           style: form
+ *           explode: true
+ *           schema:
+ *             $ref: '#/components/schemas/ConvertRequest'
+ *       responses:
+ *         '200':
+ *           description: Conversion state or error.
+ *           content:
+ *             text/xml:
+ *               schema:
+ *                 $ref: '#/components/schemas/ConvertResponseXml'
+ *             application/json:
+ *               schema:
+ *                 $ref: '#/components/schemas/ConvertResponse'
+ *         '403':
+ *           $ref: '#/components/responses/IpFilterDenied'
+ *     post:
+ *       operationId: convertLegacyPost
+ *       tags: [Conversion]
+ *       summary: Convert a document (legacy)
+ *       description: >-
+ *         Same as `POST /converter` but responds with XML unless the `Accept` header prefers JSON.
+ *         The request body is JSON (not XML); without a JSON body the query string is used.
+ *       security:
+ *         - inboxJwt: []
+ *         - {}
+ *       parameters:
+ *         - $ref: '#/components/parameters/ShardKey'
+ *       requestBody:
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ConvertRequest'
+ *       responses:
+ *         '200':
+ *           description: Conversion state or error.
+ *           content:
+ *             text/xml:
+ *               schema:
+ *                 $ref: '#/components/schemas/ConvertResponseXml'
+ *             application/json:
+ *               schema:
+ *                 $ref: '#/components/schemas/ConvertResponse'
+ *         '403':
+ *           $ref: '#/components/responses/IpFilterDenied'
+ */
 function convertRequestXml(req, res) {
   return convertRequest(req, res, false);
 }
 
+/**
+ * Runs a docbuilder script.
+ * @openapi
+ * paths:
+ *   /docbuilder:
+ *     post:
+ *       operationId: docbuilder
+ *       tags: [Docbuilder]
+ *       summary: Run a docbuilder script
+ *       description: >-
+ *         Runs a docbuilder script given by `url` or as the raw request body. Without `key` the server
+ *         creates one (prefix `bld_`) and queues the script; repeat the request with the returned `key`
+ *         to poll an async run. Note that any non-empty body without `url` is stored as the script,
+ *         including a JSON polling body.
+ *       security:
+ *         - inboxJwt: []
+ *         - {}
+ *       parameters:
+ *         - $ref: '#/components/parameters/ShardKey'
+ *       requestBody:
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DocbuilderRequest'
+ *           text/plain:
+ *             schema:
+ *               type: string
+ *               description: The script itself. Parameters then come from the query string.
+ *       responses:
+ *         '200':
+ *           description: Run state or error. Errors are also returned with HTTP 200.
+ *           content:
+ *             application/json:
+ *               schema:
+ *                 $ref: '#/components/schemas/DocbuilderResponse'
+ *         '403':
+ *           $ref: '#/components/responses/IpFilterDenied'
+ * components:
+ *   schemas:
+ *     DocbuilderRequest:
+ *       type: object
+ *       description: Inbox JWT claims are merged as for ConvertRequest.
+ *       properties:
+ *         url:
+ *           type: string
+ *           format: uri
+ *           description: URL of the `.docbuilder` script.
+ *         key:
+ *           type: string
+ *           description: Key of an existing run, returned by an earlier request.
+ *         async:
+ *           type: [boolean, string]
+ *           description: Return immediately instead of waiting for the result. The string `"true"` is accepted.
+ *         argument:
+ *           type: object
+ *           description: Passed to the script as its argument.
+ *         token:
+ *           type: string
+ *           description: JWT signed with the inbox secret.
+ *     DocbuilderResponse:
+ *       oneOf:
+ *         - type: object
+ *           title: Progress or result
+ *           required: [key, end]
+ *           properties:
+ *             key:
+ *               type: string
+ *             end:
+ *               type: boolean
+ *             urls:
+ *               type: object
+ *               description: Map of output file name to temporary signed URL, set when `end` is true.
+ *               additionalProperties:
+ *                 type: string
+ *                 format: uri
+ *         - type: object
+ *           title: Error
+ *           required: [error]
+ *           properties:
+ *             error:
+ *               $ref: '#/components/schemas/ConvertErrorCode'
+ */
 function builderRequest(req, res) {
   return co(function* () {
     const ctx = new operationContext.Context();
