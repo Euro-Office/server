@@ -261,7 +261,37 @@ async function notifyLicenseExpiration(ctx, endDate) {
   }
 }
 
+//Asc.c_oAscPrintType.EntireWorkbook of sdkjs
+const c_oAscPrintTypeEntireWorkbook = 1;
+
+/**
+ * JsonParams of a spreadsheet conversion. `spreadsheetLayout.entireWorkbook: true` asks for every
+ * sheet, which the editor reads as `adjustOptions.printType`. The editor prints only the active
+ * sheet for a request without any params (no layout, watermark or other); with any params it
+ * already prints every sheet, so `entireWorkbook: false` cannot select the active sheet.
+ * `fitToWidth`, `fitToHeight` and `scale` pass on as the request sets them: without them each
+ * sheet keeps its own page setup (fit-to-page or scale), which needs an editor with
+ * https://github.com/Euro-Office/sdkjs/pull/175.
+ * @param {object} spreadsheetLayout The `spreadsheetLayout` of the conversion request.
+ * @returns {object} JsonParams to merge into the command's.
+ */
+function getSpreadsheetJsonParams(spreadsheetLayout) {
+  if (!spreadsheetLayout) {
+    return {};
+  }
+  if ('object' !== typeof spreadsheetLayout || Array.isArray(spreadsheetLayout)) {
+    return {spreadsheetLayout};
+  }
+  const {entireWorkbook, ...layout} = spreadsheetLayout;
+  const jsonParams = {spreadsheetLayout: layout};
+  if (true === entireWorkbook) {
+    jsonParams.adjustOptions = {printType: c_oAscPrintTypeEntireWorkbook};
+  }
+  return jsonParams;
+}
+
 module.exports.processImageOptimal = processImageOptimal;
 module.exports.determineOptimalFormat = determineOptimalFormat;
 module.exports.localeToLCID = localeToLCID;
 module.exports.notifyLicenseExpiration = notifyLicenseExpiration;
+module.exports.getSpreadsheetJsonParams = getSpreadsheetJsonParams;
