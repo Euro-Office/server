@@ -6,14 +6,5 @@
   "bin": "sources/server.js",
   "dependencies": {
     "statsd": "0.9.0"
-  },
-  "pkg": {
-    "scripts": [
-      "node_modules/statsd/backends/console.js",
-      "node_modules/statsd/backends/graphite.js",
-      "node_modules/statsd/backends/repeater.js",
-      "node_modules/statsd/servers/tcp.js",
-      "node_modules/statsd/servers/udp.js"
-    ]
   }
 }

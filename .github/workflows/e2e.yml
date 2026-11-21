@@ -5,9 +5,9 @@ name: E2E (overlay on nightly)
 # Playwright e2e suite against it. Fast feedback on a server change against the
 # full stack without rebuilding core/sdkjs/web-apps.
 #
-# Scope: overlays the four pkg binaries (docservice, fileconverter, metrics,
-# adminpanel). The AdminPanel webpack client is intentionally NOT overlaid —
-# the e2e suite never exercises the admin UI, so the nightly image's client
+# Scope: overlays the server services (docservice, converter, metrics,
+# adminpanel) and the node binary they run on. The AdminPanel webpack client
+# is intentionally NOT overlaid — the e2e suite never exercises the admin UI, so the nightly image's client
 # build is left in place.
 on:
   push:
@@ -82,39 +82,34 @@ jobs:
           echo "nightly PRODUCT_VERSION=$VER"
 
       # Mirrors server.bake.Dockerfile: stamp buildVersion, install each package,
-      # then pkg the services into $BUILD_ROOT.
-      - name: Build server binaries
+      # then copy the services into $BUILD_ROOT/server.
+      - name: Build server
         working-directory: server
         env:
           BUILD_ROOT: ${{ github.workspace }}/server/deploy
           PRODUCT_VERSION: ${{ steps.ver.outputs.product_version }}
         run: |
-          npm install -g @yao-pkg/pkg@6.24.0
           sed -i "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" Common/sources/commondefines.js
-          for d in Common DocService FileConverter Metrics; do
-            ( cd "$d" && npm install )
+          for d in Common DocService FileConverter Metrics AdminPanel/server; do
+            ( cd "$d" && npm ci --omit=dev )
           done
-          mkdir -p "$BUILD_ROOT"
+          .docker/install-runtime.sh "$BUILD_ROOT/server"
           cp Common/config/default.json "$BUILD_ROOT/default.json"
-          ( cd DocService    && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/docservice" )
-          ( cd FileConverter && pkg . -t linux-x64 -o "$BUILD_ROOT/fileconverter" )
-          ( cd Metrics       && pkg . -t linux-x64 -o "$BUILD_ROOT/metrics" )
 
-      - name: Build overlay image with fresh server binaries
+      - name: Build overlay image with fresh server
         run: |
           set -euo pipefail
           cat > overlay.Dockerfile <<'EOF'
           ARG NIGHTLY_IMAGE
           FROM ${NIGHTLY_IMAGE}
-          COPY docservice fileconverter metrics default.json /tmp/srv/
+          COPY server /tmp/srv/server
+          COPY default.json /tmp/srv/
           # The install path is brand-derived (/var/www/<brand>/documentserver);
-          # locate it via the sdkjs dir, then replace the service binaries.
+          # locate it via the sdkjs dir, then replace the services.
           RUN set -eux; \
               root="$(dirname "$(find /var/www -maxdepth 5 -type d -name sdkjs -path '*documentserver*' | head -n1)")"; \
               test -n "$root"; \
-              install -m0755 /tmp/srv/docservice    "$root/server/DocService/docservice"; \
-              install -m0755 /tmp/srv/fileconverter "$root/server/FileConverter/converter"; \
-              install -m0755 /tmp/srv/metrics       "$root/server/Metrics/metrics"; \
+              cp -a /tmp/srv/server/. "$root/server/"; \
               install -m0644 /tmp/srv/default.json  "/etc/${root#/var/www/}/default.json"; \
               rm -rf /tmp/srv
           EOF

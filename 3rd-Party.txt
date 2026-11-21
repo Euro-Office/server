@@ -110,3 +110,10 @@ License File:   license/less.license
 URL:            http://lesscss.org/
 License:        MIT License
 License File:   license/requirejs-text.license
+
+
+17. Node.js - JavaScript runtime the server services run on. Includes V8, OpenSSL, ICU, libuv and other bundled libraries, see the license file.
+
+URL:            https://nodejs.org/
+License:        MIT License and the licenses of the bundled libraries
+License File:   license/NodeJS.license
