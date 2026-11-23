@@ -165,3 +165,94 @@ describe('converter failure reports', () => {
     ]);
   });
 });
+
+describe('converter x2t metrics', () => {
+  const metrics = require('../../Common/sources/metrics');
+  const workerMetrics = metrics.registerConverterWorker('1');
+  converter.setWorkerMetrics(workerMetrics);
+  const runs = async result =>
+    (await workerMetrics.x2tDuration.get()).values.find(v => v.metricName === 'eo_x2t_duration_seconds_count' && v.labels.result === result)?.value ??
+    0;
+
+  test('records failed and successful x2t runs and returns to zero running', async () => {
+    delete process.env.FAKE_X2T;
+    await executeTask('metricsfail', {savekey: 'sk'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx'});
+    expect(await runs('error')).toBeGreaterThanOrEqual(1);
+
+    process.env.FAKE_X2T = 'odf';
+    await executeTask(
+      'metricsok',
+      {savekey: 'sk', outputformat: constants.AVS_OFFICESTUDIO_FILE_DOCUMENT_ODT},
+      {fromOrigin: true, fromChanges: true, toFile: 'output.odt'}
+    );
+    delete process.env.FAKE_X2T;
+    expect(await runs('ok')).toBe(1);
+    expect((await workerMetrics.x2tRunning.get()).values[0].value).toBe(0);
+  });
+
+  const steps = async () => {
+    const values = (await workerMetrics.stepDuration.get()).values;
+    const of = (step, suffix) =>
+      values.find(v => v.metricName === `eo_conversion_step_duration_seconds_${suffix}` && v.labels.step === step)?.value ?? 0;
+    return Object.fromEntries(
+      ['queue_wait', 'download', 'post_process', 'total'].map(step => [step, {count: of(step, 'count'), sum: of(step, 'sum')}])
+    );
+  };
+
+  test('records queue wait, download, post process and total per task', async () => {
+    const before = await steps();
+    await executeTask('steps', {savekey: 'sk'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx', queuedAt: Date.now() - 5000});
+    const after = await steps();
+    for (const step of ['queue_wait', 'download', 'post_process', 'total']) {
+      expect(after[step].count - before[step].count).toBe(1);
+    }
+    expect(after.queue_wait.sum - before.queue_wait.sum).toBeGreaterThanOrEqual(5);
+  });
+
+  test('reports tasks slower than slowTaskThreshold, including the queue wait', async () => {
+    const reported = [];
+    const reportSlowTask = workerMetrics.reportSlowTask;
+    workerMetrics.reportSlowTask = task => reported.push(task);
+    try {
+      await executeTask('fast', {savekey: 'sk', title: 'fast.docx'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx'});
+      await executeTask(
+        'queued',
+        {savekey: 'sk', title: 'queued.docx'},
+        {fromOrigin: true, fromChanges: true, toFile: 'output.docx', queuedAt: Date.now() - 11000}
+      );
+    } finally {
+      workerMetrics.reportSlowTask = reportSlowTask;
+    }
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({fileName: 'queued.docx', command: 'save', formatTo: 'ooxml', status: constants.CONVERT});
+    expect(reported[0].queueWait).toBeGreaterThanOrEqual(11000);
+    expect(reported[0]).toEqual(expect.objectContaining({finishedAt: expect.any(Number), total: expect.any(Number), size: expect.anything()}));
+  });
+
+  test('falls back to 10 s for an empty slowTaskThreshold', () => {
+    expect(converter.slowTaskThresholdMs('')).toBe(10000);
+    expect(converter.slowTaskThresholdMs(undefined)).toBe(10000);
+    expect(converter.slowTaskThresholdMs('30s')).toBe(30000);
+  });
+
+  test('skips the queue wait of tasks queued without a timestamp', async () => {
+    const before = await steps();
+    await executeTask('nostamp', {savekey: 'sk'}, {fromOrigin: true, fromChanges: true, toFile: 'output.docx'});
+    const after = await steps();
+    expect(after.queue_wait.count).toBe(before.queue_wait.count);
+    expect(after.total.count - before.total.count).toBe(1);
+  });
+});
+
+describe('conversion task queue', () => {
+  test('stamps tasks with the time they were queued', async () => {
+    const TaskQueueRabbitMQ = require('../../Common/sources/taskqueueRabbitMQ');
+    const queue = new TaskQueueRabbitMQ();
+    const task = new commonDefines.TaskQueueData({ctx: {tenant: 'localhost', docId: 'q'}, cmd: {c: 'open', id: 'q'}});
+    const start = Date.now();
+    await queue.addTask(task, constants.QUEUE_PRIORITY_LOW);
+    const queued = new commonDefines.TaskQueueData(JSON.parse(queue.addTaskStore[0].task.toString()));
+    expect(queued.getQueuedAt()).toBeGreaterThanOrEqual(start);
+    expect(queued.getQueuedAt()).toBeLessThanOrEqual(Date.now());
+  });
+});

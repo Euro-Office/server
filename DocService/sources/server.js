@@ -56,6 +56,10 @@ const metaRouter = require('./routes/meta');
 const ms = require('ms');
 const aiProxyHandler = require('./ai/aiProxyHandler');
 const runtimeConfigManager = require('./../../Common/sources/runtimeConfigManager');
+const metrics = require('./../../Common/sources/metrics');
+const os = require('os');
+
+const DOCUMENTS_LIST_LIMIT = 100;
 
 const cfgWopiEnable = config.get('wopi.enable');
 const cfgWopiDummyEnable = config.get('wopi.dummy.enable');
@@ -274,6 +278,13 @@ docsCoServer.install(server, app, () => {
   app.delete('/internal/cluster/pre-stop', utils.checkClientIp, docsCoServer.preStop);
 
   app.get('/internal/connections/edit', docsCoServer.getEditorConnectionsCount);
+
+  metrics.registerDocServiceMetrics(docsCoServer.getConnections, docsCoServer.getConvertQueueLength);
+  metrics.registerHostMetrics([config.get('storage.fs.folderPath'), os.tmpdir()]);
+  app.get('/internal/metrics', utils.checkClientIp, metrics.handler);
+  app.get('/internal/documents', utils.checkClientIp, (req, res) => {
+    res.json(metrics.summarizeDocuments(docsCoServer.getConnections(), DOCUMENTS_LIST_LIMIT));
+  });
 
   function checkWopiEnable(req, res, next) {
     //todo may be move code into wopiClient or wopiClient.discovery...

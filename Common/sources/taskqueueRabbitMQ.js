@@ -650,6 +650,7 @@ TaskQueueRabbitMQ.prototype.initPromise = function (isAddTask, isAddResponse, is
 };
 TaskQueueRabbitMQ.prototype.addTask = function (task, priority, opt_expiration, _opt_headers) {
   task.setVisibilityTimeout(cfgVisibilityTimeout);
+  task.setQueuedAt(Date.now());
   return addTaskString(this, JSON.stringify(task), priority, opt_expiration);
 };
 TaskQueueRabbitMQ.prototype.addResponse = function (task, opt_requireConfirm) {
@@ -690,6 +691,29 @@ TaskQueueRabbitMQ.prototype.addDelayed = function (task, ttl, opt_requireConfirm
       resolve();
     }
   });
+};
+/**
+ * Number of conversion tasks waiting in the queue.
+ * Uses a short-lived channel: a failed check closes its channel, which must not hit the channels tasks are published on.
+ * @returns {Promise<number|null>} null if the queue is not RabbitMQ or not connected
+ */
+TaskQueueRabbitMQ.prototype.getConvertTaskQueueLength = async function () {
+  if (commonDefines.c_oAscQueueType.rabbitmq !== cfgQueueType || !this.connection) {
+    return null;
+  }
+  const channel = await rabbitMQCore.createChannelPromise(this.connection);
+  channel.on('error', () => {});
+  try {
+    return await new Promise((resolve, reject) => {
+      channel.checkQueue(cfgRabbitQueueConvertTask.name, (err, ok) => (err ? reject(err) : resolve(ok.messageCount)));
+    });
+  } finally {
+    try {
+      channel.close(() => {});
+    } catch {
+      // Already closed by the broker after a failed check
+    }
+  }
 };
 TaskQueueRabbitMQ.prototype.close = function () {
   const t = this;

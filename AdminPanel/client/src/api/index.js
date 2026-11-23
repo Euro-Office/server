@@ -28,6 +28,19 @@ export const fetchStatistics = async () => {
   return response.json();
 };
 
+export const fetchResourceStats = async () => {
+  const response = await safeFetch(`${API_BASE_PATH}/stats/resources`, {credentials: 'include'});
+  if (response.status === 401) throw new Error('UNAUTHORIZED');
+  if (!response.ok) throw new Error('Failed to fetch resource statistics');
+  return response.json();
+};
+
+export const fetchStatsHistory = async since => {
+  const response = await safeFetch(`${API_BASE_PATH}/stats/history?since=${since}`, {credentials: 'include'});
+  if (!response.ok) throw new Error('Failed to fetch statistics history');
+  return response.json();
+};
+
 export const fetchConfiguration = async () => {
   const response = await safeFetch(`${API_BASE_PATH}/config`, {credentials: 'include'});
   if (response.status === 401) throw new Error('UNAUTHORIZED');
