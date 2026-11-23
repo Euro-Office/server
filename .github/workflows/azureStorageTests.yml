@@ -14,7 +14,7 @@ on:
 jobs:
   azure-storage-tests:
     name: Azure Storage Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     env:
       AZURITE_CONTAINER: azurite-${{ github.run_id }}-${{ github.run_attempt }}
 
