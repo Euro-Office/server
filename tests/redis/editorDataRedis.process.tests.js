@@ -243,7 +243,7 @@ class ReplicaHarness {
   }
 }
 
-async function runTrace(call, ctx) {
+async function runTrace(call, ctx, nowSeconds) {
   const result = {};
   const lockDoc = 'differential-lock';
   result.lockFirst = await call('replica-a', 'data', 'lockSave', [ctx, lockDoc, 'owner-a', 5]);
@@ -288,8 +288,8 @@ async function runTrace(call, ctx) {
   result.timerClaim = await call('replica-b', 'data', 'getForceSaveTimer', [Date.now()]);
   result.timerEmpty = await call('replica-a', 'data', 'getForceSaveTimer', [Date.now()]);
 
+  // nowSeconds is shared by the Redis and memory runs, so a second boundary between them cannot change expire.
   // Real UTC seconds: the Redis backend removes users that expired by Redis time.
-  const nowSeconds = Math.floor(Date.now() / 1000);
   await call('replica-a', 'stat', 'addPresenceUniqueUser', [ctx, 'user', nowSeconds + 300, {version: 1}]);
   await call('replica-b', 'stat', 'addPresenceUniqueUser', [ctx, 'user', nowSeconds + 400, {version: 2}]);
   result.uniqueUser = snapshot(await call('replica-a', 'stat', 'getPresenceUniqueUser', [ctx, nowSeconds + 100]));
@@ -709,16 +709,19 @@ describe('editorDataRedis independent-process behavior', () => {
     const memoryStat = new memoryStorage.EditorStat();
     try {
       await harness.start();
+      const nowSeconds = Math.floor(Date.now() / 1000);
       const redisTrace = await runTrace(
         (replicaId, target, method, args) => harness.request(replicaId, target, method, args, `differential ${target}.${method}`),
-        contextArgs('differential-tenant')
+        contextArgs('differential-tenant'),
+        nowSeconds
       );
       const memoryTrace = await runTrace(
         (_replicaId, target, method, args) =>
           (target === 'data' ? memoryData : memoryStat)[method](
             ...args.map(value => (value?.__type === 'context' ? context(value.tenant, value.overrides) : value))
           ),
-        contextArgs('differential-tenant')
+        contextArgs('differential-tenant'),
+        nowSeconds
       );
       assertObservableEqual(redisTrace, memoryTrace, 'Redis and memory observable results differ');
       await runCrossProcessRedisScenarios(harness);
