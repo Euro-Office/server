@@ -94,6 +94,8 @@ const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
 const aiProxyHandler = require('./ai/aiProxyHandler');
+const {createStartupAttempt} = require('./startupRedis');
+const absentUsers = require('./absentUsers');
 
 const cfgEditorDataStorage = config.get('services.CoAuthoring.server.editorDataStorage');
 const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatStorage');
@@ -135,7 +137,6 @@ const cfgImageSize = config.get('services.CoAuthoring.server.limits_image_size')
 const cfgTypesUpload = config.get('services.CoAuthoring.utils.limits_image_types_upload');
 const cfgForceSaveUsingButtonWithoutChanges = config.get('services.CoAuthoring.server.forceSaveUsingButtonWithoutChanges');
 //todo tenant
-const cfgExpDocumentsCron = config.get('services.CoAuthoring.expire.documentsCron');
 const cfgRefreshLockInterval = ms(config.get('wopi.refreshLockInterval'));
 const cfgSocketIoConnection = config.util.cloneDeep(config.get('services.CoAuthoring.socketio.connection'));
 const cfgTableResult = config.get('services.CoAuthoring.sql.tableResult');
@@ -159,15 +160,18 @@ if (process.env.REDIS_SERVER_DB_KEYS_NUM) {
 }
 const clientStatsD = statsDClient.getClient();
 let connections = []; // Active connections
+let io, startupAttempt;
 const lockDocumentsTimerId = {}; //to drop connection that can't unlockDocument
 let pubsub;
 let queue;
 let shutdownFlag = false;
 let preStopFlag = false;
-const expDocumentsStep = gc.getCronStep(cfgExpDocumentsCron);
+let socketIoClosing = false; // this process closed Socket.IO (shutdown); see 'disconnect'
+const expDocumentsStep = gc.getDocumentsExpireStep();
 
 const MIN_SAVE_EXPIRATION = 60000;
 const SHARD_ID = crypto.randomBytes(16).toString('base64'); //16 as guid
+const shardConnectionCounts = require('./shardConnectionCounts').create(SHARD_ID);
 
 const PRECISION = [
   {name: 'hour', val: ms('1h')},
@@ -485,7 +489,7 @@ function addPresence(ctx, conn, updateCunters) {
 }
 async function updatePresence(ctx, conn) {
   if (editorData.updatePresence) {
-    return await editorData.updatePresence(ctx, conn.docId, conn.user.id);
+    return await editorData.updatePresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
   } else {
     //todo remove if after 7.6. code for backward compatibility, because redis in separate repo
     return await editorData.addPresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
@@ -493,7 +497,7 @@ async function updatePresence(ctx, conn) {
 }
 function removePresence(ctx, conn) {
   return co(function* () {
-    yield editorData.removePresence(ctx, conn.docId, conn.user.id);
+    yield editorData.removePresence(ctx, conn.docId, conn.user.id, conn.id);
     yield updatePresenceCounters(ctx, conn, -1);
   });
 }
@@ -642,17 +646,17 @@ function* updateEditUsers(ctx, licenseInfo, userId, anonym, isLiveViewer) {
     yield editorStat.addPresenceUniqueUsersOfMonth(ctx, userId, period, {anonym, firstOpenDate: now.toISOString()});
   }
 }
-function* getEditorsCount(ctx, docId, opt_hvals) {
+function* getEditorsCount(ctx, docId, opt_presenceEntries) {
   let elem,
     editorsCount = 0;
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    elem = JSON.parse(presenceEntries[i]);
     if (!elem.view && !elem.isCloseCoAuthoring) {
       editorsCount++;
       break;
@@ -660,8 +664,8 @@ function* getEditorsCount(ctx, docId, opt_hvals) {
   }
   return editorsCount;
 }
-function* hasEditors(ctx, docId, opt_hvals) {
-  const editorsCount = yield* getEditorsCount(ctx, docId, opt_hvals);
+function* hasEditors(ctx, docId, opt_presenceEntries) {
+  const editorsCount = yield* getEditorsCount(ctx, docId, opt_presenceEntries);
   return editorsCount > 0;
 }
 function* isUserReconnect(ctx, docId, userId, connectionId) {
@@ -1918,16 +1922,16 @@ function getLicenseNowUtc() {
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds()) / 1000;
 }
-const getParticipantMap = co.wrap(function* (ctx, docId, opt_hvals) {
+const getParticipantMap = co.wrap(function* (ctx, docId, opt_presenceEntries) {
   const participantsMap = [];
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    const elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    const elem = JSON.parse(presenceEntries[i]);
     if (!elem.isCloseCoAuthoring) {
       participantsMap.push(elem);
     }
@@ -2045,7 +2049,10 @@ async function encryptPasswordParams(ctx, data) {
 exports.encryptPasswordParams = encryptPasswordParams;
 exports.getOpenFormatByEditor = getOpenFormatByEditor;
 exports.install = function (server, app, callbackFunction) {
-  const io = new Server(server, cfgSocketIoConnection);
+  socketIoClosing = false;
+  startupAttempt?.cancel();
+  const installStartup = (startupAttempt = createStartupAttempt(callbackFunction, operationContext.global.logger));
+  io = new Server(server, cfgSocketIoConnection);
 
   io.use((socket, next) => {
     co(function* () {
@@ -2235,6 +2242,11 @@ exports.install = function (server, app, callbackFunction) {
           const ctx = new operationContext.Context();
           try {
             ctx.initFromConnection(conn);
+            if (socketIoClosing) {
+              // Exiting: keep the editor data for a reconnect elsewhere, as a killed process would (see absentUsers.js).
+              ctx.logger.info('closeDocument skipped: the server is shutting down');
+              return;
+            }
             yield ctx.initTenantCache();
             yield* closeDocument(ctx, conn, reason);
           } catch (err) {
@@ -2321,6 +2333,7 @@ exports.install = function (server, app, callbackFunction) {
       }
     } else {
       if (!conn.isCloseCoAuthoring && !isView) {
+        yield updatePresenceCounters(ctx, conn, -1); // counted as an editor until now, as a viewer below
         modifyConnectionEditorToView(ctx, conn);
         conn.isCloseCoAuthoring = true;
         yield addPresence(ctx, conn, true);
@@ -2420,7 +2433,8 @@ exports.install = function (server, app, callbackFunction) {
         }
       } else {
         if (localPresenceEmpty) {
-          yield* cleanDocumentAfterFinalViewerExit(ctx, docId);
+          const left = yield hasChanges(ctx, docId); // GC no longer sees the document: save what a dead editor left
+          yield left ? createSaveTimer(ctx, docId, null, null, null, undefined, true, true) : co(cleanDocumentAfterFinalViewerExit(ctx, docId));
         }
       }
       const sessionType = isView ? 'view' : 'edit';
@@ -4452,7 +4466,7 @@ exports.install = function (server, app, callbackFunction) {
           if (constants.CONN_CLOSED === conn.conn.readyState) {
             ctx.logger.error('expireDoc connection closed');
           }
-          yield updatePresence(ctx, conn);
+          yield updatePresence(ctx, conn).catch(err => ctx.logger.error('expireDoc updatePresence error (refreshing the others):', err));
           if (utils.isLiveViewer(conn)) {
             countLiveViewByShard++;
             tenant.countLiveViewByShard++;
@@ -4464,14 +4478,13 @@ exports.install = function (server, app, callbackFunction) {
             tenant.countEditByShard++;
           }
         }
+        yield absentUsers.release(connections, editorData, publish);
         for (const tenantId in tenants) {
           if (Object.hasOwn(tenants, tenantId)) {
             ctx.setTenant(tenantId);
             const tenant = tenants[tenantId];
             yield* collectStats(ctx, tenant.countEditByShard, tenant.countLiveViewByShard, tenant.countViewByShard);
-            yield editorStat.setEditorConnectionsCountByShard(ctx, SHARD_ID, tenant.countEditByShard);
-            yield editorStat.setLiveViewerConnectionsCountByShard(ctx, SHARD_ID, tenant.countLiveViewByShard);
-            yield editorStat.setViewerConnectionsCountByShard(ctx, SHARD_ID, tenant.countViewByShard);
+            yield shardConnectionCounts.set(editorStat, ctx, tenant.countEditByShard, tenant.countLiveViewByShard, tenant.countViewByShard);
             if (clientStatsD) {
               //todo with multitenant
               const countEdit = yield editorStat.getEditorConnectionsCount(ctx, connections);
@@ -4489,9 +4502,7 @@ exports.install = function (server, app, callbackFunction) {
           aggregationCtx.init(tenantManager.getDefautTenant(), ctx.docId, ctx.userId);
           //yield ctx.initTenantCache();//no need
           yield* collectStats(aggregationCtx, countEditByShard, countLiveViewByShard, countViewByShard);
-          yield editorStat.setEditorConnectionsCountByShard(aggregationCtx, SHARD_ID, countEditByShard);
-          yield editorStat.setLiveViewerConnectionsCountByShard(aggregationCtx, SHARD_ID, countLiveViewByShard);
-          yield editorStat.setViewerConnectionsCountByShard(aggregationCtx, SHARD_ID, countViewByShard);
+          yield shardConnectionCounts.set(editorStat, aggregationCtx, countEditByShard, countLiveViewByShard, countViewByShard);
         }
         ctx.initDefault();
       } catch (err) {
@@ -4565,23 +4576,13 @@ exports.install = function (server, app, callbackFunction) {
       ];
       const requestPromises = tables.map(table => isSchemaCompatible(table));
 
-      Promise.all(requestPromises).then(
-        checkResult => {
-          if (checkResult.includes(false)) {
-            return;
-          }
-          editorData
-            .connect()
-            .then(() => editorStat.connect())
-            .then(() => callbackFunction())
-            .catch(err => {
-              operationContext.global.logger.error('editorData error:', err);
-            });
-        },
-        error => operationContext.global.logger.error('getTableColumns error:', error)
-      );
+      installStartup.finish(Promise.all(requestPromises), {editorData, editorStat});
     });
   });
+};
+exports.cancelStartup = function () {
+  startupAttempt?.cancel();
+  startupAttempt = undefined;
 };
 exports.setLicenseInfo = async function (globalCtx, data, original) {
   tenantManager.setDefLicense(data, original);
@@ -4904,6 +4905,12 @@ exports.commandFromServer = function (req, res) {
       ctx.logger.info('commandFromServer end : %s', outputBuffer);
     }
   });
+};
+
+exports.close = async function () {
+  socketIoClosing = true;
+  await io?.close?.();
+  await shardConnectionCounts.clear(editorStat);
 };
 
 exports.shutdown = function (req, res) {
