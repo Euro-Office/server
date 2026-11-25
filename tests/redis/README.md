@@ -110,7 +110,9 @@ docker rm -f local-cluster-7000 local-cluster-7001 local-cluster-7002 \
   local-cluster-7003 local-cluster-7004 local-cluster-7005 2>/dev/null || true
 ```
 
-Start six Redis nodes:
+Start six Redis nodes. Redis 8.12 and later do not start a cluster node whose
+cluster bus has no TLS unless `--cluster-bus-port-protected-mode no` is set.
+Leave that option out for older Redis versions and for Valkey, which reject it.
 
 ```sh
 for port in 7000 7001 7002 7003 7004 7005; do
@@ -123,7 +125,8 @@ for port in 7000 7001 7002 7003 7004 7005; do
     --masterauth redis-editor-data-password \
     --cluster-announce-ip 127.0.0.1 \
     --cluster-announce-port "$port" \
-    --cluster-announce-bus-port "$((port + 10000))"
+    --cluster-announce-bus-port "$((port + 10000))" \
+    --cluster-bus-port-protected-mode no
 done
 ```
 

@@ -79,7 +79,7 @@ jobs:
       - id: matrix
         run: |
           set -euo pipefail
-          echo 'matrix={"include":[{"name":"redis-7.0.15","image":"redis:7.0.15-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-7.2","image":"redis:7.2-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-8","image":"redis:8-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"valkey-7.2","image":"valkey/valkey:7.2-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-8","image":"valkey/valkey:8-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-9","image":"valkey/valkey:9-alpine","server_command":"valkey-server","cli_command":"valkey-cli"}]}' >> "$GITHUB_OUTPUT"
+          echo 'matrix={"include":[{"name":"redis-7.0.15","image":"redis:7.0.15-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-7.2","image":"redis:7.2-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-8","image":"redis:8-alpine","server_command":"redis-server","cli_command":"redis-cli","cluster_args":"--cluster-bus-port-protected-mode no"},{"name":"valkey-7.2","image":"valkey/valkey:7.2-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-8","image":"valkey/valkey:8-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-9","image":"valkey/valkey:9-alpine","server_command":"valkey-server","cli_command":"valkey-cli"}]}' >> "$GITHUB_OUTPUT"
           base_matrix='[{"name":"redis-7.0.15","image":"redis:7.0.15-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-7.2","image":"redis:7.2-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"redis-8","image":"redis:8-alpine","server_command":"redis-server","cli_command":"redis-cli"},{"name":"valkey-7.2","image":"valkey/valkey:7.2-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-8","image":"valkey/valkey:8-alpine","server_command":"valkey-server","cli_command":"valkey-cli"},{"name":"valkey-9","image":"valkey/valkey:9-alpine","server_command":"valkey-server","cli_command":"valkey-cli"}]'
           sentinel_matrix=$(jq -c '{include: [.[] as $item | ["password", "unauthenticated", "acl"][] | $item + {auth: .}]}' <<< "$base_matrix")
           echo "sentinel_matrix=$sentinel_matrix" >> "$GITHUB_OUTPUT"
@@ -232,6 +232,10 @@ jobs:
         run: |
           set -euo pipefail
           container_prefix="${{ matrix.name }}-cluster"
+          # Redis 8.12 and later refuse a cluster bus without TLS unless
+          # cluster-bus-port-protected-mode is off; older Redis and Valkey
+          # reject that option, so only the matrix entries that need it set it.
+          read -r -a cluster_args <<< "${{ matrix.cluster_args }}"
           for port in 7000 7001 7002 7003 7004 7005; do
             docker run --name "${container_prefix}-$port" --network host -d "${{ matrix.image }}" \
               "${{ matrix.server_command }}" --port "$port" --bind 127.0.0.1 --protected-mode no \
@@ -240,13 +244,18 @@ jobs:
               --requirepass "$REDIS_TEST_PASSWORD" --masterauth "$REDIS_TEST_PASSWORD" \
               --cluster-announce-ip 127.0.0.1 \
               --cluster-announce-port "$port" \
-              --cluster-announce-bus-port "$((port + 10000))"
+              --cluster-announce-bus-port "$((port + 10000))" \
+              "${cluster_args[@]}"
           done
           for port in 7000 7001 7002 7003 7004 7005; do
             for attempt in $(seq 1 30); do
               docker exec "${container_prefix}-7000" "${{ matrix.cli_command }}" \
                 -h 127.0.0.1 -p "$port" -a "$REDIS_TEST_PASSWORD" ping && break
-              test "$attempt" -lt 30 || exit 1
+              if [ "$attempt" -ge 30 ]; then
+                docker logs "${container_prefix}-7000" || true
+                docker logs "${container_prefix}-$port" || true
+                exit 1
+              fi
               sleep 1
             done
           done
