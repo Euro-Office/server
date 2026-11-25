@@ -90,10 +90,12 @@ describe('editorDataRedis stat key expiry', () => {
     assert.ok((await pttl(store, connection)) > 100);
 
     await store.addPresenceUniqueUsersOfMonth(ctx, 'editor', period, {version: 1});
-    await store._command(['PEXPIRE', monthIndex, '20']);
-    await wait(5);
+    // A write for a period that is already stored only refreshes the index
+    // TTL; it does not create the index again. The shortened TTL must not run
+    // out before that write, also on a slow runner.
+    await store._command(['PEXPIRE', monthIndex, '60000']);
     await store.addPresenceUniqueUsersOfMonth(ctx, 'viewer', period, {version: 2});
-    assert.ok((await pttl(store, monthIndex)) > 100);
+    assert.ok((await pttl(store, monthIndex)) > 60000);
   });
 
   test('removes both stat indexes after a short idle TTL', async () => {
