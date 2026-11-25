@@ -159,6 +159,17 @@ interval, and an interval longer than a timer allows (about 24.8 days) is
 capped. None of these stops DocService from starting. A tenant's presence or
 shard TTL is raised to at least twice the interval DocService uses.
 
+A DocService that stops without closing its connections (killed, out of
+memory, a lost node, or a shutdown that leaves its users to reconnect
+elsewhere) leaves their presence entries and locks in Redis. On each refresh,
+every DocService also checks the documents its users have open: it removes the
+expired presence entries, releases the locks of users who no longer have a
+presence entry, and tells the remaining users, as when a user leaves. A user
+who does not come back therefore keeps the others out of the parts they had
+locked for at most the presence TTL plus one interval (with the defaults, 300
+seconds plus up to 2 minutes). Nothing is released while no presence entry is
+left: GC then handles the whole document.
+
 Saved status has a separate claim lease. A claim is created only when a save
 result is consumed: the backend creates a per-document `saved:claim` key and
 removes the `saved` key as one operation. The claim prevents another operation

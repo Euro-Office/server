@@ -11,12 +11,13 @@ const {
   GET_PRESENCE_SCRIPT,
   REMOVE_PRESENCE_SCRIPT,
   PREPARE_PRESENCE_REMOVAL_SCRIPT,
+  RELEASE_ABSENT_USERS_SCRIPT,
   SYNC_DOCUMENT_PRESENCE_INDEX_SCRIPT
 } = require('../scripts');
 const redisConnection = require('../redisConnection');
 const {documentMember} = require('../redisKeys');
 const {cfgExpPresence} = require('../editorDataSettings');
-const {refreshedTtlSeconds, toRedisString, losslessText} = require('../redisValueCodec');
+const {refreshedTtlSeconds, toRedisString, losslessText, fromLosslessText, decodeHash} = require('../redisValueCodec');
 
 module.exports = function attachPresence(EditorData) {
   EditorData.prototype._syncPresenceIndex = function (ctx, docId, expected, desired) {
@@ -99,6 +100,25 @@ module.exports = function attachPresence(EditorData) {
       }
     }
     return values.map(toRedisString);
+  };
+
+  // Drops expired presence entries and releases the locks of users who are no
+  // longer present (their process died, see RELEASE_ABSENT_USERS_SCRIPT).
+  // connectedUserIds are the users connected to this process: they keep their
+  // locks whatever their presence entry says. The documents index is not
+  // touched: the remaining entries keep the document's latest expiry.
+  EditorData.prototype._releaseAbsentUsers = async function (ctx, docId, connectedUserIds = []) {
+    const keys = this._docKeys(ctx, docId);
+    const result = await this._eval(
+      RELEASE_ABSENT_USERS_SCRIPT,
+      [keys.presenceSet, keys.presenceHash, keys.locks],
+      connectedUserIds.map(userId => String(userId))
+    );
+    return {
+      expiredUsers: (result?.[0] || []).map(fromLosslessText),
+      locks: Object.values(decodeHash(result?.[1])).filter(lock => lock && typeof lock === 'object'),
+      presence: (result?.[2] || []).map(toRedisString)
+    };
   };
 
   EditorData.prototype.removePresenceDocument = async function (ctx, docId) {

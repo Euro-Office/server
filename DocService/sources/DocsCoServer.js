@@ -95,6 +95,7 @@ const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
 const aiProxyHandler = require('./ai/aiProxyHandler');
 const {createStartupAttempt} = require('./startupRedis');
+const absentUsers = require('./absentUsers');
 
 const cfgEditorDataStorage = config.get('services.CoAuthoring.server.editorDataStorage');
 const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatStorage');
@@ -159,13 +160,12 @@ if (process.env.REDIS_SERVER_DB_KEYS_NUM) {
 }
 const clientStatsD = statsDClient.getClient();
 let connections = []; // Active connections
-let io;
+let io, startupAttempt;
 const lockDocumentsTimerId = {}; //to drop connection that can't unlockDocument
 let pubsub;
 let queue;
 let shutdownFlag = false;
 let preStopFlag = false;
-let startupAttempt;
 let socketIoClosing = false; // this process closed Socket.IO (shutdown); see 'disconnect'
 const expDocumentsStep = gc.getDocumentsExpireStep();
 
@@ -2243,8 +2243,7 @@ exports.install = function (server, app, callbackFunction) {
           try {
             ctx.initFromConnection(conn);
             if (socketIoClosing) {
-              // Exiting: keep the editor data as a killed process would; the user
-              // reconnects elsewhere or GC there handles the expired presence.
+              // Exiting: keep the editor data for a reconnect elsewhere, as a killed process would (see absentUsers.js).
               ctx.logger.info('closeDocument skipped: the server is shutting down');
               return;
             }
@@ -4479,6 +4478,7 @@ exports.install = function (server, app, callbackFunction) {
             tenant.countEditByShard++;
           }
         }
+        yield absentUsers.release(connections, editorData, publish);
         for (const tenantId in tenants) {
           if (Object.hasOwn(tenants, tenantId)) {
             ctx.setTenant(tenantId);
