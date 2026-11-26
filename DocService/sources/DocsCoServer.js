@@ -3376,7 +3376,20 @@ exports.install = function (server, app, callbackFunction) {
           try {
             const puckerIndex = yield* getChangesIndex(ctx, docId);
             let bIsSuccessRestore = true;
-            if (puckerIndex > 0) {
+            //changes of other users that the client missed while it was disconnected (sent only in fast co-editing)
+            let missedChanges = null;
+            const syncChangesIndex = data['syncChangesIndex'];
+            if (Number.isInteger(syncChangesIndex) && 0 <= syncChangesIndex && syncChangesIndex < puckerIndex) {
+              const tenPubSubMaxChanges = ctx.getCfg('services.CoAuthoring.pubsub.maxChanges', cfgPubSubMaxChanges);
+              if (puckerIndex - syncChangesIndex <= tenPubSubMaxChanges) {
+                const objMissedChanges = yield* getDocumentChanges(ctx, docId, syncChangesIndex, puckerIndex);
+                const arrMissedChanges = objMissedChanges.arrChanges;
+                if (arrMissedChanges.length === puckerIndex - syncChangesIndex && arrMissedChanges.every(change => change['user'] !== curUserId)) {
+                  missedChanges = arrMissedChanges;
+                }
+              }
+            }
+            if (puckerIndex > 0 && !missedChanges) {
               const objChangesDocument = yield* getDocumentChanges(ctx, docId, puckerIndex - 1, puckerIndex);
               const change = objChangesDocument.arrChanges[objChangesDocument.getLength() - 1];
               if (change) {
@@ -3407,6 +3420,17 @@ exports.install = function (server, app, callbackFunction) {
                 }
                 if (!wopiLockRes.error) {
                   yield* authRestore(ctx, conn, data.sessionId);
+                  if (missedChanges) {
+                    ctx.logger.info('restore with missed changes: syncChangesIndex = %s; changesIndex = %s', syncChangesIndex, puckerIndex);
+                    sendData(ctx, conn, {
+                      type: 'saveChanges',
+                      changes: missedChanges,
+                      changesIndex: puckerIndex,
+                      syncChangesIndex: puckerIndex,
+                      endSaveChanges: true,
+                      locks: []
+                    });
+                  }
                 } else {
                   yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'Restore error. Wopi lock error.', constants.RESTORE_CODE, true);
                 }
