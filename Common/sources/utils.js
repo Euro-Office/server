@@ -78,6 +78,7 @@ const cfgSecret = config.get('aesEncrypt.secret');
 const cfgAESConfig = config.util.cloneDeep(config.get('aesEncrypt.config'));
 const cfgRequesFilteringAgent = config.get('services.CoAuthoring.request-filtering-agent');
 const cfgStorageExternalHost = config.get('storage.externalHost');
+const cfgInternalUrl = config.get('services.CoAuthoring.server.internalUrl');
 const cfgExternalRequestDirectIfIn = config.get('externalRequest.directIfIn');
 const cfgExternalRequestAction = config.get('externalRequest.action');
 const cfgWinCa = config.util.cloneDeep(config.get('win-ca'));
@@ -346,8 +347,16 @@ async function downloadUrlPromise(ctx, uri, optTimeout, optLimit, opt_Authorizat
   const tenTenantRequestDefaults = ctx.getCfg('services.CoAuthoring.requestDefaults', cfgRequestDefaults);
   const tenTokenOutboxHeader = ctx.getCfg('services.CoAuthoring.token.outbox.header', cfgTokenOutboxHeader);
   const tenTokenOutboxPrefix = ctx.getCfg('services.CoAuthoring.token.outbox.prefix', cfgTokenOutboxPrefix);
+  const tenInternalUrl = ctx.getCfg('services.CoAuthoring.server.internalUrl', cfgInternalUrl);
+  const tenStorageExternalHost = ctx.getCfg('storage.externalHost', cfgStorageExternalHost);
   const sizeLimit = optLimit || Number.MAX_VALUE;
   uri = URI.serialize(URI.parse(uri));
+  if (tenInternalUrl && tenStorageExternalHost) {
+    const externalOrigin = tenStorageExternalHost.replace(/\/$/, '');
+    if (uri.startsWith(externalOrigin + '/') || uri === externalOrigin) {
+      uri = tenInternalUrl.replace(/\/$/, '') + uri.slice(externalOrigin.length);
+    }
+  }
   const options = config.util.cloneDeep(tenTenantRequestDefaults);
 
   //baseRequest creates new agent(win-ca injects in globalAgent)
