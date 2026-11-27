@@ -94,6 +94,8 @@ const queueService = require('./../../Common/sources/taskqueueRabbitMQ');
 const operationContext = require('./../../Common/sources/operationContext');
 const tenantManager = require('./../../Common/sources/tenantManager');
 const aiProxyHandler = require('./ai/aiProxyHandler');
+const {createStartupAttempt} = require('./startupRedis');
+const absentUsers = require('./absentUsers');
 
 const cfgEditorDataStorage = config.get('services.CoAuthoring.server.editorDataStorage');
 const cfgEditorStatStorage = config.get('services.CoAuthoring.server.editorStatStorage');
@@ -135,7 +137,6 @@ const cfgImageSize = config.get('services.CoAuthoring.server.limits_image_size')
 const cfgTypesUpload = config.get('services.CoAuthoring.utils.limits_image_types_upload');
 const cfgForceSaveUsingButtonWithoutChanges = config.get('services.CoAuthoring.server.forceSaveUsingButtonWithoutChanges');
 //todo tenant
-const cfgExpDocumentsCron = config.get('services.CoAuthoring.expire.documentsCron');
 const cfgRefreshLockInterval = ms(config.get('wopi.refreshLockInterval'));
 const cfgSocketIoConnection = config.util.cloneDeep(config.get('services.CoAuthoring.socketio.connection'));
 const cfgTableResult = config.get('services.CoAuthoring.sql.tableResult');
@@ -159,15 +160,18 @@ if (process.env.REDIS_SERVER_DB_KEYS_NUM) {
 }
 const clientStatsD = statsDClient.getClient();
 let connections = []; // Active connections
+let io, startupAttempt;
 const lockDocumentsTimerId = {}; //to drop connection that can't unlockDocument
 let pubsub;
 let queue;
 let shutdownFlag = false;
 let preStopFlag = false;
-const expDocumentsStep = gc.getCronStep(cfgExpDocumentsCron);
+let socketIoClosing = false; // this process closed Socket.IO (shutdown); see 'disconnect'
+const expDocumentsStep = gc.getDocumentsExpireStep();
 
 const MIN_SAVE_EXPIRATION = 60000;
 const SHARD_ID = crypto.randomBytes(16).toString('base64'); //16 as guid
+const shardConnectionCounts = require('./shardConnectionCounts').create(SHARD_ID);
 
 const PRECISION = [
   {name: 'hour', val: ms('1h')},
@@ -485,7 +489,7 @@ function addPresence(ctx, conn, updateCunters) {
 }
 async function updatePresence(ctx, conn) {
   if (editorData.updatePresence) {
-    return await editorData.updatePresence(ctx, conn.docId, conn.user.id);
+    return await editorData.updatePresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
   } else {
     //todo remove if after 7.6. code for backward compatibility, because redis in separate repo
     return await editorData.addPresence(ctx, conn.docId, conn.user.id, utils.getConnectionInfoStr(conn));
@@ -493,7 +497,7 @@ async function updatePresence(ctx, conn) {
 }
 function removePresence(ctx, conn) {
   return co(function* () {
-    yield editorData.removePresence(ctx, conn.docId, conn.user.id);
+    yield editorData.removePresence(ctx, conn.docId, conn.user.id, conn.id);
     yield updatePresenceCounters(ctx, conn, -1);
   });
 }
@@ -525,6 +529,8 @@ function fillJwtByConnection(ctx, conn) {
     doc.key = conn.docId;
     doc.permissions = conn.permissions;
     doc.ds_encrypted = conn.encrypted;
+    doc.referenceData = conn.referenceData;
+    doc.title = conn.fileName;
     const edit = payload.editorConfig;
     //todo
     //edit.callbackUrl = callbackUrl;
@@ -640,17 +646,17 @@ function* updateEditUsers(ctx, licenseInfo, userId, anonym, isLiveViewer) {
     yield editorStat.addPresenceUniqueUsersOfMonth(ctx, userId, period, {anonym, firstOpenDate: now.toISOString()});
   }
 }
-function* getEditorsCount(ctx, docId, opt_hvals) {
+function* getEditorsCount(ctx, docId, opt_presenceEntries) {
   let elem,
     editorsCount = 0;
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    elem = JSON.parse(presenceEntries[i]);
     if (!elem.view && !elem.isCloseCoAuthoring) {
       editorsCount++;
       break;
@@ -658,8 +664,8 @@ function* getEditorsCount(ctx, docId, opt_hvals) {
   }
   return editorsCount;
 }
-function* hasEditors(ctx, docId, opt_hvals) {
-  const editorsCount = yield* getEditorsCount(ctx, docId, opt_hvals);
+function* hasEditors(ctx, docId, opt_presenceEntries) {
+  const editorsCount = yield* getEditorsCount(ctx, docId, opt_presenceEntries);
   return editorsCount > 0;
 }
 function* isUserReconnect(ctx, docId, userId, connectionId) {
@@ -707,13 +713,37 @@ function* addTask(data, priority, opt_queue, opt_expiration) {
   const realQueue = opt_queue ? opt_queue : queue;
   yield realQueue.addTask(data, priority, opt_expiration);
 }
-function* addResponse(data, opt_queue) {
+function* addResponse(data, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addResponse(data);
+  yield realQueue.addResponse(data, opt_requireConfirm);
 }
-function* addDelayed(data, ttl, opt_queue) {
+// A delayed retry whose response could not be published goes back into the
+// delayed queue for another round of this length (a final save's round waits
+// as long as its next infrastructure retry would: each round uses one up).  If
+// that fails too, the dead letter is requeued after this wait, at most
+// DEAD_LETTER_MAX_REQUEUES times (counted here: a requeued dead letter comes
+// back unchanged). Failed abandonment shares this budget; exhaustion leaves
+// the delivery unacknowledged until the broker redelivers it after recovery.
+const DEAD_LETTER_REQUEUE_DELAY_MS = 2000;
+const DEAD_LETTER_MAX_REQUEUES = 30;
+// Per process: a letter that moved to another instance is forgotten here after
+// an hour.
+const deadLetterRequeues = new Map();
+function countDeadLetterRequeue(key) {
+  const now = Date.now();
+  for (const [entryKey, entry] of deadLetterRequeues) {
+    if (now - entry.at > 3600000) {
+      deadLetterRequeues.delete(entryKey);
+    }
+  }
+  const entry = deadLetterRequeues.get(key);
+  const count = (entry?.count || 0) + 1;
+  deadLetterRequeues.set(key, {...entry, count, at: now});
+  return count;
+}
+function* addDelayed(data, ttl, opt_queue, opt_requireConfirm) {
   const realQueue = opt_queue ? opt_queue : queue;
-  yield realQueue.addDelayed(data, ttl);
+  yield realQueue.addDelayed(data, ttl, opt_requireConfirm);
 }
 function* removeResponse(data) {
   yield queue.removeResponse(data);
@@ -791,7 +821,7 @@ function parseUrl(ctx, callbackUrl) {
       href: parseObject.href
     };
   } catch (e) {
-    ctx.logger.error('error parseUrl %s: %s', callbackUrl, e.stack);
+    ctx.logger.error('error parseUrl %s:', callbackUrl, e);
     result = null;
   }
 
@@ -799,12 +829,14 @@ function parseUrl(ctx, callbackUrl) {
 }
 
 async function getCallback(ctx, id, opt_userIndex) {
+  const selectRes = await taskResult.select(ctx, id);
+  return getCallbackFromRow(ctx, selectRes[0], opt_userIndex);
+}
+function getCallbackFromRow(ctx, row, opt_userIndex) {
   let callbackUrl = null;
   let baseUrl = null;
   let wopiParams = null;
-  const selectRes = await taskResult.select(ctx, id);
-  if (selectRes.length > 0) {
-    const row = selectRes[0];
+  if (row) {
     if (row.callback) {
       callbackUrl = sqlBase.UserCallback.prototype.getCallbackByUserIndex(ctx, row.callback, opt_userIndex);
       wopiParams = wopiClient.parseWopiCallback(ctx, callbackUrl, row.callback);
@@ -931,6 +963,20 @@ async function getForceSaveUrl(ctx, baseUrl, convertInfo) {
   return null;
 }
 
+// A losing Form/Internal request can still report an active force-save.
+// Reread the store because checkAndStartForceSave returns undefined for both
+// an active save and a missing winner; storage errors must propagate.
+async function markForceSaveInProgress(ctx, docId, type, res) {
+  if (res.startedForceSave || (commonDefines.c_oAscForceSaveTypes.Form !== type && commonDefines.c_oAscForceSaveTypes.Internal !== type)) {
+    return;
+  }
+  const forceSave = await editorData.getForceSave(ctx, docId);
+  if (forceSave?.started && !forceSave.ended) {
+    res.ok = true;
+    res.inProgress = true;
+  }
+}
+
 async function applyForceSaveCache(
   ctx,
   docId,
@@ -980,6 +1026,7 @@ async function applyForceSaveCache(
         await editorData.checkAndSetForceSave(ctx, docId, forceSave.time, forceSave.index, false, false, null);
         res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
         res.ok = !!res.startedForceSave;
+        await markForceSaveInProgress(ctx, docId, type, res);
       }
     } else {
       res.notModified = true;
@@ -1000,6 +1047,7 @@ async function applyForceSaveCache(
     }
     res.startedForceSave = await editorData.checkAndStartForceSave(ctx, docId);
     res.ok = !!res.startedForceSave;
+    await markForceSaveInProgress(ctx, docId, type, res);
     return res;
   } else if (commonDefines.c_oAscForceSaveTypes.Form === type || commonDefines.c_oAscForceSaveTypes.Internal === type) {
     res.ok = true;
@@ -1294,32 +1342,98 @@ function* startRPC(ctx, conn, responseKey, data) {
   }
   ctx.logger.debug('startRPC end');
 }
-function handleDeadLetter(data, ack) {
+// Optional queue injection exercises dead-letter recovery without starting the HTTP server.
+exports.handleDeadLetter = handleDeadLetter;
+function handleDeadLetter(data, ack, opt_nack, opt_isDeliveryLive, opt_queue) {
   return co(function* () {
     const ctx = new operationContext.Context();
+    let requeue = false;
+    let shouldAck = true;
+    let cmd;
+    let requeueKey;
+    let abandoning = false;
+    const isLive = () => !opt_isDeliveryLive || opt_isDeliveryLive();
+    function* abandon() {
+      abandoning = true;
+      const entry = deadLetterRequeues.get(requeueKey);
+      deadLetterRequeues.set(requeueKey, {...entry, abandoning: true, count: entry?.count || 0, at: Date.now()});
+      yield canvasService.abandonSfcRetry(ctx, cmd);
+      deadLetterRequeues.delete(requeueKey);
+    }
     try {
+      if (!isLive()) {
+        return;
+      }
       let isRequeued = false;
       const task = new commonDefines.TaskQueueData(JSON.parse(data));
       if (task) {
         ctx.initFromTaskQueueData(task);
+        cmd = task.getCmd();
+        requeueKey = `${ctx.tenant}/${cmd.getDocId()}/${cmd.getSaveKey()}/${cmd.getAttempt()}`;
         yield ctx.initTenantCache();
-        const cmd = task.getCmd();
+        if (!isLive()) {
+          return;
+        }
+        // A failed terminal transition must resume abandonment, not publication.
+        if ('sfc' === cmd.getCommand() && deadLetterRequeues.get(requeueKey)?.abandoning) {
+          yield* abandon();
+          return;
+        }
         ctx.logger.warn('handleDeadLetter start: %s', data);
         const forceSave = cmd.getForceSave();
         if (forceSave && commonDefines.c_oAscForceSaveTypes.Timeout == forceSave.getType()) {
           const actualForceSave = yield editorData.getForceSave(ctx, cmd.getDocId());
+          if (!isLive()) {
+            return;
+          }
           //check that there are no new changes
           if (actualForceSave && forceSave.getTime() === actualForceSave.time && forceSave.getIndex() === actualForceSave.index) {
             //requeue task
-            yield* addTask(task, constants.QUEUE_PRIORITY_VERY_LOW, undefined, getForceSaveExpiration(ctx));
+            yield* addTask(task, constants.QUEUE_PRIORITY_VERY_LOW, opt_queue, getForceSaveExpiration(ctx));
             isRequeued = true;
           }
         } else if (!forceSave && task.getFromChanges()) {
-          yield* addTask(task, constants.QUEUE_PRIORITY_NORMAL, undefined);
+          yield* addTask(task, constants.QUEUE_PRIORITY_NORMAL, opt_queue);
           isRequeued = true;
         } else if (cmd.getAttempt()) {
           ctx.logger.warn('handleDeadLetter addResponse delayed = %d', cmd.getAttempt());
-          yield* addResponse(task);
+          // The dead letter is the only copy of a delayed retry, with all its
+          // state.  Publish it with broker confirmation.
+          try {
+            yield* addResponse(task, opt_queue, true);
+            if (isLive()) {
+              deadLetterRequeues.delete(requeueKey);
+            }
+          } catch (err) {
+            if (!isLive()) {
+              return;
+            }
+            // Response channel unavailable: put the retry back into the delayed
+            // queue for another round rather than hold or spin on the dead
+            // letter (which would block other dead letters on ActiveMQ).  Each
+            // round counts against the save's infrastructure budget; past it the save
+            // is given up as after its own retries, within the window its pending
+            // status lasts (isUpdateVersionExpired).
+            ctx.logger.warn('handleDeadLetter addResponse error:', err);
+            const isSfc = 'sfc' === cmd.getCommand();
+            if (isSfc && canvasService.isSfcRetryBudgetExhausted(ctx, cmd)) {
+              yield* abandon();
+            } else {
+              // A fixed short round would use the budget up long before the
+              // window that the save's pending status lasts.
+              const delay = isSfc ? canvasService.getSfcInfraRetryDelay(ctx, cmd) : DEAD_LETTER_REQUEUE_DELAY_MS;
+              cmd.setAttempt((cmd.getAttempt() || 0) + 1);
+              try {
+                yield* addDelayed(task, delay, opt_queue, true);
+                if (isLive()) {
+                  deadLetterRequeues.delete(requeueKey);
+                }
+              } catch (delayErr) {
+                requeue = !!opt_nack;
+                throw delayErr;
+              }
+            }
+          }
         } else {
           //simulate error response
           cmd.setStatusInfo(constants.CONVERT_DEAD_LETTER);
@@ -1328,9 +1442,43 @@ function handleDeadLetter(data, ack) {
       }
       ctx.logger.warn('handleDeadLetter end: requeue = %s', isRequeued);
     } catch (err) {
-      ctx.logger.error('handleDeadLetter error: %s', err.stack);
+      ctx.logger.error('handleDeadLetter error:', err);
+      if (!isLive()) {
+        return;
+      }
+      if ('sfc' === cmd?.getCommand()) {
+        // Keep a valid final save until recovery or its terminal transition succeeds.
+        // Without a nack callback it remains unacked for broker redelivery.
+        shouldAck = false;
+        const count = countDeadLetterRequeue(requeueKey);
+        requeue = !!opt_nack && count <= DEAD_LETTER_MAX_REQUEUES;
+        if (!abandoning && count > DEAD_LETTER_MAX_REQUEUES) {
+          try {
+            yield* abandon();
+            shouldAck = true;
+            requeue = false;
+          } catch (abandonErr) {
+            ctx.logger.error('handleDeadLetter abandonment error:', abandonErr);
+          }
+        }
+        if (!shouldAck && count > DEAD_LETTER_MAX_REQUEUES) {
+          ctx.logger.error('handleDeadLetter: automatic requeues exhausted; delivery remains unacknowledged for broker redelivery');
+        }
+      }
     } finally {
-      ack();
+      if (shouldAck && !requeue && isLive()) {
+        ack();
+      }
+    }
+    if (requeue && isLive()) {
+      yield new Promise(resolve => setTimeout(resolve, DEAD_LETTER_REQUEUE_DELAY_MS));
+      try {
+        if (isLive()) {
+          opt_nack();
+        }
+      } catch (err) {
+        ctx.logger.error('handleDeadLetter requeue error:', err);
+      }
     }
   });
 }
@@ -1404,7 +1552,7 @@ async function sendStatusDocument(ctx, docId, bChangeBase, opt_userAction, opt_u
     replyData = await sendServerRequest(ctx, uri, sendData);
   } catch (err) {
     replyData = null;
-    ctx.logger.error('postData error: url = %s;data = %j %s', uri, sendData, err.stack);
+    ctx.logger.error('postData error: url = %s;data = %j', uri, sendData, err);
   }
   await onReplySendStatusDocument(ctx, docId, replyData);
   return sendData;
@@ -1415,7 +1563,7 @@ function parseReplyData(ctx, replyData) {
     try {
       res = JSON.parse(replyData);
     } catch (e) {
-      ctx.logger.error('error parseReplyData: data = %s %s', replyData, e.stack);
+      ctx.logger.error('error parseReplyData: data = %s', replyData, e);
       res = null;
     }
   }
@@ -1511,41 +1659,126 @@ function* bindEvents(ctx, docId, callback, baseUrl, opt_userAction, opt_userData
   }
   return null;
 }
-const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex) {
-  //wopi unlock
-  const getRes = yield getCallback(ctx, docId, opt_userIndex);
-  if (getRes && getRes.wopiParams && getRes.wopiParams.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
-    const unlockRes = yield wopiClient.unlock(ctx, getRes.wopiParams);
-    const unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
-    if (unlockInfo && unlockRes) {
-      yield canvasService.commandOpenStartPromise(ctx, docId, undefined, unlockInfo);
+const unlockWopiDoc = co.wrap(function* (ctx, docId, opt_userIndex, opt_changesMask) {
+  let unlockInfo;
+  const unlock = async lockedRow => {
+    const getRes = opt_changesMask ? getCallbackFromRow(ctx, lockedRow, opt_userIndex) : await getCallback(ctx, docId, opt_userIndex);
+    if (getRes?.wopiParams?.userAuth && 'view' !== getRes.wopiParams.userAuth.mode) {
+      // Unlock is best effort: a retry may get 409 (already unlocked), and an
+      // expired lock or token must not prevent a save from completing.
+      if (await wopiClient.unlock(ctx, getRes.wopiParams)) {
+        unlockInfo = wopiClient.getWopiUnlockMarker(getRes.wopiParams);
+      }
+    }
+  };
+  if (opt_changesMask) {
+    // Read credentials and send UNLOCK while this save still owns the row.
+    // The preceding storage cleanup has already released its lock.
+    if (!(yield taskResult.withCleanupOwnership(ctx, opt_changesMask, unlock))) {
+      return false;
+    }
+  } else {
+    yield unlock();
+  }
+  if (unlockInfo) {
+    if (opt_changesMask) {
+      // A write on another connection would deadlock inside the ownership
+      // lock. Append conditionally after releasing it; never upsert a new row.
+      const task = new taskResult.TaskResultData();
+      task.tenant = ctx.tenant;
+      task.key = docId;
+      task.callback = unlockInfo;
+      const updated = yield taskResult.updateIf(ctx, task, opt_changesMask);
+      return updated.affectedRows > 0;
+    }
+    yield canvasService.commandOpenStartPromise(ctx, docId, undefined, unlockInfo);
+  }
+  return true;
+});
+// opt_changesMask: the task row as the caller holds it.  Nothing is cleaned if
+// the row no longer matches it (false: the caller's next attempt finds out),
+// and the changes are deleted only while it still does.
+// opt_cleanupOptions: {preserveSavedClaim} keeps the saved-state entries a
+// final save still in flight needs (see savedState.js); {skipWopiUnlock} skips
+// the WOPI UNLOCK (and its task-row update) at the end.
+function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex, opt_savedClaimId, opt_changesMask, opt_cleanupOptions) {
+  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
+  const preserveSavedClaim = opt_cleanupOptions?.preserveSavedClaim === true;
+  if (opt_changesMask) {
+    const selectRes = yield taskResult.select(ctx, docId);
+    const row = selectRes[0];
+    if (!canvasService.taskResultMatchesMask(row, opt_changesMask)) {
+      // Editor data, forgotten files and the WOPI lock are a new owner's now.
+      return false;
     }
   }
-});
-function* cleanDocumentOnExit(ctx, docId, deleteChanges, opt_userIndex) {
-  const tenForgottenFiles = ctx.getCfg('services.CoAuthoring.server.forgottenfiles', cfgForgottenFiles);
 
   //clean redis (redisKeyPresenceSet and redisKeyPresenceHash removed with last element)
-  yield editorData.cleanDocumentOnExit(ctx, docId);
+  const cleanupResult = preserveSavedClaim
+    ? yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId, {preserveSavedClaim: true})
+    : yield editorData.cleanDocumentOnExit(ctx, docId, opt_savedClaimId);
+  if (cleanupResult !== true) {
+    return false;
+  }
   if (preStopFlag && editorStatProxy?.deleteKey) {
     yield editorStatProxy.deleteKey(docId);
   }
   //remove changes
   if (deleteChanges) {
-    yield taskResult.restoreInitialPassword(ctx, docId);
-    sqlBase.deleteChanges(ctx, docId, null);
+    // Conditional like the change deletion: a session that took the row over
+    // since the check above keeps its password.
+    yield taskResult.restoreInitialPassword(ctx, docId, opt_changesMask);
+    if (opt_changesMask) {
+      yield taskResult.deleteChangesIf(ctx, opt_changesMask);
+    } else {
+      // A failed deletion fails the cleanup (an encrypted save
+      // answers saveFile with 400): changes left behind silently would be
+      // replayed by the next open on top of the file that already has them.
+      yield sqlBase.deleteChangesPromise(ctx, docId, null);
+    }
     //delete forgotten after successful send on callbackUrl
-    yield storage.deletePath(ctx, docId, tenForgottenFiles);
+    if (opt_changesMask) {
+      const cleaned = yield taskResult.withCleanupOwnership(ctx, opt_changesMask, () => storage.deletePath(ctx, docId, tenForgottenFiles));
+      if (!cleaned) {
+        return false;
+      }
+    } else {
+      yield storage.deletePath(ctx, docId, tenForgottenFiles);
+    }
   }
-  yield unlockWopiDoc(ctx, docId, opt_userIndex);
+  if (opt_cleanupOptions?.skipWopiUnlock === true) {
+    return true;
+  }
+  return yield unlockWopiDoc(ctx, docId, opt_userIndex, opt_changesMask);
 }
-function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges) {
+/**
+ * Clean up after the final viewer leaves, while preserving a saved-state claim
+ * that an in-flight callback may still need to acknowledge.
+ *
+ * It never sends a WOPI UNLOCK.  The lock belongs to the editors: an editor's own exit
+ * releases it when there was no save, and the final save releases it in its
+ * cleanup (or leaves it to the host's lock expiry when it is abandoned).  An
+ * UNLOCK here has no ownership mask and would race a final save still in
+ * flight: the host could reject its PutFile or let a third party lock the file
+ * mid-save.
+ */
+function* cleanDocumentAfterFinalViewerExit(ctx, docId) {
+  return yield* cleanDocumentOnExit(ctx, docId, false, undefined, undefined, undefined, {preserveSavedClaim: true, skipWopiUnlock: true});
+}
+// opt_closeStatus ({sent}) lets a retried caller send the status only once:
+// it is skipped when `sent` is true and set to true once the status was sent.
+function* cleanDocumentOnExitNoChanges(ctx, docId, opt_userId, opt_userIndex, opt_forceClose, opt_deleteChanges, opt_closeStatus) {
   const userAction = opt_userId ? new commonDefines.OutputAction(commonDefines.c_oAscUserAction.Out, opt_userId) : null;
-  // We send that everyone is gone and there are no changes (to set the status on the server about the end of editing)
-  yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
+  if (!opt_closeStatus?.sent) {
+    // We send that everyone is gone and there are no changes (to set the status on the server about the end of editing)
+    yield sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, opt_userIndex, undefined, undefined, undefined, opt_forceClose);
+    if (opt_closeStatus) {
+      opt_closeStatus.sent = true;
+    }
+  }
   //if the user entered the document, the connection was broken, all information was deleted on the server,
   //when the connection is restored, the userIndex will be saved and it will match the userIndex of the next user
-  yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
+  return yield* cleanDocumentOnExit(ctx, docId, opt_deleteChanges || false, opt_userIndex);
 }
 
 function createSaveTimer(ctx, docId, opt_userId, opt_userIndex, opt_userLcid, opt_queue, opt_noDelay, opt_initShardKey) {
@@ -1647,7 +1880,7 @@ function getRequestParams(ctx, req, _opt_isNotInBody) {
       try {
         res.params = JSON.parse(req.body.toString('utf8'));
       } catch (err) {
-        ctx.logger.debug('getRequestParams error parsing json body: %s', err.stack);
+        ctx.logger.debug('getRequestParams error parsing json body:', err);
       }
     }
     if (!res.params) {
@@ -1689,16 +1922,16 @@ function getLicenseNowUtc() {
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds()) / 1000;
 }
-const getParticipantMap = co.wrap(function* (ctx, docId, opt_hvals) {
+const getParticipantMap = co.wrap(function* (ctx, docId, opt_presenceEntries) {
   const participantsMap = [];
-  let hvals;
-  if (opt_hvals) {
-    hvals = opt_hvals;
+  let presenceEntries;
+  if (opt_presenceEntries) {
+    presenceEntries = opt_presenceEntries;
   } else {
-    hvals = yield editorData.getPresence(ctx, docId, connections);
+    presenceEntries = yield editorData.getPresence(ctx, docId, connections);
   }
-  for (let i = 0; i < hvals.length; ++i) {
-    const elem = JSON.parse(hvals[i]);
+  for (let i = 0; i < presenceEntries.length; ++i) {
+    const elem = JSON.parse(presenceEntries[i]);
     if (!elem.isCloseCoAuthoring) {
       participantsMap.push(elem);
     }
@@ -1769,6 +2002,7 @@ exports.getIsPreStop = getIsPreStop;
 exports.hasChanges = hasChanges;
 exports.cleanDocumentOnExitPromise = co.wrap(cleanDocumentOnExit);
 exports.cleanDocumentOnExitNoChangesPromise = co.wrap(cleanDocumentOnExitNoChanges);
+exports.cleanDocumentAfterFinalViewerExitPromise = co.wrap(cleanDocumentAfterFinalViewerExit);
 exports.unlockWopiDoc = unlockWopiDoc;
 exports.setForceSave = setForceSave;
 exports.startForceSave = startForceSave;
@@ -1815,7 +2049,10 @@ async function encryptPasswordParams(ctx, data) {
 exports.encryptPasswordParams = encryptPasswordParams;
 exports.getOpenFormatByEditor = getOpenFormatByEditor;
 exports.install = function (server, app, callbackFunction) {
-  const io = new Server(server, cfgSocketIoConnection);
+  socketIoClosing = false;
+  startupAttempt?.cancel();
+  const installStartup = (startupAttempt = createStartupAttempt(callbackFunction, operationContext.global.logger));
+  io = new Server(server, cfgSocketIoConnection);
 
   io.use((socket, next) => {
     co(function* () {
@@ -1839,7 +2076,7 @@ exports.install = function (server, app, callbackFunction) {
           }
         }
       } catch (err) {
-        ctx.logger.error('io.use error: %s', err.stack);
+        ctx.logger.error('io.use error:', err);
       } finally {
         ctx.logger.info('io.use end');
         next(res);
@@ -1906,7 +2143,7 @@ exports.install = function (server, app, callbackFunction) {
                 try {
                   yield* auth(ctx, conn, data);
                 } catch (err) {
-                  ctx.logger.error('auth error: %s', err.stack);
+                  ctx.logger.error('auth error:', err);
                   sendDataDisconnectReason(ctx, conn, constants.ACCESS_DENIED_CODE, constants.ACCESS_DENIED_REASON);
                   conn.disconnect(true);
                   return;
@@ -1996,7 +2233,7 @@ exports.install = function (server, app, callbackFunction) {
               }
             }
           } catch (e) {
-            ctx.logger.error('error receiving response: type = %s %s', data && data.type ? data.type : 'null', e.stack);
+            ctx.logger.error('error receiving response: type = %s', data && data.type ? data.type : 'null', e);
           }
         });
       });
@@ -2005,17 +2242,22 @@ exports.install = function (server, app, callbackFunction) {
           const ctx = new operationContext.Context();
           try {
             ctx.initFromConnection(conn);
+            if (socketIoClosing) {
+              // Exiting: keep the editor data for a reconnect elsewhere, as a killed process would (see absentUsers.js).
+              ctx.logger.info('closeDocument skipped: the server is shutting down');
+              return;
+            }
             yield ctx.initTenantCache();
             yield* closeDocument(ctx, conn, reason);
           } catch (err) {
-            ctx.logger.error('Error conn close: %s', err.stack);
+            ctx.logger.error('Error conn close:', err);
           }
         });
       });
 
       _checkLicense(ctx, conn);
     } catch (err) {
-      ctx.logger.error('connection error: %s', err.stack);
+      ctx.logger.error('connection error:', err);
       sendDataDisconnectReason(ctx, conn, constants.DROP_CODE, constants.DROP_REASON);
       conn.disconnect(true);
     }
@@ -2065,6 +2307,7 @@ exports.install = function (server, app, callbackFunction) {
       return;
     }
     let hvals;
+    let localPresenceEmpty = false;
     let participantsTimestamp;
     const tmpUser = conn.user;
     const isView = tmpUser.view;
@@ -2083,12 +2326,14 @@ exports.install = function (server, app, callbackFunction) {
         yield removePresence(ctx, conn);
         hvals = yield editorData.getPresence(ctx, docId, connections);
         participantsTimestamp = Date.now();
-        if (hvals.length <= 0) {
+        localPresenceEmpty = hvals.length <= 0;
+        if (localPresenceEmpty) {
           yield editorData.removePresenceDocument(ctx, docId);
         }
       }
     } else {
       if (!conn.isCloseCoAuthoring && !isView) {
+        yield updatePresenceCounters(ctx, conn, -1); // counted as an editor until now, as a viewer below
         modifyConnectionEditorToView(ctx, conn);
         conn.isCloseCoAuthoring = true;
         yield addPresence(ctx, conn, true);
@@ -2187,8 +2432,9 @@ exports.install = function (server, app, callbackFunction) {
           );
         }
       } else {
-        if (preStopFlag && hvals?.length <= 0 && editorStatProxy?.deleteKey) {
-          yield editorStatProxy.deleteKey(docId);
+        if (localPresenceEmpty) {
+          const left = yield hasChanges(ctx, docId); // GC no longer sees the document: save what a dead editor left
+          yield left ? createSaveTimer(ctx, docId, null, null, null, undefined, true, true) : co(cleanDocumentAfterFinalViewerExit(ctx, docId));
         }
       }
       const sessionType = isView ? 'view' : 'edit';
@@ -2335,7 +2581,7 @@ exports.install = function (server, app, callbackFunction) {
           yield* checkEndAuthLock(ctx, true, false, docId, userId);
           yield* publishCloseUsersConnection(ctx, docId, [userId], false, constants.DROP_CODE, constants.DROP_REASON);
         } catch (e) {
-          ctx.logger.error('lockDocumentsTimerId error: %s', e.stack);
+          ctx.logger.error('lockDocumentsTimerId error:', e);
         }
       });
     }, 1000 * tenExpLockDoc);
@@ -2653,6 +2899,16 @@ exports.install = function (server, app, callbackFunction) {
     }
     return res;
   }
+  /**
+   * @param {object} [referenceData] - integrator file reference, its structure differs per integrator
+   * @returns {object|undefined} the primitive fields only
+   */
+  function pickReferenceData(referenceData) {
+    const fields = Object.entries(referenceData instanceof Object ? referenceData : {}).filter(
+      ([, value]) => typeof value === 'string' || typeof value === 'number'
+    );
+    return fields.length > 0 ? Object.fromEntries(fields) : undefined;
+  }
   function fillDataFromJwt(ctx, decoded, data) {
     let res = true;
     const openCmd = data.openCmd;
@@ -2675,6 +2931,8 @@ exports.install = function (server, app, callbackFunction) {
         //not '=' because if it jwt from previous version, we must use values from data
         Object.assign(data.permissions, doc.permissions);
       }
+      data.referenceData = pickReferenceData(doc.referenceData);
+      data.fileName = doc.title;
       if (openCmd) {
         if (null != doc.fileType) {
           openCmd.format = doc.fileType;
@@ -2793,6 +3051,9 @@ exports.install = function (server, app, callbackFunction) {
     //TODO: Do authorization etc. check md5 or query db
     ctx.logger.debug('auth time: %d', data.time);
     if (data.token && data.user) {
+      // only taken from a validated token, never from the client message
+      delete data.referenceData;
+      delete data.fileName;
       ctx.setUserId(data.user.id);
       const [licenseInfo] = yield tenantManager.getTenantLicense(ctx);
       let isDecoded = false;
@@ -2844,6 +3105,8 @@ exports.install = function (server, app, callbackFunction) {
         }
       }
       ctx.setUserId(data.user.id);
+      ctx.setReferenceData(data.referenceData);
+      ctx.setFileName(data.fileName);
 
       const docId = data.docid;
       const user = data.user;
@@ -2947,6 +3210,8 @@ exports.install = function (server, app, callbackFunction) {
       const curUserId = curUserIdOriginal + curIndexUser;
       conn.tenant = tenantManager.getTenantByConnection(ctx, conn);
       conn.docId = data.docid;
+      conn.referenceData = data.referenceData;
+      conn.fileName = data.fileName;
       conn.permissions = data.permissions;
       conn.user = {
         id: curUserId,
@@ -3049,25 +3314,31 @@ exports.install = function (server, app, callbackFunction) {
           commonDefines.FileStatus.SaveVersion === status ||
           (!bIsRestore &&
             commonDefines.FileStatus.UpdateVersion === status &&
-            Date.now() - result[0]['status_info'] * 60000 > tenExpUpdateVersionStatus)
+            canvasService.isUpdateVersionExpired(ctx, result[0], tenExpUpdateVersionStatus))
         ) {
-          let newStatus = commonDefines.FileStatus.Ok;
+          let updated;
           if (commonDefines.FileStatus.UpdateVersion === status) {
-            ctx.logger.warn('UpdateVersion expired');
-            //FileStatus.None to open file again from new url
-            newStatus = commonDefines.FileStatus.None;
+            // An expired save: open the file again from the integrator's URL
+            // (FileStatus.None), unless the save left its changes behind (an
+            // abandoned save, or a cleanup that never ran): then resume from the
+            // cache with them, so that they are neither lost nor applied twice.
+            const newStatus = yield canvasService.takeOverAbandonedSaveForOpen(ctx, docId, result[0]);
+            updated = undefined !== newStatus;
+          } else {
+            const newStatus = commonDefines.FileStatus.Ok;
+            // Update the status of the file (the build is in progress, you need to stop it)
+            const updateMask = new taskResult.TaskResultData();
+            updateMask.tenant = ctx.tenant;
+            updateMask.key = docId;
+            updateMask.status = status;
+            updateMask.statusInfo = result[0]['status_info'];
+            const updateTask = new taskResult.TaskResultData();
+            updateTask.status = newStatus;
+            updateTask.statusInfo = constants.NO_ERROR;
+            const updateIfRes = yield taskResult.updateIf(ctx, updateTask, updateMask);
+            updated = updateIfRes.affectedRows > 0;
           }
-          // Update the status of the file (the build is in progress, you need to stop it)
-          const updateMask = new taskResult.TaskResultData();
-          updateMask.tenant = ctx.tenant;
-          updateMask.key = docId;
-          updateMask.status = status;
-          updateMask.statusInfo = result[0]['status_info'];
-          const updateTask = new taskResult.TaskResultData();
-          updateTask.status = newStatus;
-          updateTask.statusInfo = constants.NO_ERROR;
-          const updateIfRes = yield taskResult.updateIf(ctx, updateTask, updateMask);
-          if (!(updateIfRes.affectedRows > 0)) {
+          if (!updated) {
             // error version
             //log level is debug because error handled via refreshFile
             yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'Update Version error', constants.UPDATE_VERSION_CODE, true);
@@ -3146,7 +3417,7 @@ exports.install = function (server, app, callbackFunction) {
               yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'Restore error. Document modified.', constants.RESTORE_CODE, true);
             }
           } catch (err) {
-            ctx.logger.error('DataBase error: %s', err.stack);
+            ctx.logger.error('DataBase error:', err);
             yield* sendFileErrorAuth(ctx, conn, data.sessionId, 'DataBase error', constants.RESTORE_CODE, true);
           }
         } else {
@@ -3206,7 +3477,7 @@ exports.install = function (server, app, callbackFunction) {
       const userAction = new commonDefines.OutputAction(commonDefines.c_oAscUserAction.In, tmpUser.idOriginal);
       //make async request to speed up file opening
       sendStatusDocument(ctx, docId, c_oAscChangeBase.No, userAction, userIndex, documentCallback, conn.baseUrl).catch(err =>
-        ctx.logger.error('endAuth sendStatusDocument error: %s', err.stack)
+        ctx.logger.error('endAuth sendStatusDocument error:', err)
       );
       if (!bIsRestore) {
         //check forgotten file
@@ -3885,7 +4156,7 @@ exports.install = function (server, app, callbackFunction) {
         });
         ctx.logger.info('_checkLicense end');
       } catch (err) {
-        ctx.logger.error('_checkLicense error: %s', err.stack);
+        ctx.logger.error('_checkLicense error:', err);
       }
     });
   }
@@ -4122,7 +4393,7 @@ exports.install = function (server, app, callbackFunction) {
             ctx.logger.debug('pubsub unknown message type:%s', msg);
         }
       } catch (err) {
-        ctx.logger.error('pubsub message error: %s', err.stack);
+        ctx.logger.error('pubsub message error:', err);
       }
     });
   };
@@ -4195,7 +4466,7 @@ exports.install = function (server, app, callbackFunction) {
           if (constants.CONN_CLOSED === conn.conn.readyState) {
             ctx.logger.error('expireDoc connection closed');
           }
-          yield updatePresence(ctx, conn);
+          yield updatePresence(ctx, conn).catch(err => ctx.logger.error('expireDoc updatePresence error (refreshing the others):', err));
           if (utils.isLiveViewer(conn)) {
             countLiveViewByShard++;
             tenant.countLiveViewByShard++;
@@ -4207,14 +4478,13 @@ exports.install = function (server, app, callbackFunction) {
             tenant.countEditByShard++;
           }
         }
+        yield absentUsers.release(connections, editorData, publish);
         for (const tenantId in tenants) {
           if (Object.hasOwn(tenants, tenantId)) {
             ctx.setTenant(tenantId);
             const tenant = tenants[tenantId];
             yield* collectStats(ctx, tenant.countEditByShard, tenant.countLiveViewByShard, tenant.countViewByShard);
-            yield editorStat.setEditorConnectionsCountByShard(ctx, SHARD_ID, tenant.countEditByShard);
-            yield editorStat.setLiveViewerConnectionsCountByShard(ctx, SHARD_ID, tenant.countLiveViewByShard);
-            yield editorStat.setViewerConnectionsCountByShard(ctx, SHARD_ID, tenant.countViewByShard);
+            yield shardConnectionCounts.set(editorStat, ctx, tenant.countEditByShard, tenant.countLiveViewByShard, tenant.countViewByShard);
             if (clientStatsD) {
               //todo with multitenant
               const countEdit = yield editorStat.getEditorConnectionsCount(ctx, connections);
@@ -4232,13 +4502,11 @@ exports.install = function (server, app, callbackFunction) {
           aggregationCtx.init(tenantManager.getDefautTenant(), ctx.docId, ctx.userId);
           //yield ctx.initTenantCache();//no need
           yield* collectStats(aggregationCtx, countEditByShard, countLiveViewByShard, countViewByShard);
-          yield editorStat.setEditorConnectionsCountByShard(aggregationCtx, SHARD_ID, countEditByShard);
-          yield editorStat.setLiveViewerConnectionsCountByShard(aggregationCtx, SHARD_ID, countLiveViewByShard);
-          yield editorStat.setViewerConnectionsCountByShard(aggregationCtx, SHARD_ID, countViewByShard);
+          yield shardConnectionCounts.set(editorStat, aggregationCtx, countEditByShard, countLiveViewByShard, countViewByShard);
         }
         ctx.initDefault();
       } catch (err) {
-        ctx.logger.error('expireDoc error: %s', err.stack);
+        ctx.logger.error('expireDoc error:', err);
       } finally {
         setTimeout(expireDoc, expDocumentsStep);
       }
@@ -4277,7 +4545,7 @@ exports.install = function (server, app, callbackFunction) {
         ctx.initDefault();
         ctx.logger.info('refreshWopiLock end');
       } catch (err) {
-        ctx.logger.error('refreshWopiLock error:%s', err.stack);
+        ctx.logger.error('refreshWopiLock error:', err);
       } finally {
         setTimeout(refreshWopiLock, cfgRefreshLockInterval);
       }
@@ -4289,7 +4557,7 @@ exports.install = function (server, app, callbackFunction) {
   pubsub.on('message', pubsubOnMessage);
   pubsub.init(err => {
     if (null != err) {
-      operationContext.global.logger.error('createPubSub error: %s', err.stack);
+      operationContext.global.logger.error('createPubSub error:', err);
     }
 
     queue = new queueService();
@@ -4297,7 +4565,7 @@ exports.install = function (server, app, callbackFunction) {
     queue.on('response', canvasService.receiveTask);
     queue.init(true, true, false, true, true, true, err => {
       if (null != err) {
-        operationContext.global.logger.error('createTaskQueue error: %s', err.stack);
+        operationContext.global.logger.error('createTaskQueue error:', err);
       }
       gc.startGC();
 
@@ -4308,23 +4576,13 @@ exports.install = function (server, app, callbackFunction) {
       ];
       const requestPromises = tables.map(table => isSchemaCompatible(table));
 
-      Promise.all(requestPromises).then(
-        checkResult => {
-          if (checkResult.includes(false)) {
-            return;
-          }
-          editorData
-            .connect()
-            .then(() => editorStat.connect())
-            .then(() => callbackFunction())
-            .catch(err => {
-              operationContext.global.logger.error('editorData error: %s', err.stack);
-            });
-        },
-        error => operationContext.global.logger.error('getTableColumns error: %s', error.stack)
-      );
+      installStartup.finish(Promise.all(requestPromises), {editorData, editorStat});
     });
   });
+};
+exports.cancelStartup = function () {
+  startupAttempt?.cancel();
+  startupAttempt = undefined;
 };
 exports.setLicenseInfo = async function (globalCtx, data, original) {
   tenantManager.setDefLicense(data, original);
@@ -4389,7 +4647,7 @@ exports.healthCheck = function (req, res) {
       output = true;
       ctx.logger.info('healthCheck end');
     } catch (err) {
-      ctx.logger.error('healthCheck error %s', err.stack);
+      ctx.logger.error('healthCheck error', err);
     } finally {
       res.setHeader('Content-Type', 'text/plain');
       res.send(output.toString());
@@ -4633,7 +4891,7 @@ exports.commandFromServer = function (req, res) {
       }
     } catch (err) {
       output.error = commonDefines.c_oAscServerCommandErrors.UnknownError;
-      ctx.logger.error('Error commandFromServer: %s', err.stack);
+      ctx.logger.error('Error commandFromServer:', err);
     } finally {
       let outputBuffer;
       if (postRes) {
@@ -4649,6 +4907,12 @@ exports.commandFromServer = function (req, res) {
   });
 };
 
+exports.close = async function () {
+  socketIoClosing = true;
+  await io?.close?.();
+  await shardConnectionCounts.clear(editorStat);
+};
+
 exports.shutdown = function (req, res) {
   return co(function* () {
     let output = false;
@@ -4659,7 +4923,7 @@ exports.shutdown = function (req, res) {
       ctx.logger.info('shutdown start');
       output = yield shutdown.shutdown(ctx, editorStat, req.method === 'PUT');
     } catch (err) {
-      ctx.logger.error('shutdown error %s', err.stack);
+      ctx.logger.error('shutdown error', err);
     } finally {
       res.setHeader('Content-Type', 'text/plain');
       res.send(output.toString());
@@ -4680,7 +4944,7 @@ exports.preStop = async function (req, res) {
     }
     output = true;
   } catch (err) {
-    ctx.logger.error('preStop error %s', err.stack);
+    ctx.logger.error('preStop error', err);
   } finally {
     res.setHeader('Content-Type', 'text/plain');
     res.send(output.toString());
@@ -4711,7 +4975,7 @@ exports.getShutdownStatus = function (req, res) {
       shutdown: getIsShutdown()
     });
   } catch (err) {
-    ctx.logger.error('getShutdownStatus error %s', err.stack);
+    ctx.logger.error('getShutdownStatus error', err);
     res.status(500).json({error: 'Internal server error'});
   }
 };
@@ -4728,7 +4992,7 @@ exports.getEditorConnectionsCount = function (req, res) {
     }
     ctx.logger.info('getConnectionsCount count=%d', count);
   } catch (err) {
-    ctx.logger.error('getConnectionsCount error %s', err.stack);
+    ctx.logger.error('getConnectionsCount error', err);
   } finally {
     res.setHeader('Content-Type', 'text/plain');
     res.send(count.toString());

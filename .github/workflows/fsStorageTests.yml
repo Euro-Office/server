@@ -7,11 +7,14 @@ on:
       - 'tests/integration/withServerInstance/storage.tests.js'
       - 'Common/sources/storage/**'
       - 'DocService/sources/routes/static.js'
+      - '**/package.json'
+      - '**/npm-shrinkwrap.json'
+      - '.github/workflows/fsStorageTests.yml'
 
 jobs:
   fs-storage-tests:
     name: File System Storage
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
 
     steps:
       - name: Check out repository code
@@ -20,7 +23,7 @@ jobs:
       - name: Caching dependencies
         uses: actions/setup-node@v3
         with:
-          node-version: '20'
+          node-version: '26'
           cache: 'npm'
           cache-dependency-path: |
             ./npm-shrinkwrap.json

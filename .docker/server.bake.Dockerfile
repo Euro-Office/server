@@ -8,9 +8,9 @@
 FROM ubuntu:24.04 AS web-base
     RUN apt-get update && \
         apt-get install -y ca-certificates curl gnupg openjdk-21-jdk wget zip brotli bzip2 && \
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+        curl -fsSL https://deb.nodesource.com/setup_26.x | bash - && \
         apt-get install -y nodejs && \
-        npm install -g @yao-pkg/pkg grunt-cli && \
+        npm install -g @yao-pkg/pkg@6.24.0 grunt-cli && \
         rm -rf /var/lib/apt/lists/*
 
 #### SERVER ####
@@ -26,23 +26,23 @@ FROM web-base AS server
 
     ENV PRODUCT_VERSION=${PRODUCT_VERSION}
 
-    COPY server/Common/package*.json /server/Common/
-    RUN --mount=type=cache,target=/root/.npm cd /server/Common && npm install
+    COPY server/Common/package.json server/Common/npm-shrinkwrap.json /server/Common/
+    RUN --mount=type=cache,target=/root/.npm cd /server/Common && npm ci
 
-    COPY server/DocService/package*.json /server/DocService/
-    RUN --mount=type=cache,target=/root/.npm cd /server/DocService && npm install
+    COPY server/DocService/package.json server/DocService/npm-shrinkwrap.json /server/DocService/
+    RUN --mount=type=cache,target=/root/.npm cd /server/DocService && npm ci
 
-    COPY server/FileConverter/package*.json /server/FileConverter/
-    RUN --mount=type=cache,target=/root/.npm cd /server/FileConverter && npm install
+    COPY server/FileConverter/package.json server/FileConverter/npm-shrinkwrap.json /server/FileConverter/
+    RUN --mount=type=cache,target=/root/.npm cd /server/FileConverter && npm ci
 
-    COPY server/Metrics/package*.json /server/Metrics/
-    RUN --mount=type=cache,target=/root/.npm cd /server/Metrics && npm install
+    COPY server/Metrics/package.json server/Metrics/npm-shrinkwrap.json /server/Metrics/
+    RUN --mount=type=cache,target=/root/.npm cd /server/Metrics && npm ci
 
     COPY server/AdminPanel/server/package*.json /server/AdminPanel/server/
-    RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/server && npm install
+    RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/server && npm ci
 
     COPY server/AdminPanel/client/package*.json /server/AdminPanel/client/
-    RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/client && npm install
+    RUN --mount=type=cache,target=/root/.npm cd /server/AdminPanel/client && npm ci
 
     COPY server/ /server
 
@@ -58,13 +58,13 @@ FROM web-base AS server
         cd /server/Common && \
         sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i sources/commondefines.js && \
         cd /server/DocService && \
-        pkg . -t linux-"$TARGETARCH_PKG" --node-options="--max_old_space_size=4096" -o "${BUILD_ROOT}/docservice" && \
+        pkg . -t linux-"$TARGETARCH_PKG" --options max_old_space_size=4096 -o "${BUILD_ROOT}/docservice" && \
         cd /server/FileConverter && \
-        pkg . -t linux-"$TARGETARCH_PKG" --node-options="--max_old_space_size=4096" -o "${BUILD_ROOT}/fileconverter" && \
+        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/fileconverter" && \
         cd /server/Metrics && \
-        pkg . -t linux-"$TARGETARCH_PKG" --node-options="--max_old_space_size=4096" -o "${BUILD_ROOT}/metrics" && \
+        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/metrics" && \
         cd /server/AdminPanel/server && \
-        pkg . -t linux-"$TARGETARCH_PKG" --node-options="--max_old_space_size=4096" -o "${BUILD_ROOT}/adminpanel"
+        pkg . -t linux-"$TARGETARCH_PKG" -o "${BUILD_ROOT}/adminpanel"
 
     ENV APP_NAME=${COMPANY_NAME}
 

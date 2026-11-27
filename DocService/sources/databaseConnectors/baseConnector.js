@@ -171,42 +171,66 @@ function _insertChangesCallback(ctx, startIndex, objChanges, docId, index, user,
   dbInstance.sqlQuery(ctx, sqlCommand, callback, undefined, undefined, values);
 }
 
-function deleteChangesCallback(ctx, docId, deleteIndex, callback) {
-  let sqlCommand;
-  const values = [];
+function deleteChangesCallback(ctx, docId, deleteIndex, callback, opt_taskResultCondition) {
+  const values = opt_taskResultCondition ? [...opt_taskResultCondition.values] : [];
+  const conditions = [];
+  if (opt_taskResultCondition) {
+    conditions.push(`EXISTS (${getOwnershipCheck(cfgTableResult, opt_taskResultCondition.sql)})`);
+  }
   const p1 = addSqlParameter(ctx.tenant, values);
   const p2 = addSqlParameter(docId, values);
+  conditions.push(`tenant=${p1}`, `id=${p2}`);
   if (null !== deleteIndex) {
     const sqlParam2 = addSqlParameter(deleteIndex, values);
-    sqlCommand = `DELETE FROM ${cfgTableChanges} WHERE tenant=${p1} AND id=${p2} AND change_id >= ${sqlParam2};`;
-  } else {
-    sqlCommand = `DELETE FROM ${cfgTableChanges} WHERE tenant=${p1} AND id=${p2};`;
+    conditions.push(`change_id >= ${sqlParam2}`);
   }
-  dbInstance.sqlQuery(ctx, sqlCommand, callback, undefined, undefined, values);
+  const sqlCommand = `DELETE FROM ${cfgTableChanges} WHERE ${conditions.join(' AND ')};`;
+  if (opt_taskResultCondition && dbInstance.deleteChangesIf) {
+    dbInstance.deleteChangesIf(ctx, docId, sqlCommand, values).then(
+      result => callback(null, result),
+      error => callback(error)
+    );
+  } else {
+    dbInstance.sqlQuery(ctx, sqlCommand, callback, undefined, undefined, values);
+  }
 }
 
-function deleteChangesPromise(ctx, docId, deleteIndex) {
+function deleteChangesPromise(ctx, docId, deleteIndex, opt_taskResultCondition) {
   return new Promise((resolve, reject) => {
-    deleteChangesCallback(ctx, docId, deleteIndex, (error, result) => {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(result);
-      }
-    });
+    deleteChanges(
+      ctx,
+      docId,
+      deleteIndex,
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      },
+      opt_taskResultCondition
+    );
   });
 }
 
-function deleteChanges(ctx, docId, deleteIndex) {
+function deleteChanges(ctx, docId, deleteIndex, callback, opt_taskResultCondition) {
   lockCriticalSection(docId, () => {
-    _deleteChanges(ctx, docId, deleteIndex);
+    _deleteChanges(ctx, docId, deleteIndex, callback, opt_taskResultCondition);
   });
 }
 
-function _deleteChanges(ctx, docId, deleteIndex) {
-  deleteChangesCallback(ctx, docId, deleteIndex, () => {
+function _deleteChanges(ctx, docId, deleteIndex, callback, opt_taskResultCondition) {
+  const onComplete = (error, result) => {
     unLockCriticalSection(docId);
-  });
+    if (callback) {
+      callback(error, result);
+    }
+  };
+  try {
+    deleteChangesCallback(ctx, docId, deleteIndex, onComplete, opt_taskResultCondition);
+  } catch (error) {
+    onComplete(error);
+  }
 }
 
 function getChangesIndex(ctx, docId, callback) {
@@ -439,6 +463,25 @@ function getNotEmptyConditionFallback(fieldName) {
   return `${fieldName} IS NOT NULL AND ${fieldName} != ''`;
 }
 
+/**
+ * The ownership check of a conditional change deletion: a subquery that reads
+ * the task row.  It has to lock that row until the deletion commits, so that
+ * an UPDATE of the row (a takeover's hold) waits for a deletion in flight, and
+ * a deletion that starts during such an UPDATE sees its result.  With a
+ * snapshot read both go ahead: the takeover still sees the changes that are
+ * being deleted.  MySQL and MariaDB lock the rows a DML subquery reads, so the
+ * plain subquery is enough there. Oracle's deleteChangesIf locks the task row
+ * in a separate statement within the deletion transaction. Connectors that
+ * need a locking clause in the subquery override this.
+ * @param {string} table - The task table
+ * @param {string} where - The ownership condition
+ * @returns {string} SQL subquery
+ */
+function getOwnershipCheckFallback(table, where) {
+  return `SELECT 1 FROM ${table} WHERE ${where}`;
+}
+const getOwnershipCheck = dbInstance.getOwnershipCheck || getOwnershipCheckFallback;
+
 module.exports = {
   insertChangesPromise,
   deleteChangesPromise,
@@ -456,5 +499,6 @@ module.exports = {
   ...connectorUtilities,
   ...dbInstance,
   // Use connector-specific implementation if available, otherwise use fallback
-  getNotEmptyCondition: dbInstance.getNotEmptyCondition || getNotEmptyConditionFallback
+  getNotEmptyCondition: dbInstance.getNotEmptyCondition || getNotEmptyConditionFallback,
+  getAdditionalCondition: dbInstance.getAdditionalCondition || (parameter => `additional=${parameter}`)
 };

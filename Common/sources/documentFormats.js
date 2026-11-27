@@ -92,7 +92,7 @@ async function getAllFormats(filePath, ctx) {
     }
   } catch (err) {
     // Do not cache the empty result, so a later request retries once the file is available
-    ctx.logger.warn('getAllFormats: failed to read formats file "%s": %s', filePath, err.stack);
+    ctx.logger.warn('getAllFormats: failed to read formats file "%s":', filePath, err);
     return result;
   }
 

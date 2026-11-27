@@ -8,11 +8,13 @@ on:
       - 'Common/sources/storage/**'
       - 'DocService/sources/routes/static.js'
       - '.github/workflows/azureStorageTests.yml'
+      - '**/package.json'
+      - '**/npm-shrinkwrap.json'
 
 jobs:
   azure-storage-tests:
     name: Azure Storage Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     env:
       AZURITE_CONTAINER: azurite-${{ github.run_id }}-${{ github.run_attempt }}
 
@@ -74,7 +76,7 @@ jobs:
       - name: Caching dependencies
         uses: actions/setup-node@v3
         with:
-          node-version: '20'
+          node-version: '26'
           cache: 'npm'
           cache-dependency-path: |
             ./npm-shrinkwrap.json

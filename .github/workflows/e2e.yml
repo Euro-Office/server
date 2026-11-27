@@ -5,10 +5,11 @@ name: E2E (overlay on nightly)
 # Playwright e2e suite against it. Fast feedback on a server change against the
 # full stack without rebuilding core/sdkjs/web-apps.
 #
-# Scope: overlays three pkg binaries (docservice, fileconverter, metrics). AdminPanel is not
-# overlaid (neither its server binary nor its webpack client); the e2e suite never exercises
-# the admin UI, so the nightly image's AdminPanel build is left in place. Note the pkg.scripts
-# guard below still checks every discovered component, AdminPanel/server included.
+# Scope: overlays the pkg binaries (docservice, fileconverter, metrics) and
+# their matching Common/config/default.json. AdminPanel is not overlaid (neither its
+# server binary nor its webpack client); the e2e suite never exercises the admin UI, so
+# the nightly image's AdminPanel build is left in place. Note the pkg.scripts guard below
+# still checks every discovered component, AdminPanel/server included.
 on:
   push:
     branches:
@@ -29,7 +30,7 @@ env:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       contents: read
     steps:
@@ -56,10 +57,10 @@ jobs:
           path: documentserver
           ref: main
 
-      - name: Use Node.js 20
+      - name: Use Node.js 26
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 26
 
       - name: Pull nightly image
         run: docker pull ${{ env.NIGHTLY_IMAGE }}
@@ -89,7 +90,7 @@ jobs:
           BUILD_ROOT: ${{ github.workspace }}/server/deploy
           PRODUCT_VERSION: ${{ steps.ver.outputs.product_version }}
         run: |
-          npm install -g @yao-pkg/pkg
+          npm install -g @yao-pkg/pkg@6.24.0
           sed -i "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" Common/sources/commondefines.js
           for d in Common DocService FileConverter Metrics; do
             ( cd "$d" && npm install )
@@ -97,9 +98,10 @@ jobs:
           # Fail before pkg silently drops a module whose pkg.scripts entry matches no file.
           npm run check:pkg-scripts
           mkdir -p "$BUILD_ROOT"
-          ( cd DocService    && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/docservice" )
-          ( cd FileConverter && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/fileconverter" )
-          ( cd Metrics       && pkg . -t linux-x64 --node-options="--max_old_space_size=4096" -o "$BUILD_ROOT/metrics" )
+          cp Common/config/default.json "$BUILD_ROOT/default.json"
+          ( cd DocService    && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/docservice" )
+          ( cd FileConverter && pkg . -t linux-x64 -o "$BUILD_ROOT/fileconverter" )
+          ( cd Metrics       && pkg . -t linux-x64 -o "$BUILD_ROOT/metrics" )
 
       - name: Build overlay image with fresh server binaries
         run: |
@@ -107,15 +109,16 @@ jobs:
           cat > overlay.Dockerfile <<'EOF'
           ARG NIGHTLY_IMAGE
           FROM ${NIGHTLY_IMAGE}
-          COPY docservice fileconverter metrics /tmp/srv/
+          COPY docservice fileconverter metrics default.json /tmp/srv/
           # The install path is brand-derived (/var/www/<brand>/documentserver);
-          # locate it via the sdkjs dir, then replace the service binaries.
+          # locate it via the sdkjs dir, then install the binaries and defaults.
           RUN set -eux; \
               root="$(dirname "$(find /var/www -maxdepth 5 -type d -name sdkjs -path '*documentserver*' | head -n1)")"; \
               test -n "$root"; \
               install -m0755 /tmp/srv/docservice    "$root/server/DocService/docservice"; \
               install -m0755 /tmp/srv/fileconverter "$root/server/FileConverter/converter"; \
               install -m0755 /tmp/srv/metrics       "$root/server/Metrics/metrics"; \
+              install -m0644 /tmp/srv/default.json  "/etc/${root#/var/www/}/default.json"; \
               rm -rf /tmp/srv
           EOF
           docker build \
@@ -123,6 +126,39 @@ jobs:
             -t ${{ env.OVERLAY_IMAGE }} \
             -f overlay.Dockerfile \
             server/deploy
+
+      - name: Run packaged Redis editor data smoke test
+        working-directory: server
+        run: |
+          set -euo pipefail
+          CONTAINER=redis-editor-data-pkg-smoke
+          cleanup() {
+            docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --name "$CONTAINER" "$OVERLAY_IMAGE" >/dev/null
+
+          ready=false
+          for attempt in $(seq 1 120); do
+            if docker exec "$CONTAINER" curl -fsS http://127.0.0.1/healthcheck | grep -qx true; then
+              ready=true
+              break
+            fi
+            if [ "$attempt" -eq 120 ]; then
+              docker logs "$CONTAINER"
+            else
+              sleep 2
+            fi
+          done
+          test "$ready" = true
+
+          docker exec -i "$CONTAINER" sh -s < tests/redis/editorDataRedis.pkg-e2e.sh
+
+      - name: Clean up packaged Redis editor data smoke test
+        if: always()
+        run: docker rm -f redis-editor-data-pkg-smoke >/dev/null 2>&1 || true
 
       - name: Install e2e dependencies
         working-directory: documentserver/e2e
@@ -140,6 +176,9 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
+        # The upload can fail in a private copy when the organisation's artifact
+        # storage quota is used up; that must not fail the check there.
+        continue-on-error: ${{ github.event.repository.private }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.sha }}

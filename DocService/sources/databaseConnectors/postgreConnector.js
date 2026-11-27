@@ -52,7 +52,7 @@ config.util.extendDeep(connectionConfig, pgPoolExtraOptions);
 const pool = new pg.Pool(connectionConfig);
 //listen "error" event otherwise - unhandled exception(https://github.com/brianc/node-postgres/issues/2764#issuecomment-1163475426)
 pool.on('error', (err, _client) => {
-  operationContext.global.logger.error(`postgresql pool error %s`, err.stack);
+  operationContext.global.logger.error(`postgresql pool error`, err);
 });
 //todo datetime timezone
 pg.defaults.parseInputDatesAsUTC = true;
@@ -74,7 +74,7 @@ function sqlQuery(ctx, sqlCommand, callbackFunction, opt_noModifyRes, opt_noLog,
     } catch (err) {
       error = err;
       if (!opt_noLog) {
-        ctx.logger.warn('sqlQuery error sqlCommand: %s: %s', sqlCommand.slice(0, 50), err.stack);
+        ctx.logger.warn('sqlQuery error sqlCommand: %s:', sqlCommand.slice(0, 50), err);
       }
     } finally {
       if (callbackFunction) {
@@ -94,6 +94,34 @@ function sqlQuery(ctx, sqlCommand, callbackFunction, opt_noModifyRes, opt_noLog,
 
 function closePool() {
   pool.end();
+}
+
+async function withTaskResultLock(ctx, docId, condition, action) {
+  const client = await pool.connect();
+  let discard;
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query(`SELECT 1 FROM ${cfgTableResult} WHERE tenant=$1 AND id=$2 FOR UPDATE`, [ctx.tenant, docId]);
+    let owned = false;
+    if (locked.rowCount > 0) {
+      const result = await client.query(`SELECT * FROM ${cfgTableResult} WHERE ${condition.sql}`, condition.values);
+      owned = result.rowCount > 0;
+      if (owned) {
+        await action(result.rows[0]);
+      }
+    }
+    await client.query('COMMIT');
+    return owned;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      discard = rollbackError;
+    }
+    throw error;
+  } finally {
+    client.release(discard);
+  }
 }
 
 function addSqlParameter(val, values) {
@@ -250,11 +278,19 @@ function insertChanges(ctx, tableChanges, startIndex, objChanges, docId, index, 
   );
 }
 
+// See baseConnector getOwnershipCheckFallback: a READ COMMITTED snapshot does
+// not see a concurrent UPDATE of the row, FOR SHARE waits for it and rechecks.
+function getOwnershipCheck(table, where) {
+  return `SELECT 1 FROM ${table} WHERE ${where} FOR SHARE`;
+}
+
 module.exports = {
   sqlQuery,
   closePool,
   addSqlParameter,
   concatParams,
   upsert,
-  insertChanges
+  insertChanges,
+  getOwnershipCheck,
+  withTaskResultLock
 };

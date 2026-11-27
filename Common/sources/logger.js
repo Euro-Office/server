@@ -31,6 +31,7 @@ const fs = require('fs');
 
 const log4js = require('log4js');
 const layouts = require('log4js/lib/layouts');
+const reporters = require('./reporters');
 const logConfigPath = config.get('log.filePath');
 const logOptions = config.get('log.options');
 
@@ -49,16 +50,13 @@ const dateToJSONWithTZ = function (d) {
 };
 
 log4js.addLayout('json', () => {
-  return function (logEvent) {
-    logEvent['startTime'] = dateToJSONWithTZ(logEvent['startTime']);
-    logEvent['message'] = util.format(...logEvent['data']);
-    delete logEvent['data'];
-    return JSON.stringify(logEvent);
-  };
+  // Copy instead of mutating: the event is shared with the appenders that run after this one
+  return logEvent =>
+    JSON.stringify({...logEvent, startTime: dateToJSONWithTZ(logEvent.startTime), message: util.format(...logEvent.data), data: undefined});
 });
 
 /**
- * Custom pattern layout that supports %x{usid} using USERSESSIONID from context.
+ * Custom pattern layout that supports %x{usid} using USERSESSIONID and %x{ref} using REFERENCEDATA from context.
  * @param {object} cfg
  * @returns {function}
  */
@@ -69,6 +67,10 @@ log4js.addLayout('patternWithTokens', cfg => {
     usid(ev) {
       const id = ev && ev.context && ev.context.USERSESSIONID;
       return id ? ` [${id}]` : '';
+    },
+    ref(ev) {
+      const referenceData = ev?.context?.REFERENCEDATA;
+      return referenceData ? ` [${Object.values(referenceData).join('/')}]` : '';
     }
   });
   return layouts.patternLayout(pattern, tokens);
@@ -77,14 +79,52 @@ log4js.addLayout('patternWithTokens', cfg => {
 const cachedLogConfig = JSON.parse(fs.readFileSync(logConfigPath, 'utf8'));
 let curLogConfig = cachedLogConfig;
 
+function withReporterAppenders(logConfig) {
+  const reporterAppenders = reporters.appenders();
+  const names = Object.keys(reporterAppenders);
+  if (names.length === 0) {
+    return logConfig;
+  }
+  const categories = {};
+  for (const [name, category] of Object.entries(logConfig.categories)) {
+    categories[name] = {...category, appenders: [...category.appenders, ...names]};
+  }
+  return {...logConfig, appenders: {...logConfig.appenders, ...reporterAppenders}, categories};
+}
+
 function configureLogger(options) {
   const mergedOptions = config.util.extendDeep({}, cachedLogConfig, options);
-  log4js.configure(mergedOptions);
+  log4js.configure(withReporterAppenders(mergedOptions));
   curLogConfig = mergedOptions;
 }
 configureLogger(logOptions);
 
-const logger = log4js.getLogger('nodeJS');
+/**
+ * Copies an Error argument with only name, message, stack and code. Layouts, cluster IPC and reporters would otherwise
+ * include every enumerable property, such as the request headers of axios errors.
+ */
+function leanError(arg) {
+  if (!(arg instanceof Error)) {
+    return arg;
+  }
+  const lean = new Error(arg.message);
+  Object.defineProperty(lean, 'name', {value: arg.name});
+  lean.stack = arg.stack ?? String(arg);
+  if (arg.code !== undefined) {
+    lean.code = arg.code;
+  }
+  return lean;
+}
+
+function withLeanErrors(instance) {
+  for (const level of ['trace', 'debug', 'info', 'warn', 'error', 'fatal']) {
+    const log = instance[level].bind(instance);
+    instance[level] = (...args) => log(...args.map(leanError));
+  }
+  return instance;
+}
+
+const logger = withLeanErrors(log4js.getLogger('nodeJS'));
 
 if (config.get('log.options.replaceConsole')) {
   console.log = logger.info.bind(logger);
@@ -94,7 +134,7 @@ if (config.get('log.options.replaceConsole')) {
   console.debug = logger.debug.bind(logger);
 }
 exports.getLogger = function () {
-  return log4js.getLogger.apply(log4js, Array.prototype.slice.call(arguments));
+  return withLeanErrors(log4js.getLogger.apply(log4js, Array.prototype.slice.call(arguments)));
 };
 exports.trace = function () {
   return logger.trace.apply(logger, Array.prototype.slice.call(arguments));
