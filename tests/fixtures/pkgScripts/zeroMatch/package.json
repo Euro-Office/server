@@ -1,0 +1,10 @@
+{
+  "name": "zero-match-fixture",
+  "version": "1.0.0",
+  "pkg": {
+    "scripts": [
+      "./sources/existing.js",
+      "./sources/missing.js"
+    ]
+  }
+}

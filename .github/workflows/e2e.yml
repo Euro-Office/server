@@ -6,10 +6,10 @@ name: E2E (overlay on nightly)
 # full stack without rebuilding core/sdkjs/web-apps.
 #
 # Scope: overlays the pkg binaries (docservice, fileconverter, metrics) and
-# their matching Common/config/default.json. The AdminPanel webpack client is
-# intentionally NOT overlaid —
-# the e2e suite never exercises the admin UI, so the nightly image's client
-# build is left in place.
+# their matching Common/config/default.json. AdminPanel is not overlaid (neither its
+# server binary nor its webpack client); the e2e suite never exercises the admin UI, so
+# the nightly image's AdminPanel build is left in place. Note the pkg.scripts guard below
+# still checks every discovered component, AdminPanel/server included.
 on:
   push:
     branches:
@@ -95,6 +95,8 @@ jobs:
           for d in Common DocService FileConverter Metrics; do
             ( cd "$d" && npm install )
           done
+          # Fail before pkg silently drops a module whose pkg.scripts entry matches no file.
+          npm run check:pkg-scripts
           mkdir -p "$BUILD_ROOT"
           cp Common/config/default.json "$BUILD_ROOT/default.json"
           ( cd DocService    && pkg . -t linux-x64 --options max_old_space_size=4096 -o "$BUILD_ROOT/docservice" )
