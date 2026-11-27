@@ -22,9 +22,10 @@
  * is refused rather than guessed at, so the guard does not silently diverge from pkg. tinyglobby
  * (pkg's matcher) is the documented upgrade path if entry shapes ever need full resolution.
  *
- * Verified against pkg's matcher, tinyglobby ^0.2.11, which every pkg version in use here
- * depends on (6.14.x on Node 20 through 6.23.x on Node 22). Re-check this guard if pkg
- * switches its glob engine.
+ * Checked against @yao-pkg/pkg 6.24.0, the version pinned in .docker/server.bake.Dockerfile and
+ * .github/workflows/e2e.yml (walker.js: path.join(base, entry), one tinyglobby globSync call,
+ * isFile). When that pin moves past this version, re-check how pkg resolves pkg.scripts entries
+ * and update the version here.
  *
  * Components are discovered, not hardcoded: any package.json (outside node_modules)
  * carrying a `pkg.scripts` block is checked, so a newly added component is covered
